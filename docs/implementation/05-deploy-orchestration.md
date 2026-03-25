@@ -156,9 +156,20 @@ echo "Open: ${GRAFANA_URL}"
 
 ---
 
-## 5.4 (Skipped — no Loki stack)
+## 5.4 Log Aggregation (Azure Log Analytics)
 
-Log aggregation is handled by Azure Log Analytics Workspace (enabled via Container Insights add-on in Step 03). No separate Loki or Promtail deployment is required.
+Log aggregation is handled by **Azure Log Analytics Workspace**, enabled automatically via the Container Insights add-on provisioned in Step 03. The Azure Monitor Agent (AMA) DaemonSet on both clusters tails `/var/log/containers/*` and forwards all pod logs to the workspace — no separate deployment required.
+
+```bash
+# Verify AMA DaemonSet is running on the orchestration cluster
+kubectl get daemonset ama-logs -n kube-system
+
+# Confirm logs are flowing — query from Azure CLI
+az monitor log-analytics query \
+  --workspace "${LOG_ANALYTICS_WORKSPACE_ID}" \
+  --analytics-query "ContainerLog | limit 10" \
+  --output table
+```
 
 ---
 

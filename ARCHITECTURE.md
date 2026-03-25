@@ -61,12 +61,12 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 │   (AKS Private)     │    │            (AKS Private)                    │
 │                     │    │                                             │
 │  ┌───────────────┐  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
-│  │ Spark Operator│  │    │  │ Airflow  │ │ Marquez  │ │  Prometheus│   │
-│  │ Spark Connect │  │    │  │ (Sched.) │ │(Lineage) │ │  + Grafana │   │
+│  │ Spark Operator│  │    │  │ Airflow  │ │ Marquez  │ │  Azure     │   │
+│  │ Spark Connect │  │    │  │ (Sched.) │ │(Lineage) │ │  Monitor   │   │
 │  │ Trino         │  │    │  └──────────┘ └──────────┘ └────────────┘   │
 │  └───────────────┘  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
-└─────────────────────┘    │  │  DQ      │ │  Loki    │ │  Portal    │  │
-          │                │  │ Framework│ │ (Logs)   │ │  Backend   │  │
+└─────────────────────┘    │  │  DQ      │ │  Log     │ │  Portal    │  │
+          │                │  │ Framework│ │ Analytics│ │  Backend   │  │
           │                │  └──────────┘ └──────────┘ └────────────┘  │
           │                └─────────────────────────────────────────────┘
           │                              │
@@ -127,7 +127,7 @@ Intentionally small — runs steady-state services only (no burst workloads).
 | Node Pool | VM SKU | Dev Min/Max | Prod Min/Max | Purpose |
 |-----------|--------|-------------|--------------|---------|
 | `systempool` | Standard_D4s_v5 | 1 / 2 | 2 / 4 | Kubernetes system components |
-| `workerpool` | Standard_D4s_v5 | 1 / 4 | 2 / 10 | Airflow, Marquez, Portal, Prometheus, Grafana, Loki |
+| `workerpool` | Standard_D4s_v5 | 1 / 4 | 2 / 10 | Airflow, Marquez, Portal, statsd-exporter |
 
 - Azure CNI Overlay networking
 - Workload identity (OIDC) enabled
@@ -537,17 +537,17 @@ PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpo
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│  Observability Stack (orchestration cluster, monitoring namespace) │
+│  Observability Stack (Azure-native managed services)              │
 │                                                                    │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
-│  │  Prometheus      │  │  Grafana         │  │  Loki           │   │
-│  │  (metrics)       │  │  (dashboards)    │  │  (log aggr.)    │   │
-│  │  30d retention   │  │  OIDC auth       │  │  14d retention  │   │
+│  │  Azure Monitor   │  │  Azure Managed   │  │  Log Analytics  │   │
+│  │  / Container     │  │  Grafana         │  │  Workspace      │   │
+│  │  Insights (AMA)  │  │  (dashboards)    │  │  (log aggr.)    │   │
 │  └──────────────────┘  └──────────────────┘  └─────────────────┘   │
 │                                                                    │
 │  ┌──────────────────┐  ┌──────────────────┐                        │
-│  │  Alertmanager    │  │  OpenTelemetry   │                        │
-│  │  → Teams/PagerD  │  │  Collector       │                        │
+│  │  Azure Monitor   │  │  OpenTelemetry   │                        │
+│  │  Alerts          │  │  Collector       │                        │
 │  └──────────────────┘  └──────────────────┘                        │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -631,13 +631,13 @@ Secrets never appear in:
 - All AKS clusters are **private** — no public API server endpoint
 - ADLS, Key Vault, PostgreSQL, ACR — all accessed via **private endpoints only**
 - No public IP on any data plane resource
-- Ingress to Developer Portal and Grafana via **Azure Application Gateway** (WAF-enabled) + private DNS
+- Ingress to Developer Portal and Azure Managed Grafana via **Azure Application Gateway** (WAF-enabled) + private DNS
 - Network Policies (Calico) enforce pod-to-pod traffic rules within each cluster
 
 ### RBAC
 
-| Role | Airflow | Portal | Trino | Grafana |
-|------|---------|--------|-------|---------|
+| Role | Airflow | Portal | Trino | Azure Managed Grafana |
+|------|---------|--------|-------|----------------------|
 | Platform Admin | Admin | Admin | Admin | Admin |
 | Data Engineer | Op | Editor | Full | Editor |
 | Analyst | Viewer | Reader | Read (serving only) | Viewer |
@@ -682,7 +682,7 @@ Developer (corp network / VPN)
 Application Gateway (WAF v2)
     │
     ├──▶ Developer Portal (orchestration cluster ingress)
-    └──▶ Grafana (orchestration cluster ingress)
+    └──▶ Azure Managed Grafana (Azure-hosted, private link)
 
 Airflow → compute cluster AKS API
     │  private endpoint to AKS API server

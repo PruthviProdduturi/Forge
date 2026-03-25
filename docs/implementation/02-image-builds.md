@@ -18,7 +18,7 @@
    - [spark:4.1.0](#41-spark351)
    - [trino:438](#42-trino438)
    - [airflow:3.1.0](#43-airflow293)
-   - [grafana:10.4.2](#44-grafana1042)
+   - [Azure Managed Grafana (no custom image)](#44-azure-managed-grafana-no-custom-image)
    - [portal-api](#45-portal-api)
    - [portal-web](#46-portal-web)
 5. [Imported Images](#5-imported-images)
@@ -375,13 +375,7 @@ docker push "${REGISTRY}/trino:438-${ENV}"
 | `hive-metastore:3.1.3` | `apache/hive:3.1.3` | `forgeacr/hive-metastore:3.1.3-{env}` |
 | `marquez-api:0.47.0` | `marquezproject/marquez:0.47.0` | `forgeacr/marquez-api:0.47.0-{env}` |
 | `marquez-web:0.47.0` | `marquezproject/marquez-web:0.47.0` | `forgeacr/marquez-web:0.47.0-{env}` |
-| `prometheus:2.51.0` | `prom/prometheus:v2.51.0` | `forgeacr/prometheus:2.51.0-{env}` |
-| `loki:3.0.0` | `grafana/loki:3.0.0` | `forgeacr/loki:3.0.0-{env}` |
-| `alertmanager:0.27.0` | `prom/alertmanager:v0.27.0` | `forgeacr/alertmanager:0.27.0-{env}` |
-| `promtail:3.0.0` | `grafana/promtail:3.0.0` | `forgeacr/promtail:3.0.0-{env}` |
-| `node-exporter:1.7.0` | `prom/node-exporter:v1.7.0` | `forgeacr/node-exporter:1.7.0-{env}` |
 | `statsd-exporter:0.26.1` | `prom/statsd-exporter:v0.26.1` | `forgeacr/statsd-exporter:0.26.1-{env}` |
-| `kube-state-metrics:2.12.0` | `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.12.0` | `forgeacr/kube-state-metrics:2.12.0-{env}` |
 | `spark-operator:1.4.6` | `ghcr.io/kubeflow/spark-operator:v1.4.6` | `forgeacr/spark-operator:1.4.6-{env}` |
 | `gatekeeper:3.16.3` | `openpolicyagent/gatekeeper:v3.16.3` | `forgeacr/gatekeeper:3.16.3-{env}` |
 
