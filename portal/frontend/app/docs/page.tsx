@@ -18,6 +18,12 @@ const CATEGORIES = [
         icon: "fa-arrows-left-right",
       },
       {
+        slug: "architecture/environment-promotion",
+        title: "Environment Promotion & Dev→Prod Flow",
+        description: "Dev vs prod environments, Spark Connect vs Spark Operator, PR workflow, CI/CD gates, and rollback strategy.",
+        icon: "fa-code-branch",
+      },
+      {
         slug: "architecture/compute-architecture",
         title: "Compute Architecture",
         description: "Spark Operator, Spark Connect, and Trino on AKS — node pools, scaling, and job isolation.",
