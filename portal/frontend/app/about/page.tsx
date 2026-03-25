@@ -481,7 +481,7 @@ export default function AboutPage() {
               Read the Docs
             </a>
             <a
-              href="/docs/guides"
+              href="/docs/guides/developer-experience"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
