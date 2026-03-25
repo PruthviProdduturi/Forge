@@ -81,6 +81,8 @@ Trackers are co-located with data, always at the root of the partition directory
 
 Bronze does **not** use trackers. Bronze is append-only raw data — reprocessing bronze means re-ingesting from source, which is a source system concern, not a Forge concern.
 
+**No manual writes.** Data must never be written directly to ADLS (via Storage Explorer, `az storage`, or raw SDK calls) outside of a pipeline. Manual writes bypass the tracker, lineage, and DQ — the platform cannot account for them. All data writes go through a Forge pipeline.
+
 ### 2.4 How Pipelines Use Trackers
 
 At the start of each Airflow task that writes a partition, the pipeline checks for the tracker:

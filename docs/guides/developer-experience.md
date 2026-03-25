@@ -501,29 +501,18 @@ def transform_sales_orders():
 dag = transform_sales_orders()
 ```
 
-### Testing a DAG Locally
+### Testing a DAG
 
-The platform uses Airflow Standalone (single process, SQLite backend) for fast local unit testing of DAG structure and task logic.
+DAG testing happens in two stages: **structure tests** run locally with pytest (no Airflow process needed), and **execution tests** run on the **dev cluster** — there is no local Airflow instance.
 
-**Step 1: Start Airflow Standalone**
+Running a local Airflow instance (Standalone, Docker Compose, etc.) is explicitly discouraged because:
+- It uses `LocalExecutor` or `SequentialExecutor`, not `KubernetesExecutor` — tasks behave differently
+- It has no access to ADLS, Key Vault, Spark Connect, or any Azure service
+- Results from local execution do not predict dev/prod behaviour
 
-```bash
-# From repo root, with .venv active
-export AIRFLOW_HOME="${PWD}/.airflow-local"
-export AIRFLOW__CORE__DAGS_FOLDER="${PWD}/orchestration/airflow/dags"
-export AIRFLOW__CORE__EXECUTOR=LocalExecutor
-export AIRFLOW__DATABASE__SQL_ALCHEMY_CONN="sqlite:///${PWD}/.airflow-local/airflow.db"
-export AIRFLOW__CORE__LOAD_EXAMPLES=False
+**Step 1: Write DAG unit tests**
 
-airflow db init
-airflow standalone
-```
-
-Airflow Standalone starts the scheduler, webserver (at `http://localhost:8080`), and triggerer in a single process. The SQLite backend is fine for local testing — never use it in production.
-
-**Step 2: Write DAG unit tests**
-
-DAG unit tests (in `orchestration/airflow/tests/`) test DAG structure, not execution:
+DAG unit tests (in `orchestration/airflow/tests/`) validate DAG structure and wiring without running any tasks or starting any Airflow process:
 
 ```python
 # orchestration/airflow/tests/sales/test_transform_sales_orders.py
@@ -584,7 +573,24 @@ Run tests:
 pytest orchestration/airflow/tests/ -v --tb=short
 ```
 
-This runs in under 5 seconds — no Airflow scheduler needed, no database.
+This runs in under 5 seconds — no Airflow process, no database, no Azure credentials.
+
+**Step 2: Test execution on dev**
+
+Once structure tests pass, merge to `main` (or push a feature branch and use `forge dag trigger --env dev`). The DAG appears in dev Airflow within 60 seconds via git-sync. Then trigger it:
+
+```bash
+# Trigger a single run on dev and stream task logs
+forge dag trigger transform_sales_orders \
+  --env dev \
+  --conf '{"run_date": "2024-01-15"}' \
+  --wait
+
+# Or open the Airflow UI on dev directly
+forge airflow ui --env dev   # opens https://airflow.forge-dev.internal in browser
+```
+
+The dev cluster runs `KubernetesExecutor` — tasks execute as pods with real access to ADLS, Key Vault, Spark Connect, and ACR. This is the only reliable way to test actual task execution.
 
 ### Pushing to Git and Watching it Appear in Airflow
 
@@ -1498,7 +1504,7 @@ Exactly one thing is different between the dev and prod clusters: **sizing**. Ev
 | Delta Lake 4.0.0 (same) |
 | ADLS access method | Workload identity (same) | Workload identity (same) |
 | OpenLineage config | Points to dev Marquez | Points to prod Marquez |
-| Airflow configuration | `LocalExecutor` vs `KubernetesExecutor` | `KubernetesExecutor` |
+| Airflow configuration | `KubernetesExecutor` (same) | `KubernetesExecutor` (same) |
 | Node pool sizes | `spark`: 0–5 nodes, `E4s_v5` | `spark`: 0–20 nodes, `E8s_v5` |
 | Data | Dev ADLS account (subset of prod data) | Prod ADLS account |
 
@@ -1506,11 +1512,15 @@ The dev `spark` node pool uses smaller VMs (4 cores / 32 GB vs 8 cores / 64 GB).
 
 The dev ADLS account contains a representative sample of production data (approximately the most recent 30 days), refreshed weekly. This is sufficient for testing schema, transform logic, and DQ rules. Volume checks in DQ rulesets use lower thresholds in dev (configurable per-environment via Airflow variables).
 
-### The LocalExecutor vs KubernetesExecutor Difference
+### Dev and Prod Use the Same Executor
 
-In dev, Airflow uses `LocalExecutor` (all tasks run in the same process as the scheduler). In prod, `KubernetesExecutor` spawns a new pod per task.
+Both dev and prod run `KubernetesExecutor` — every task spawns a dedicated pod. There is no local Airflow executor. This means:
 
-This has one practical consequence for local testing: task isolation is different. With `LocalExecutor`, shared Python state between tasks is technically possible (but should never be relied on). With `KubernetesExecutor`, each task starts fresh with no shared state. Always write tasks as stateless functions that communicate only via XCom or shared storage.
+- Task isolation is identical between dev and prod — each task starts fresh, no shared state
+- All tasks have access to the same Azure services (ADLS, Key Vault, ACR) via workload identity
+- A task that passes in dev will behave the same way in prod (modulo data volume and VM size)
+
+Always write tasks as stateless functions that communicate only via XCom or shared storage — this is enforced by the executor, not just a convention.
 
 The DAG unit tests (described in Section 3) do not test task execution — they test DAG structure. Actual task execution is tested in the dev environment using the `forge dag trigger` workflow.
 
@@ -1859,6 +1869,8 @@ def transform_silver(execution_date: str, **context):
 ```
 
 **Never write the tracker before the data write completes.** If the write fails after the tracker is written, the partition will be skipped on the next run, leaving stale or missing data.
+
+**Never write trackers or data manually** (e.g. via `az storage` CLI, Azure Storage Explorer, or direct ADLS SDK calls outside a pipeline). Manual writes bypass lineage, DQ, and the tracker protocol — the platform has no record of them. All data writes must go through a Forge pipeline so the tracker, lineage event, and DQ report are all produced atomically.
 
 ### Restatement History
 
