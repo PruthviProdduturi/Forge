@@ -6,12 +6,7 @@
 
 *Scalable compute. Reliable orchestration. Governed analytics.*
 
-[![Bicep](https://img.shields.io/badge/Bicep-latest-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/)
-[![Kubernetes](https://img.shields.io/badge/AKS-1.29+-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://azure.microsoft.com/en-us/products/kubernetes-service)
-[![Apache Spark](https://img.shields.io/badge/Spark-4.1-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org)
-[![Trino](https://img.shields.io/badge/Trino-438-DD00A1?style=for-the-badge&logo=trino&logoColor=white)](https://trino.io)
-[![Airflow](https://img.shields.io/badge/Airflow-2.9-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
-[![Delta Lake](https://img.shields.io/badge/Delta_Lake-4.0-003366?style=for-the-badge)](https://delta.io)
+[![Bicep](https://img.shields.io/badge/Bicep-latest-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/AKS-1.29+-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://azure.microsoft.com/en-us/products/kubernetes-service) [![Apache Spark](https://img.shields.io/badge/Spark-4.1-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-438-DD00A1?style=for-the-badge&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-2.9-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta_Lake-4.0-003366?style=for-the-badge)](https://delta.io)
 
 <br/>
 
