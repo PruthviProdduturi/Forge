@@ -81,8 +81,7 @@ Forge's network design is built on three constraints:
 │  │  │    lineage        — marquez-api, marquez-web                                │  │  │
 │  │  │    monitoring     — azure-monitor-agent, otel-collector                     │  │  │
 │  │  │    portal         — portal-api, portal-web                                  │  │  │
-│  │  │    argocd         — argocd-server, application-controller                   │  │  │
-│  │  └────────────────────────────────────────────────────────────────────────────┘  │  │
+│  │  ││  │  └────────────────────────────────────────────────────────────────────────────┘  │  │
 │  └─────────────────────────────────────────────────────────────────────────────────┘  │
 │                                                                                       │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
@@ -359,7 +358,7 @@ Kubernetes objects created / updated
 
 The agent pods have a Kubernetes ServiceAccount with `cluster-admin` on the orchestration cluster and a kubeconfig for the compute cluster (mounted from Key Vault). The Azure DevOps agent image is Forge-built and imported to ACR — no public registry access.
 
-For ArgoCD-based GitOps, ArgoCD runs inside the orchestration cluster and manages its own application synchronization against the Git repository. ArgoCD's `repo-server` reaches the Azure DevOps Git remote over HTTPS — this egress path is allowed by NSG rules (outbound to port 443, destination service tag `AzureDevOps`).
+Azure DevOps Pipelines run on ADO-hosted agents that reach the AKS API server over HTTPS — this egress path is allowed by NSG rules (outbound to port 443, destination service tag `AzureDevOps`).
 
 ---
 
@@ -647,7 +646,7 @@ The `node-debug` image is a minimal Forge-built image (imported to ACR) with: `s
 
 Both AKS clusters use Calico for network policy enforcement (selected at cluster creation: `--network-plugin azure --network-policy calico`). Calico enforces Kubernetes NetworkPolicy objects.
 
-The default posture in every namespace is **deny all ingress and egress** unless explicitly allowed. This is implemented by deploying a default-deny policy to every namespace during cluster bootstrap (via ArgoCD ApplicationSet):
+The default posture in every namespace is **deny all ingress and egress** unless explicitly allowed. This is implemented by deploying a default-deny policy to every namespace during cluster bootstrap (via ADO Pipeline + Helm):
 
 ```yaml
 # Applied to every namespace except kube-system

@@ -1178,7 +1178,7 @@ gh pr create --title "feat: supplier invoices ingestion pipeline" \
 
 After approval and merge to `main`:
 
-1. ArgoCD syncs the DAG (via git-sync, within 60s)
+1. git-sync pulls the new DAG into Airflow (within 60s)
 2. Airflow scheduler picks it up and schedules for next execution
 3. At 05:00 UTC the next day, the pipeline runs
 4. By 07:00 UTC, `serving.finance.supplier_invoices` is queryable via Trino
@@ -1226,26 +1226,26 @@ CODEOWNERS assignments:
 - `infra/` → platform team
 - `sdk/` → platform team
 
-### ArgoCD Automatic Sync to Dev
+### ADO Pipeline Automatic Deploy to Dev
 
-When a PR merges to `main`, ArgoCD (running on the orchestration cluster) detects the new commit within 3 minutes (ArgoCD polls the Git repository every 3 minutes). It automatically syncs the updated manifests to the `dev` environment:
+When a PR merges to `main`, the ADO release pipeline triggers automatically and deploys the updated Helm charts to the `dev` environment:
 
 ```
 GitHub / Azure DevOps                      forge-orchestration-dev
      │                                              │
      │  PR merged to main                          │
      │                                             │
-     │  ArgoCD detects diff (3 min poll)           │
+     │  ADO Pipeline triggered (webhook on merge)  │
      ├──────────────────────────────────────────── │
      │                                             │
-     │  ArgoCD applies Helm chart diff             │
+     │  ADO Pipeline runs helm upgrade             │
      │  (new DAG is in git-sync volume)            │
      │  (new portal image tag → rolling update)    │
      │                                             │
      └──────────────────────────────────────────── ▶  dev updated automatically
 ```
 
-Git-synced resources (DAG files, DQ rules) appear in dev within 60–90 seconds of merge. Kubernetes resources (new pod images, config map changes) are updated by ArgoCD within 3 minutes.
+Git-synced resources (DAG files, DQ rules) appear in dev within 60–90 seconds of merge. Kubernetes resources (new pod images, config map changes) are updated by ADO Pipeline within minutes.
 
 ### Promoting to Production via Git Tag
 
@@ -1257,7 +1257,7 @@ git tag prod-2026-03-24-001 -m "Deploy supplier invoices pipeline to prod"
 git push origin prod-2026-03-24-001
 ```
 
-ArgoCD's `forge-orchestration-prod` Application is configured to track `targetRevision: "prod-*"` (latest matching tag). On push, ArgoCD detects the new tag and syncs production within 3 minutes.
+The production ADO release pipeline is configured to trigger on `prod-*` tags. On push, the pipeline runs `helm upgrade` against the prod cluster.
 
 The tag convention is `prod-{date}-{seq}`, making it trivial to roll back:
 
@@ -1265,7 +1265,7 @@ The tag convention is `prod-{date}-{seq}`, making it trivial to roll back:
 # Rollback: tag the previous production commit
 git tag prod-2026-03-23-003 <prev-sha> -m "Rollback: revert supplier invoices pipeline"
 git push origin prod-2026-03-23-003
-# ArgoCD syncs to the tagged commit — production returns to the prior state
+# ADO Pipeline deploys the tagged commit — production returns to the prior state
 ```
 
 ---

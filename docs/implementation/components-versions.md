@@ -82,7 +82,6 @@ No cluster node ever pulls from a public registry. This eliminates:
 
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
-| **ArgoCD** | 2.11.0 | `quay.io/argoproj/argocd:v2.11.0` | `forgeacr/argocd:2.11.0` | Imported, not modified |
 | **Secrets Store CSI Driver** | 1.4.4 | `mcr.microsoft.com/oss/...` | MCR (already Azure-hosted) | No re-tagging needed |
 | **Azure Workload Identity** | 1.3.0 | `mcr.microsoft.com/oss/azure/...` | MCR (already Azure-hosted) | No re-tagging needed |
 | **OPA Gatekeeper** | 3.16.3 | `openpolicyagent/gatekeeper:v3.16.3` | `forgeacr/gatekeeper:3.16.3` | Imported |
@@ -201,6 +200,5 @@ All version changes go through Git — no image tag updates directly in producti
 | Azure Monitor / Container Insights | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Managed Grafana | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Log Analytics Workspace | Microsoft Azure Terms | Covered by Azure enterprise agreement |
-| ArgoCD | Apache 2.0 | Attribution |
 
 All licenses permit internal enterprise use. Azure-native observability services (Azure Monitor, Azure Managed Grafana, Log Analytics) are covered by the existing Microsoft Azure enterprise agreement — no AGPL obligations.

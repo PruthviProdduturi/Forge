@@ -383,7 +383,6 @@ docker push "${REGISTRY}/trino:438-${ENV}"
 | `statsd-exporter:0.26.1` | `prom/statsd-exporter:v0.26.1` | `forgeacr/statsd-exporter:0.26.1-{env}` |
 | `kube-state-metrics:2.12.0` | `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.12.0` | `forgeacr/kube-state-metrics:2.12.0-{env}` |
 | `spark-operator:1.4.6` | `ghcr.io/kubeflow/spark-operator:v1.4.6` | `forgeacr/spark-operator:1.4.6-{env}` |
-| `argocd:2.11.0` | `quay.io/argoproj/argocd:v2.11.0` | `forgeacr/argocd:2.11.0-{env}` |
 | `gatekeeper:3.16.3` | `openpolicyagent/gatekeeper:v3.16.3` | `forgeacr/gatekeeper:3.16.3-{env}` |
 
 ---

@@ -527,7 +527,7 @@ spark.driver.extraJavaOptions                         -XX:+UseG1GC -XX:Initiatin
 spark.executor.extraJavaOptions                       -XX:+UseG1GC -XX:InitiatingHeapOccupancyPercent=35
 ```
 
-This ConfigMap is managed by the `spark-operator` Helm chart and updated via GitOps (ArgoCD). Any change to the ConfigMap requires a Helm chart update and an ArgoCD sync — there is no ad-hoc `kubectl edit`.
+This ConfigMap is managed by the `spark-operator` Helm chart and updated via ADO Pipeline. Any change to the ConfigMap requires a Helm chart update and an ADO Pipeline run — there is no ad-hoc `kubectl edit`.
 
 ### Layer 2: SparkApplication spec sparkConf (Job-Level Overrides)
 

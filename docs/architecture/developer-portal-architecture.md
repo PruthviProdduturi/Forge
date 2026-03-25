@@ -1081,31 +1081,27 @@ This ensures zero downtime during deployments. With 2 replicas and `maxUnavailab
 5. Wait for readiness
 6. Terminate last old pod (total: 2 new pods)
 
-### Image Tagging and GitOps
+### Image Tagging and CD Pipeline
 
-Portal images are tagged with the Git commit SHA (`portal-web:a3f91bc`). ArgoCD manages the deployment via an Application in the `argocd` namespace:
+Portal images are tagged with the Git commit SHA (`portal-web:a3f91bc`). The ADO release pipeline deploys the Helm chart on every merge to `main`:
 
 ```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: Application
-metadata:
-  name: portal
-  namespace: argocd
-spec:
-  source:
-    repoURL: https://dev.azure.com/org/forge/_git/forge
-    path: infra/helm/orchestration/portal
-    targetRevision: HEAD
-  destination:
-    server: https://kubernetes.default.svc
-    namespace: portal
-  syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
+# infra/pipelines/release-portal.yml (excerpt)
+- stage: Deploy
+  jobs:
+    - deployment: HelmUpgrade
+      environment: forge-orchestration-dev
+      steps:
+        - task: HelmDeploy@0
+          inputs:
+            command: upgrade
+            chartPath: infra/helm/orchestration/portal
+            releaseName: portal
+            namespace: portal
+            valueFile: infra/helm/orchestration/portal/values-$(environment).yaml
 ```
 
-To deploy a new portal version: update the image tag in the Helm values file and merge to `main`. ArgoCD detects the diff within 3 minutes and syncs automatically. No manual `kubectl apply` or `helm upgrade` is run in production.
+To deploy a new portal version: update the image tag in the Helm values file and merge to `main`. The ADO pipeline triggers automatically and runs `helm upgrade`. No manual `kubectl apply` is run in production.
 
 ---
 

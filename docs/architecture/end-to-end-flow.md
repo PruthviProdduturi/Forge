@@ -29,9 +29,9 @@
           └────────────┬─────────────┘
                        │
           ┌────────────▼──────────────────────────────────────┐
-          │               ArgoCD + git-sync                    │
+          │               ADO Pipelines + git-sync                    │
           │                                                     │
-          │  ArgoCD  → syncs infra/ Helm charts to clusters     │
+          │  ADO Pipeline → deploys infra/ Helm charts to clusters     │
           │  git-sync → pulls dags/ into Airflow scheduler      │
           └────────────┬────────────────────────┬──────────────┘
                        │                        │
@@ -109,7 +109,7 @@ Git commit + PR
         │  PR reviewed by team → merged to main
         ▼
 git-sync picks up DAG file (within 30 seconds)
-ArgoCD syncs Spark job file to code/ container on ADLS
+ADO Pipeline deploys Spark job file to code/ container on ADLS
 ```
 
 ---
@@ -349,7 +349,7 @@ Forge Git Repository
         └── plugins/             ← Custom operators (platform team + data engineers)
 ```
 
-**Key rule:** Changes to `infra/` go through platform team review and trigger ArgoCD sync (Helm redeploy). Changes to `orchestration/airflow/dags/` go through data engineer review and are live in Airflow within 30 seconds via git-sync — no platform redeploy needed.
+**Key rule:** Changes to `infra/` go through platform team review and trigger ADO Pipeline (Helm redeploy). Changes to `orchestration/airflow/dags/` go through data engineer review and are live in Airflow within 30 seconds via git-sync — no platform redeploy needed.
 
 **DAG naming convention:**
 

@@ -193,18 +193,22 @@ Production is **never automatically deployed**. It requires a Git tag on a teste
 8. Rollback: delete the tag, push previous tag → Azure DevOps reverts
 ```
 
-**Azure DevOps sync waves** (controls deployment order in production):
+**ADO Pipeline stage order** (controls deployment order in production):
 
 ```yaml
-# Annotation on each Helm Application
-metadata:
-  annotations:
-    helm.argoproj.io/sync-wave: "1"   # networking/identity (wave 1 — first)
-    helm.argoproj.io/sync-wave: "2"   # storage/KV (wave 2)
-    helm.argoproj.io/sync-wave: "3"   # AKS bootstrap (wave 3)
-    helm.argoproj.io/sync-wave: "4"   # compute cluster apps (wave 4)
-    helm.argoproj.io/sync-wave: "5"   # orchestration cluster apps (wave 5)
-    helm.argoproj.io/sync-wave: "6"   # portal (wave 6 — last)
+# infra/pipelines/release.yml (stages — each dependsOn the previous)
+stages:
+  - stage: Networking      # stage 1 — networking + identity
+  - stage: Storage         # stage 2 — storage + Key Vault
+    dependsOn: Networking
+  - stage: AKSBootstrap    # stage 3 — AKS cluster bootstrap
+    dependsOn: Storage
+  - stage: ComputeApps     # stage 4 — compute cluster apps (Spark, Trino)
+    dependsOn: AKSBootstrap
+  - stage: OrchApps        # stage 5 — orchestration cluster apps (Airflow, Marquez)
+    dependsOn: AKSBootstrap
+  - stage: Portal          # stage 6 — portal (last)
+    dependsOn: OrchApps
 ```
 
 ---
