@@ -44,85 +44,85 @@ All observability signals are collected by the Azure Monitor Agent (AMA), which 
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────────┐
-│                         FORGE OBSERVABILITY STACK                            │
+│                         FORGE OBSERVABILITY STACK                              │
 │                                                                                │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
-│  │  Signal Sources                                                          │   │
-│  │                                                                          │   │
-│  │  Compute Cluster (forge-compute)                                       │   │
-│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────┐  │   │
-│  │  │ Spark Driver │ │Spark Executor│ │    Trino     │ │  AKS nodes    │  │   │
-│  │  │ /metrics     │ │ /metrics     │ │ /v1/info     │ │  (host metrics│  │   │
-│  │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └───────┬───────┘  │   │
+│  │  Signal Sources                                                          │  │
+│  │                                                                          │  │
+│  │  Compute Cluster (forge-compute)                                       │    │
+│  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────┐  │    │
+│  │  │ Spark Driver │ │Spark Executor│ │    Trino     │ │  AKS nodes    │  │    │
+│  │  │ /metrics     │ │ /metrics     │ │ /v1/info     │ │  (host metrics│  │    │
+│  │  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └───────┬───────┘  │    │
 │  │         │  metrics       │                │                  │          │   │
 │  │         └────────────────┴────────────────┴──────────────────┘          │   │
-│  │                          │                                               │   │
-│  │  ┌───────────────────────▼─────────────────────────────────────────┐   │   │
+│  │                          │                                               │  │
+│  │  ┌───────────────────────▼─────────────────────────────────────────┐   │    │
 │  │  │  Azure Monitor Agent (AMA) DaemonSet (compute cluster)           │   │   │
 │  │  │  collects metrics + tails /var/log/containers/*                  │   │   │
 │  │  │  ships to Azure Monitor workspace + Log Analytics Workspace      │   │   │
-│  │  └───────────────────────┬─────────────────────────────────────────┘   │   │
-│  │                          │  metrics + log streams                        │   │
+│  │  └───────────────────────┬─────────────────────────────────────────┘   │    │
+│  │                          │  metrics + log streams                        │  │
 │  └──────────────────────────┼──────────────────────────────────────────────┘   │
-│                             │                                                   │
+│                             │                                                  │
 │  ┌──────────────────────────┼──────────────────────────────────────────────┐   │
-│  │  Orchestration Cluster (forge-orchestration)                          │   │
-│  │                          │                                               │   │
-│  │  ┌─────────────────────────────────────────────────────────────────┐   │   │
+│  │  Orchestration Cluster (forge-orchestration)                          │     │
+│  │                          │                                               │  │
+│  │  ┌─────────────────────────────────────────────────────────────────┐   │    │
 │  │  │  Signal Sources (orchestration cluster)                          │   │   │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │   │   │
-│  │  │  │ Airflow  │ │ Marquez  │ │  Portal  │ │  AKS     │           │   │   │
-│  │  │  │ metrics  │ │ /metrics │ │ API      │ │ nodes    │           │   │   │
-│  │  │  │          │ │          │ │ /metrics │ │ (host    │           │   │   │
-│  │  │  │          │ │          │ │          │ │ metrics) │           │   │   │
-│  │  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘           │   │   │
+│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │   │     │
+│  │  │  │ Airflow  │ │ Marquez  │ │  Portal  │ │  AKS     │           │   │     │
+│  │  │  │ metrics  │ │ /metrics │ │ API      │ │ nodes    │           │   │     │
+│  │  │  │          │ │          │ │ /metrics │ │ (host    │           │   │     │
+│  │  │  │          │ │          │ │          │ │ metrics) │           │   │     │
+│  │  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘           │   │     │
 │  │  └───────┼────────────┼────────────┼────────────┼───────────────────┘   │   │
-│  │          │            │            │            │                         │   │
-│  │          └────────────┴────────────┴────────────┘                        │   │
-│  │                             │  metrics + logs                             │   │
-│  │  ┌──────────────────────────▼─────────────────────────────────────┐   │   │
-│  │  │  Azure Monitor Agent (AMA) DaemonSet (orchestration cluster)    │   │   │
-│  │  │  ships to Azure Monitor workspace + Log Analytics Workspace     │   │   │
+│  │          │            │            │            │                         │ │
+│  │          └────────────┴────────────┴────────────┘                        │  │
+│  │                             │  metrics + logs                             │ │
+│  │  ┌──────────────────────────▼─────────────────────────────────────┐   │     │
+│  │  │  Azure Monitor Agent (AMA) DaemonSet (orchestration cluster)    │   │    │
+│  │  │  ships to Azure Monitor workspace + Log Analytics Workspace     │   │    │
 │  │  └──────────────────────────────────────────────────────────────────┘   │   │
-│  │                             │                                             │   │
-│  └─────────────────────────────┼──────────────────────────────────────────── │
-│                                │                                              │
-│  ┌─────────────────────────────▼──────────────────────────────────────────┐  │
+│  │                             │                                             │ │
+│  └─────────────────────────────┼────────────────────────────────────────────   │
+│                                │                                               │
+│  ┌─────────────────────────────▼──────────────────────────────────────────┐    │
 │  │  Azure-Native Observability Backend                                      │  │
 │  │                                                                          │  │
-│  │  ┌──────────────────────────────────────┐                               │  │
-│  │  │  Azure Monitor / Container Insights  │                               │  │
-│  │  │  • AKS-native metrics (Container     │                               │  │
-│  │  │    Insights add-on)                  │                               │  │
-│  │  │  • recording rules (metric alerts)   │                               │  │
-│  │  └──────────────┬───────────────────────┘                               │  │
-│  │                 │                      ▲                                  │  │
-│  │                 │ queries              │ alerts                           │  │
-│  │                 ▼                      │                                  │  │
-│  │  ┌──────────────────────┐   ┌──────────────────────────────────────┐    │  │
-│  │  │  Azure Managed       │   │  Azure Monitor Alerts /              │    │  │
-│  │  │  Grafana             │   │  Action Groups                       │    │  │
-│  │  │  • Azure Monitor DS  │   │  • routing rules                     │    │  │
-│  │  │  • Log Analytics DS  │   │  • suppression rules                 │    │  │
-│  │  │  • App Insights DS   │   │  • PagerDuty action group (crit)     │    │  │
-│  │  │  • Azure Cost DS     │   │  • Teams action group (warning)      │    │  │
-│  │  │  • OIDC via Azure AD │   └──────────────────────────────────────┘    │  │
+│  │  ┌──────────────────────────────────────┐                               │   │
+│  │  │  Azure Monitor / Container Insights  │                               │   │
+│  │  │  • AKS-native metrics (Container     │                               │   │
+│  │  │    Insights add-on)                  │                               │   │
+│  │  │  • recording rules (metric alerts)   │                               │   │
+│  │  └──────────────┬───────────────────────┘                               │   │
+│  │                 │                      ▲                                  │ │
+│  │                 │ queries              │ alerts                           │ │
+│  │                 ▼                      │                                  │ │
+│  │  ┌──────────────────────┐   ┌──────────────────────────────────────┐    │   │
+│  │  │  Azure Managed       │   │  Azure Monitor Alerts /              │    │   │
+│  │  │  Grafana             │   │  Action Groups                       │    │   │
+│  │  │  • Azure Monitor DS  │   │  • routing rules                     │    │   │
+│  │  │  • Log Analytics DS  │   │  • suppression rules                 │    │   │
+│  │  │  • App Insights DS   │   │  • PagerDuty action group (crit)     │    │   │
+│  │  │  • Azure Cost DS     │   │  • Teams action group (warning)      │    │   │
+│  │  │  • OIDC via Azure AD │   └──────────────────────────────────────┘    │   │
 │  │  │  • provisioned DBs   │                                                │  │
 │  │  └──────────────────────┘                                                │  │
 │  │                                                                          │  │
-│  │  ┌──────────────────────────────┐   ┌──────────────────────────────┐    │  │
-│  │  │  Azure Log Analytics         │   │  Azure Monitor /             │    │  │
-│  │  │  Workspace                   │   │  Application Insights        │    │  │
-│  │  │  • KQL queries               │   │  • OTLP ingest               │    │  │
-│  │  │  • AMA log ingest            │   │  • trace correlation         │    │  │
-│  │  │  • configurable retention    │   │  • end-to-end transaction    │    │  │
-│  │  └──────────────────────────────┘   └──────────────────────────────┘    │  │
+│  │  ┌──────────────────────────────┐   ┌──────────────────────────────┐    │   │
+│  │  │  Azure Log Analytics         │   │  Azure Monitor /             │    │   │
+│  │  │  Workspace                   │   │  Application Insights        │    │   │
+│  │  │  • KQL queries               │   │  • OTLP ingest               │    │   │
+│  │  │  • AMA log ingest            │   │  • trace correlation         │    │   │
+│  │  │  • configurable retention    │   │  • end-to-end transaction    │    │   │
+│  │  └──────────────────────────────┘   └──────────────────────────────┘    │   │
 │  │          ▲                                   ▲                           │  │
-│  │          │ push (log streams via AMA)        │ OTLP/gRPC (traces)       │  │
-│  │  ┌───────┴───────────────────────────────────┴────────────────────┐    │  │
-│  │  │  Azure Monitor Agent (AMA) DaemonSets   OpenTelemetry Collector │    │  │
-│  │  │  (both clusters — AKS built-in add-on)  (sidecar or Deployment)│    │  │
-│  │  └────────────────────────────────────────────────────────────────┘    │  │
+│  │          │ push (log streams via AMA)        │ OTLP/gRPC (traces)       │   │
+│  │  ┌───────┴───────────────────────────────────┴────────────────────┐    │    │
+│  │  │  Azure Monitor Agent (AMA) DaemonSets   OpenTelemetry Collector │    │   │
+│  │  │  (both clusters — AKS built-in add-on)  (sidecar or Deployment)│    │    │
+│  │  └────────────────────────────────────────────────────────────────┘    │    │
 │  │                                                                          │  │
 │  │  Azure Cost Management API (cost telemetry source)                       │  │
 │  └──────────────────────────────────────────────────────────────────────────┘  │
@@ -989,7 +989,7 @@ Source 2: OpenLineage Cost Facet
 │     "pipeline_id": "uuid",                  │
 │     "dag_id": "ingest_orders",              │
 │     "dag_run_id": "scheduled__...",         │
-│     "cluster": "forge-compute",           │
+│     "cluster": "forge-compute",           │  
 │     "executor_count_avg": 12,               │
 │     "driver_duration_seconds": 1842,        │
 │     "executor_duration_seconds_total": 8640,│

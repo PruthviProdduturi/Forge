@@ -192,9 +192,9 @@ The portal displays a preview before confirmation:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Restate: sales.orders                                       │
+│  Restate: sales.orders                                      │
 │                                                             │
-│  Date range:   2024-01-01 → 2024-01-07  (7 partitions)    │
+│  Date range:   2024-01-01 → 2024-01-07  (7 partitions)      │
 │  Layers:       Silver, Gold                                 │
 │  Trackers:     14 will be deleted                           │
 │  Downstream:   sales.order_lines, finance.revenue_daily     │
@@ -202,10 +202,10 @@ The portal displays a preview before confirmation:
 │                                                             │
 │  Reason:  Source system redelivered corrected January data  │
 │                                                             │
-│  ⚠  This will overwrite 7 Silver + 7 Gold partitions.      │
+│  ⚠  This will overwrite 7 Silver + 7 Gold partitions.       │
 │     Existing data will be replaced via Delta overwrite.     │
 │                                                             │
-│  [ Cancel ]                        [ Confirm Restatement ] │
+│  [ Cancel ]                        [ Confirm Restatement ]  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -294,17 +294,17 @@ The portal polls the Airflow REST API and the Restatement Registry to stream pro
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Restatement in progress — sales.orders                      │
-│  rst-7f3a9c2b  ·  Triggered by prproddu  ·  09:12 UTC       │
+│  rst-7f3a9c2b  ·  Triggered by prproddu  ·  09:12 UTC       │ 
 │                                                              │
 │  Progress:  9 / 14 partitions complete                       │
 │  ████████████████░░░░░░░░  64%                               │
 │                                                              │
-│  Silver   ██████████  7/7  ✓ complete                       │
-│  Gold     ████░░░░░░  2/7  ⟳ running                        │
+│  Silver   ██████████  7/7  ✓ complete                       │ 
+│  Gold     ████░░░░░░  2/7  ⟳ running                        │ 
 │                                                              │
-│  ETA: ~4 min  ·  Elapsed: 8 min                             │
+│  ETA: ~4 min  ·  Elapsed: 8 min                             │ 
 │                                                              │
-│  [ View Airflow Runs ↗ ]           [ Cancel Restatement ]   │
+│  [ View Airflow Runs ↗ ]           [ Cancel Restatement ]   │ 
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -400,7 +400,7 @@ ingest_sales_orders  →  silver/sales/orders
                     ┌─────────┴─────────┐
                     ▼                   ▼
           gold/sales/orders_daily   gold/sales/orders_monthly
-                    │
+                                        │
                     ▼
           gold/finance/revenue_daily
 ```
@@ -627,7 +627,7 @@ Lineage consumers (audit tools, downstream teams) can distinguish restated data 
 
 ```
 ┌───────────────── Developer Portal ──────────────────────────┐
-│                                                              │
+│                                                             │
 │  Dataset Page   Pipeline Page   Lineage Graph               │
 │       │               │               │                     │
 │       └───────────────┴───────────────┘                     │
@@ -636,10 +636,10 @@ Lineage consumers (audit tools, downstream teams) can distinguish restated data 
 │                       │                                     │
 │              Portal API (/api/restatements)                 │
 │                       │                                     │
-│          ┌────────────┼────────────────────┐               │
-│          ▼            ▼                    ▼               │
-│   Validate RBAC  Restatement Registry  Airflow REST API    │
-│                  (Delta Lake table)    (trigger backfill)  │
+│          ┌────────────┼────────────────────┐                │
+│          ▼            ▼                    ▼                │
+│   Validate RBAC  Restatement Registry  Airflow REST API     │
+│                  (Delta Lake table)    (trigger backfill)   │
 └──────────────────────────────────────────────────────────--┘
                          │
            ┌─────────────┴─────────────┐

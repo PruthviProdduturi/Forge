@@ -670,19 +670,19 @@ Client (portal, JDBC tool, Trino CLI)
 ┌──────────────────────────────────────────────────────────────────┐
 │  Trino Coordinator (Deployment, 2 replicas with shared state)    │
 │                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
+│  ┌──────────────────────────────────────────────────────────┐    │
 │  │  Query Lifecycle                                          │   │
-│  │  1. Receive SQL from client                              │   │
-│  │  2. Parse → AST                                          │   │
-│  │  3. Analyze (resolve names, types from Hive Metastore)   │   │
-│  │  4. Plan (logical plan → optimized logical plan)         │   │
-│  │  5. Schedule (distribute stages across workers)          │   │
-│  │  6. Monitor execution, collect results                   │   │
-│  │  7. Return results to client                             │   │
-│  └──────────────────────────────────────────────────────────┘   │
+│  │  1. Receive SQL from client                              │    │
+│  │  2. Parse → AST                                          │    │
+│  │  3. Analyze (resolve names, types from Hive Metastore)   │    │
+│  │  4. Plan (logical plan → optimized logical plan)         │    │
+│  │  5. Schedule (distribute stages across workers)          │    │
+│  │  6. Monitor execution, collect results                   │    │
+│  │  7. Return results to client                             │    │
+│  └──────────────────────────────────────────────────────────┘    │
 │                                                                  │
-│  JVM: 24 GB heap (-Xmx24g)                                      │
-│  Node memory: 32 GB (Standard_E16s_v5 = 128 GB; shared pool)    │
+│  JVM: 24 GB heap (-Xmx24g)                                       │
+│  Node memory: 32 GB (Standard_E16s_v5 = 128 GB; shared pool)     │
 └───────────────────────────────┬──────────────────────────────────┘
                                 │
                                 │  HTTP (internal, port 8080)
@@ -693,13 +693,13 @@ Client (portal, JDBC tool, Trino CLI)
 │                                                                  │
 │  Each worker:                                                    │
 │  • Receives task assignments from coordinator                    │
-│  • Reads data directly from ADLS via ABFS (connector)           │
+│  • Reads data directly from ADLS via ABFS (connector)            │
 │  • Executes operators: scan, filter, aggregate, join, sort       │
 │  • Exchanges intermediate data with other workers (shuffle)      │
-│  • Returns result pages to coordinator                          │
+│  • Returns result pages to coordinator                           │
 │                                                                  │
-│  JVM: 48 GB heap (-Xmx48g)                                      │
-│  Node memory: 128 GB (Standard_E16s_v5)                         │
+│  JVM: 48 GB heap (-Xmx48g)                                       │
+│  Node memory: 128 GB (Standard_E16s_v5)                          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1126,77 +1126,77 @@ This facet is stored by Marquez alongside all other run facets in PostgreSQL. Th
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════════════╗
-║                    forge-compute  AKS Cluster  (10.1.0.0/16)                     ║
+║                    forge-compute  AKS Cluster  (10.1.0.0/16)                         ║
 ║                                                                                      ║
-║  ┌─────────────────────────────┐  ┌─────────────────────────────────────────────┐   ║
-║  │     system node pool        │  │          spark node pool                    │   ║
-║  │  Standard_D4s_v5  (1–3)     │  │  Standard_E8s_v5  (0–20)                   │   ║
-║  │                             │  │  Mixed: on-demand + spot VMSS               │   ║
-║  │  ┌─────────────────────┐    │  │                                             │   ║
-║  │  │  spark-operator     │    │  │  ┌──────────────────────────────────────┐   │   ║
-║  │  │  (controller pod)   │    │  │  │  Spark Connect Server               │   │   ║
-║  │  │  watches spark-jobs │    │  │  │  (Deployment, 1 replica)            │   │   ║
-║  │  │  namespace for CRDs │    │  │  │  gRPC port 15002                    │   │   ║
-║  │  └─────────────────────┘    │  │  │  SparkContext + SessionManager      │   │   ║
-║  │                             │  │  └──────────────┬───────────────────────┘   │   ║
+║  ┌─────────────────────────────┐  ┌─────────────────────────────────────────────┐    ║
+║  │     system node pool        │  │          spark node pool                    │    ║
+║  │  Standard_D4s_v5  (1–3)     │  │  Standard_E8s_v5  (0–20)                   │     ║
+║  │                             │  │  Mixed: on-demand + spot VMSS               │    ║
+║  │  ┌─────────────────────┐    │  │                                             │    ║
+║  │  │  spark-operator     │    │  │  ┌──────────────────────────────────────┐   │    ║
+║  │  │  (controller pod)   │    │  │  │  Spark Connect Server               │   │     ║
+║  │  │  watches spark-jobs │    │  │  │  (Deployment, 1 replica)            │   │     ║
+║  │  │  namespace for CRDs │    │  │  │  gRPC port 15002                    │   │     ║
+║  │  └─────────────────────┘    │  │  │  SparkContext + SessionManager      │   │     ║
+║  │                             │  │  └──────────────┬───────────────────────┘   │    ║
 ║  │  ┌─────────────────────┐    │  │                 │ spawns executors           │   ║
-║  │  │  spark-operator     │    │  │                 ▼                           │   ║
-║  │  │  webhook            │    │  │  ┌──────────────────────────────────────┐   │   ║
-║  │  │  (admission ctrl)   │    │  │  │  Interactive Executor Pool           │   │   ║
-║  │  │  mutates driver &   │    │  │  │  (dynamic, 0–20 pods, spot)         │   │   ║
-║  │  │  executor pods      │    │  │  └──────────────────────────────────────┘   │   ║
-║  │  └─────────────────────┘    │  │                                             │   ║
-║  │                             │  │  ┌──────────────────────────────────────┐   │   ║
-║  │  ┌─────────────────────┐    │  │  │  spark-jobs namespace               │   │   ║
-║  │  │  hive-metastore     │    │  │  │                                     │   │   ║
-║  │  │  (Thrift, port 9083)│    │  │  │  Driver Pod (on-demand node)        │   │   ║
-║  │  │  backed by          │    │  │  │  ┌────────────────────────────┐     │   │   ║
-║  │  │  PostgreSQL hms_db  │    │  │  │  │ SparkContext               │     │   │   ║
-║  │  └─────────────────────┘    │  │  │  │ DAGScheduler               │     │   │   ║
-║  │                             │  │  │  │ BlockManagerMaster          │     │   │   ║
-║  └─────────────────────────────┘  │  │  └────────────────────────────┘     │   │   ║
-║                                   │  │         │ requests executors         │   │   ║
-║                                   │  │         ▼                           │   │   ║
-║                                   │  │  Executor Pods (spot nodes)         │   │   ║
-║                                   │  │  ┌────┐ ┌────┐ ┌────┐ ┌────┐      │   │   ║
-║                                   │  │  │ E1 │ │ E2 │ │ E3 │ │ EN │ ...  │   │   ║
-║                                   │  │  └────┘ └────┘ └────┘ └────┘      │   │   ║
-║                                   │  │  (2 initial → up to 50 via dynalloc)   │   ║
-║                                   │  │                                     │   │   ║
-║                                   │  │  External Shuffle Service (DaemonSet)  │   ║
-║                                   │  │  ┌──────────────────────────────────┐   │   ║
-║                                   │  │  │ spark-shuffle-service (each node)│   │   ║
-║                                   │  │  │ port 7337                        │   │   ║
-║                                   │  │  └──────────────────────────────────┘   │   ║
-║                                   │  └─────────────────────────────────────────┘   ║
-║                                   │                                                 ║
-║                                   └─────────────────────────────────────────────┐  ║
-║                                                                                  │  ║
-║  ┌───────────────────────────────────────────────────────────────────────────┐   │  ║
-║  │                        trino node pool                                    │   │  ║
-║  │                  Standard_E16s_v5  (2–8, on-demand)                      │   │  ║
-║  │                                                                           │   │  ║
-║  │  ┌────────────────────────────────────┐                                   │   │  ║
-║  │  │  Trino Coordinator  (2 replicas)   │                                   │   │  ║
-║  │  │  JVM heap: 24 GB                  │◄──── client queries (HTTPS 8443)  │   │  ║
-║  │  │  Plans + schedules queries        │                                   │   │  ║
-║  │  │  OIDC auth via Azure AD           │                                   │   │  ║
-║  │  └──────────────────┬─────────────────┘                                  │   │  ║
-║  │                     │ distributes tasks (HTTP 8080)                       │   │  ║
-║  │                     ▼                                                     │   │  ║
-║  │  ┌────────────────────────────────────┐                                   │   │  ║
-║  │  │  Trino Workers  (0–8 replicas)     │                                   │   │  ║
-║  │  │  JVM heap: 48 GB                  │                                   │   │  ║
-║  │  │  HPA: scale on active query count │                                   │   │  ║
-║  │  │  Scale-to-zero when idle          │                                   │   │  ║
-║  │  └────────────────────────────────────┘                                   │   │  ║
-║  │                                                                           │   │  ║
-║  └───────────────────────────────────────────────────────────────────────────┘   │  ║
+║  │  │  spark-operator     │    │  │                 ▼                           │    ║
+║  │  │  webhook            │    │  │  ┌──────────────────────────────────────┐   │    ║
+║  │  │  (admission ctrl)   │    │  │  │  Interactive Executor Pool           │   │    ║
+║  │  │  mutates driver &   │    │  │  │  (dynamic, 0–20 pods, spot)         │   │     ║
+║  │  │  executor pods      │    │  │  └──────────────────────────────────────┘   │    ║
+║  │  └─────────────────────┘    │  │                                             │    ║
+║  │                             │  │  ┌──────────────────────────────────────┐   │    ║
+║  │  ┌─────────────────────┐    │  │  │  spark-jobs namespace               │   │     ║
+║  │  │  hive-metastore     │    │  │  │                                     │   │     ║
+║  │  │  (Thrift, port 9083)│    │  │  │  Driver Pod (on-demand node)        │   │     ║
+║  │  │  backed by          │    │  │  │  ┌────────────────────────────┐     │   │     ║
+║  │  │  PostgreSQL hms_db  │    │  │  │  │ SparkContext               │     │   │     ║
+║  │  └─────────────────────┘    │  │  │  │ DAGScheduler               │     │   │     ║
+║  │                             │  │  │  │ BlockManagerMaster          │     │   │    ║
+║  └─────────────────────────────┘  │  │  └────────────────────────────┘     │   │     ║
+║                                   │  │         │ requests executors         │   │    ║
+║                                   │  │         ▼                           │   │     ║
+║                                   │  │  Executor Pods (spot nodes)         │   │     ║
+║                                   │  │  ┌────┐ ┌────┐ ┌────┐ ┌────┐      │   │       ║
+║                                   │  │  │ E1 │ │ E2 │ │ E3 │ │ EN │ ...  │   │       ║
+║                                   │  │  └────┘ └────┘ └────┘ └────┘      │   │       ║
+║                                   │  │  (2 initial → up to 50 via dynalloc)   │      ║
+║                                   │  │                                     │   │     ║
+║                                   │  │  External Shuffle Service (DaemonSet)  │      ║
+║                                   │  │  ┌──────────────────────────────────┐   │     ║
+║                                   │  │  │ spark-shuffle-service (each node)│   │     ║
+║                                   │  │  │ port 7337                        │   │     ║
+║                                   │  │  └──────────────────────────────────┘   │     ║
+║                                   │  └─────────────────────────────────────────┘     ║
+║                                   │                                                  ║
+║                                   └─────────────────────────────────────────────┐    ║
+║                                                                                  │   ║
+║  ┌───────────────────────────────────────────────────────────────────────────┐   │   ║
+║  │                        trino node pool                                    │   │   ║
+║  │                  Standard_E16s_v5  (2–8, on-demand)                      │   │    ║
+║  │                                                                           │   │   ║
+║  │  ┌────────────────────────────────────┐                                   │   │   ║
+║  │  │  Trino Coordinator  (2 replicas)   │                                   │   │   ║
+║  │  │  JVM heap: 24 GB                  │◄──── client queries (HTTPS 8443)  │   │    ║
+║  │  │  Plans + schedules queries        │                                   │   │    ║
+║  │  │  OIDC auth via Azure AD           │                                   │   │    ║
+║  │  └──────────────────┬─────────────────┘                                  │   │    ║
+║  │                     │ distributes tasks (HTTP 8080)                       │   │   ║
+║  │                     ▼                                                     │   │   ║
+║  │  ┌────────────────────────────────────┐                                   │   │   ║
+║  │  │  Trino Workers  (0–8 replicas)     │                                   │   │   ║
+║  │  │  JVM heap: 48 GB                  │                                   │   │    ║
+║  │  │  HPA: scale on active query count │                                   │   │    ║
+║  │  │  Scale-to-zero when idle          │                                   │   │    ║
+║  │  └────────────────────────────────────┘                                   │   │   ║
+║  │                                                                           │   │   ║
+║  └───────────────────────────────────────────────────────────────────────────┘   │   ║
 ║                                   ▲                                               │  ║
 ╚═══════════════════════════════════╪═══════════════════════════════════════════════╪══╝
                                     │                                               │
                     ┌───────────────┴───────────────┐               ┌──────────────┘
-                    │                               │               │
+                    │                               │                              │
                     ▼                               ▼               ▼
      ┌──────────────────────────┐    ┌──────────────────────────┐  ILB
      │  ADLS Gen2 Lakehouse     │    │  Azure AD (OIDC)         │  15002
@@ -1207,19 +1207,19 @@ This facet is stored by Marquez alongside all other run facets in PostgreSQL. Th
 Cross-cluster communication (Orchestration → Compute):
 
   forge-orchestration cluster
-        │
+                                                                                   │
         │  kubectl apply SparkApplication CRD
         │  (via compute cluster private API endpoint)
         │  kubeconfig from Key Vault
         ▼
   forge-compute AKS API Server
-        │
+                                                                                   │
         ▼
   Spark Operator controller
-        │
+                                                                                   │
         ▼
   Driver + Executor pods (spark-jobs namespace)
-        │
+                                                                                   │
         │  OpenLineage events (HTTP POST)
         ▼
   Marquez API (orchestration cluster, via private endpoint)

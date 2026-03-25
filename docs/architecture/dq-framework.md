@@ -1079,61 +1079,61 @@ orchestration/dq/rules/inventory.yaml
           ▼
 Airflow Task Pod (validate_dq task)
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                              │
+│                                                                             │
 │  load_ruleset("orchestration/dq/rules/orders.yaml")                         │
-│    │                                                                         │
-│    │  1. Parse YAML                                                          │
+│    │                                                                        │
+│    │  1. Parse YAML                                                         │
 │    │  2. Validate against DQRuleset Pydantic model                          │
-│    │  3. Apply environment overrides (FORGE_ENV=prod)                      │
+│    │  3. Apply environment overrides (FORGE_ENV=prod)                       │
 │    │  4. Resolve ${ADLS_ACCOUNT} from Airflow Variables (Key Vault)         │
-│    ▼                                                                         │
-│  DQRuleset (validated, resolved)                                             │
-│    │                                                                         │
-│    ▼                                                                         │
-│  DQRunner.run()                                                              │
+│    ▼                                                                        │
+│  DQRuleset (validated, resolved)                                            │
+│    │                                                                        │
+│    ▼                                                                        │
+│  DQRunner.run()                                                             │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                                                                        │  │
+│  │                                                                        │ │
 │  │  Phase 1: Schema checks (sequential, Python engine)                   │  │
 │  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
-│  │  │  column_present, column_type, column_nullability                 │  │  │
+│  │  │  column_present, column_type, column_nullability                 │  │ │
 │  │  │  → reads Delta table schema (no data scan)                      │  │  │
 │  │  │  CRITICAL failure? → abort, return report                       │  │  │
 │  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                        │  │
-│  │  Phase 2: Content + Volume + Freshness (parallel, Trino engine)        │  │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │  │
-│  │  │ Thread 1         │  │ Thread 2         │  │ Thread 3           │  │  │
-│  │  │ Batched content  │  │ Volume checks    │  │ Freshness checks   │  │  │
-│  │  │ SQL (null_rate,  │  │ (row_count,      │  │ (partition_age,    │  │  │
-│  │  │  uniqueness,     │  │  delta,          │  │  watermark_lag)    │  │  │
-│  │  │  expression)     │  │  new_rows)       │  │                    │  │  │
-│  │  └───────┬──────────┘  └───────┬──────────┘  └──────────┬─────────┘  │  │
-│  │          │                     │                          │            │  │
-│  │          └─────────────────────┴──────────────────────────┘            │  │
-│  │                                │                                        │  │
-│  │                                ▼                                        │  │
-│  │  Thread 4: Referential integrity checks (separate Trino cross-table     │  │
-│  │            queries, run in parallel with Phase 2 threads)               │  │
-│  │                                                                        │  │
-│  │  Aggregate RuleResult list → DQRunReport                               │  │
+│  │                                                                        │ │
+│  │  Phase 2: Content + Volume + Freshness (parallel, Trino engine)        │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │   │
+│  │  │ Thread 1         │  │ Thread 2         │  │ Thread 3           │  │   │
+│  │  │ Batched content  │  │ Volume checks    │  │ Freshness checks   │  │   │
+│  │  │ SQL (null_rate,  │  │ (row_count,      │  │ (partition_age,    │  │   │
+│  │  │  uniqueness,     │  │  delta,          │  │  watermark_lag)    │  │   │
+│  │  │  expression)     │  │  new_rows)       │  │                    │  │   │
+│  │  └───────┬──────────┘  └───────┬──────────┘  └──────────┬─────────┘  │   │
+│  │          │                     │                          │            │ │
+│  │          └─────────────────────┴──────────────────────────┘            │ │
+│  │                                │                                        ││
+│  │                                ▼                                        ││
+│  │  Thread 4: Referential integrity checks (separate Trino cross-table     ││
+│  │            queries, run in parallel with Phase 2 threads)               ││
+│  │                                                                        │ │
+│  │  Aggregate RuleResult list → DQRunReport                               │ │
 │  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                              │
+│                                                                             │
 │  Reporters (sequential, each catches own exceptions)                        │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                                                                       │   │
-│  │  StoreReporter                 AlertReporter          LineageReporter │   │
+│  │                                                                       │  │
+│  │  StoreReporter                 AlertReporter          LineageReporter │  │
 │  │  ┌──────────────────┐         ┌─────────────────┐   ┌─────────────┐  │   │
-│  │  │ Writes DQRunReport│         │ Sends webhook   │   │ Emits DQ    │  │   │
+│  │  │ Writes DQRunReport│         │ Sends webhook   │   │ Emits DQ    │  │  │
 │  │  │ to Delta table   │         │ to Teams/Slack  │   │ facet to    │  │   │
 │  │  │ (append mode)    │         │ (CRITICAL +     │   │ Marquez API │  │   │
 │  │  │                  │         │  WARNING only)  │   │             │  │   │
 │  │  └────────┬─────────┘         └────────┬────────┘   └──────┬──────┘  │   │
-│  │           │                            │                    │         │   │
-│  └───────────┼────────────────────────────┼────────────────────┼─────────┘   │
-│              │                            │                    │              │
-│  if report.has_critical_failures():       │                    │              │
-│      raise DQCriticalFailureError         │                    │              │
-│         │                                │                    │              │
+│  │           │                            │                    │         │  │
+│  └───────────┼────────────────────────────┼────────────────────┼─────────┘  │
+│              │                            │                    │            │
+│  if report.has_critical_failures():       │                    │            │
+│      raise DQCriticalFailureError         │                    │            │
+│         │                                │                    │             │
 └─────────┼────────────────────────────────┼────────────────────┼──────────────┘
           │                                │                    │
           ▼                                ▼                    ▼

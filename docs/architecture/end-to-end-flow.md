@@ -14,9 +14,9 @@
 ║                              DEVELOPER ENVIRONMENT                               ║
 ║                                                                                  ║
 ║   VS Code                                                                        ║
-║   ├── Forge Extension  → scaffold Bronze/Silver/Gold notebooks + DAG stubs     ║
+║   ├── Forge Extension  → scaffold Bronze/Silver/Gold notebooks + DAG stubs       ║
 ║   ├── Jupyter Notebook   → PySpark via Spark Connect (remote, real cluster)      ║
-║   └── Git                → push DAGs, jobs, DQ rules to Forge repo             ║
+║   └── Git                → push DAGs, jobs, DQ rules to Forge repo               ║
 ╚══════════════════════╤═══════════════════════════════════════════════════════════╝
                        │
           ┌────────────▼─────────────┐
@@ -29,23 +29,23 @@
           └────────────┬─────────────┘
                        │
           ┌────────────▼──────────────────────────────────────┐
-          │               ADO Pipelines + git-sync                    │
-          │                                                     │
-          │  ADO Pipeline → deploys infra/ Helm charts to clusters     │
-          │  git-sync → pulls dags/ into Airflow scheduler      │
+          │               ADO Pipelines + git-sync            │
+          │                                                   │
+          │  ADO Pipeline → deploys Helm charts to clusters   │
+          │  git-sync → pulls dags/ into Airflow scheduler    │
           └────────────┬────────────────────────┬──────────────┘
                        │                        │
          ┌─────────────▼──────────┐  ┌──────────▼────────────────────────────────┐
-         │   COMPUTE CLUSTER       │  │         ORCHESTRATION CLUSTER              │
-         │   (AKS private)         │  │         (AKS private)                      │
-         │                         │  │                                            │
+         │   COMPUTE CLUSTER       │  │         ORCHESTRATION CLUSTER            │
+         │   (AKS private)         │  │         (AKS private)                    │
+         │                         │  │                                          │
          │  ┌─────────────────┐   │  │  ┌─────────────────────────────────────┐  │
          │  │ Spark Operator  │   │  │  │  Airflow Scheduler (x2 HA)          │  │
          │  │ Spark Connect   │◄──┼──┼──┤  - KubernetesExecutor               │  │
          │  │ Trino           │   │  │  │  - Key Vault secrets backend        │  │
          │  │ Hive Metastore  │   │  │  │  - OpenLineage provider             │  │
-         │  └────────┬────────┘   │  │  └──────────────┬────────────────────┘  │  │
-         │           │             │  │                 │                        │  │
+         │  └────────┬────────┘   │  │  └──────────────┬────────────────────┘  │ │
+         │           │             │  │                 │                     │  │
          └───────────┼─────────────┘  │  ┌─────────────▼────────────────────┐  │  │
                      │                │  │  Marquez API (lineage store)      │  │  │
                      │                │  └──────────────────────────────────┘  │  │
@@ -62,7 +62,7 @@
                      ╔════════════════▼══════════════════════════════╗
                      ║         ADLS Gen2 Lakehouse                   ║
                      ║                                               ║
-                     ║   bronze/  →  silver/  →  gold/              ║
+                     ║   bronze/  →  silver/  →  gold/               ║
                      ║   sandbox/    checkpoints/    code/           ║
                      ╚═══════════════════════════════════════════════╝
 ```
@@ -311,19 +311,19 @@ ADLS Gold: gold/crm_orders/ (Delta table, version 8, Z-ORDER optimised)
 gold/crm_orders is now available to all consumers:
 
   ┌──────────────────────────────────────────────────────────────┐
-  │  Trino SQL (via portal or direct client)                      │
-  │  SELECT customer_id, SUM(order_total_usd) AS ltv              │
-  │  FROM gold.crm_orders                                         │
-  │  WHERE order_date >= current_date - interval '30' day         │
-  │  GROUP BY customer_id                                          │
-  │  ORDER BY ltv DESC LIMIT 100                                   │
+  │  Trino SQL (via portal or direct client)                     │
+  │  SELECT customer_id, SUM(order_total_usd) AS ltv             │
+  │  FROM gold.crm_orders                                        │
+  │  WHERE order_date >= current_date - interval '30' day        │
+  │  GROUP BY customer_id                                        │
+  │  ORDER BY ltv DESC LIMIT 100                                 │
   └──────────────────────────────────────────────────────────────┘
 
   ┌──────────────────────────────────────────────────────────────┐
-  │  Spark Connect (data science notebook)                        │
-  │  df = spark.read.format("delta")                              │
+  │  Spark Connect (data science notebook)                       │
+  │  df = spark.read.format("delta")                             │
   │       .load("abfss://gold@.../crm_orders/")                  │
-  │  features = df.groupBy("customer_id").agg(...)                │
+  │  features = df.groupBy("customer_id").agg(...)               │
   └──────────────────────────────────────────────────────────────┘
 ```
 

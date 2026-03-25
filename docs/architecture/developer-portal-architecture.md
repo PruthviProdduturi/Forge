@@ -153,11 +153,11 @@ Every request to the portal — browser page load or API call — is authenticat
 │                                                                                    │
 │  1. USER VISITS PORTAL                                                             │
 │                                                                                    │
-│     Browser ──HTTPS──▶ Application Gateway ──▶ portal-web (Next.js)               │
+│     Browser ──HTTPS──▶ Application Gateway ──▶ portal-web (Next.js)                │
 │                                                                                    │
-│     Next.js App Router checks session cookie (NextAuth session):                  │
-│       • If session valid → serve page, hydrate React Query                        │
-│       • If no session → redirect to /api/auth/signin                              │
+│     Next.js App Router checks session cookie (NextAuth session):                   │
+│       • If session valid → serve page, hydrate React Query                         │
+│       • If no session → redirect to /api/auth/signin                               │
 │                                                                                    │
 └────────────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -165,30 +165,30 @@ Every request to the portal — browser page load or API call — is authenticat
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                                                                    │
-│  2. AZURE AD OIDC — AUTHORIZATION CODE FLOW                                       │
+│  2. AZURE AD OIDC — AUTHORIZATION CODE FLOW                                        │
 │                                                                                    │
 │     portal-web                                                                     │
 │       │                                                                            │
-│       │  NextAuth: redirect to Azure AD /authorize                                │
+│       │  NextAuth: redirect to Azure AD /authorize                                 │
 │       ▼                                                                            │
-│     login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize                      │
-│       │  scopes: openid, profile, email, offline_access,                          │
-│       │          api://<portal-app-id>/portal.read                                │
+│     login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize                       │
+│       │  scopes: openid, profile, email, offline_access,                           │
+│       │          api://<portal-app-id>/portal.read                                 │
 │       │                                                                            │
-│       │  User authenticates (MFA enforced at tenant level)                        │
+│       │  User authenticates (MFA enforced at tenant level)                         │
 │       │                                                                            │
-│       │  Azure AD returns authorization code to redirect_uri                      │
+│       │  Azure AD returns authorization code to redirect_uri                       │
 │       ▼                                                                            │
-│     portal-web /api/auth/callback/azure-ad                                        │
+│     portal-web /api/auth/callback/azure-ad                                         │
 │       │                                                                            │
-│       │  NextAuth exchanges code for tokens:                                      │
-│       │    • id_token (JWT — user identity, name, email, group claims)            │
-│       │    • access_token (JWT — audience: portal-api, roles, groups)             │
-│       │    • refresh_token (for session renewal)                                  │
+│       │  NextAuth exchanges code for tokens:                                       │
+│       │    • id_token (JWT — user identity, name, email, group claims)             │
+│       │    • access_token (JWT — audience: portal-api, roles, groups)              │
+│       │    • refresh_token (for session renewal)                                   │
 │       │                                                                            │
 │       │  NextAuth stores:                                                          │
-│       │    • Server-side session (encrypted cookie, HttpOnly, Secure, SameSite)   │
-│       │    • access_token in server-side session (not in browser localStorage)    │
+│       │    • Server-side session (encrypted cookie, HttpOnly, Secure, SameSite)    │
+│       │    • access_token in server-side session (not in browser localStorage)     │
 │       │                                                                            │
 └────────────────────────────────────────────────────────────────────────────────────┘
                                     │
@@ -198,41 +198,41 @@ Every request to the portal — browser page load or API call — is authenticat
 │                                                                                    │
 │  3. FRONTEND → BACKEND API CALL                                                    │
 │                                                                                    │
-│     React Query (client component) calls /api/v1/pipelines                        │
+│     React Query (client component) calls /api/v1/pipelines                         │
 │       │                                                                            │
-│       │  Next.js route handler (server-side proxy):                               │
-│       │    • Reads access_token from server-side session                          │
-│       │    • Attaches: Authorization: Bearer <access_token>                       │
-│       │    • Forwards request to portal-api (internal cluster DNS)                │
+│       │  Next.js route handler (server-side proxy):                                │
+│       │    • Reads access_token from server-side session                           │
+│       │    • Attaches: Authorization: Bearer <access_token>                        │
+│       │    • Forwards request to portal-api (internal cluster DNS)                 │
 │       ▼                                                                            │
 │     portal-api (FastAPI, internal service)                                         │
 │       │                                                                            │
-│       │  FastAPI HTTPBearer dependency on every route:                            │
-│       │    1. Extract Bearer token from Authorization header                      │
-│       │    2. Fetch Azure AD JWKS from:                                           │
-│       │       https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys      │
-│       │       (cached in-memory, refreshed every 12h)                             │
+│       │  FastAPI HTTPBearer dependency on every route:                             │
+│       │    1. Extract Bearer token from Authorization header                       │
+│       │    2. Fetch Azure AD JWKS from:                                            │
+│       │       https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys       │
+│       │       (cached in-memory, refreshed every 12h)                              │
 │       │    3. Validate JWT:                                                        │
-│       │       • Signature valid (RS256, JWKS key)                                 │
-│       │       • aud == "api://<portal-app-id>"                                    │
-│       │       • iss == "https://login.microsoftonline.com/<tenant>/v2.0"          │
+│       │       • Signature valid (RS256, JWKS key)                                  │
+│       │       • aud == "api://<portal-app-id>"                                     │
+│       │       • iss == "https://login.microsoftonline.com/<tenant>/v2.0"           │
 │       │       • exp > now()                                                        │
 │       │       • nbf <= now()                                                       │
 │       │    4. Extract claims:                                                      │
 │       │       • sub (user object ID)                                               │
 │       │       • name, email                                                        │
-│       │       • groups (Azure AD group OIDs)                                      │
-│       │       • roles (app roles assigned in Azure AD)                            │
+│       │       • groups (Azure AD group OIDs)                                       │
+│       │       • roles (app roles assigned in Azure AD)                             │
 │       │                                                                            │
-│       │  FastAPI RBAC dependency (per-route):                                     │
-│       │    • Map groups/roles → portal role (Admin, Editor, Reader)               │
-│       │    • Reject 403 if role insufficient for endpoint                         │
+│       │  FastAPI RBAC dependency (per-route):                                      │
+│       │    • Map groups/roles → portal role (Admin, Editor, Reader)                │
+│       │    • Reject 403 if role insufficient for endpoint                          │
 │       │                                                                            │
-│       │  Business logic + upstream API calls                                      │
+│       │  Business logic + upstream API calls                                       │
 │       │                                                                            │
 │       │  Return structured JSON response                                           │
 │       ▼                                                                            │
-│     React Query receives response, caches with stale-while-revalidate             │
+│     React Query receives response, caches with stale-while-revalidate              │
 │     React renders updated UI                                                       │
 │                                                                                    │
 └────────────────────────────────────────────────────────────────────────────────────┘
@@ -243,15 +243,15 @@ Every request to the portal — browser page load or API call — is authenticat
 │                                                                                    │
 │  4. TOKEN REFRESH                                                                  │
 │                                                                                    │
-│     NextAuth detects access_token expiry (< 5 min remaining)                      │
+│     NextAuth detects access_token expiry (< 5 min remaining)                       │
 │       │                                                                            │
-│       │  Uses refresh_token to call Azure AD /token endpoint                      │
-│       │  Receives new access_token + refresh_token                                │
+│       │  Uses refresh_token to call Azure AD /token endpoint                       │
+│       │  Receives new access_token + refresh_token                                 │
 │       │  Updates server-side session silently                                      │
-│       │  Next API call uses new access_token automatically                        │
+│       │  Next API call uses new access_token automatically                         │
 │       │                                                                            │
-│       │  If refresh_token expired (session > 24h idle):                           │
-│       │    → User redirected to Azure AD re-authentication                        │
+│       │  If refresh_token expired (session > 24h idle):                            │
+│       │    → User redirected to Azure AD re-authentication                         │
 │                                                                                    │
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1117,7 +1117,7 @@ To deploy a new portal version: update the image tag in the Helm values file and
 │   │  ┌──────────────────────────────────────────────────────────────────────┐   │  │
 │   │  │  Next.js 14 App (React, React Query, ReactFlow, NextAuth.js)         │   │  │
 │   │  │                                                                      │   │  │
-│   │  │  Pipelines  │  Datasets  │  Lineage  │  DQ  │  Cost  │  Metadata    │   │  │
+│   │  │  Pipelines  │  Datasets  │  Lineage  │  DQ  │  Cost  │  Metadata    │   │  │ 
 │   │  └──────────────────────────────────────────────────────────────────────┘   │  │
 │   └──────────────────────────────────────┬──────────────────────────────────────┘  │
 │                                          │  HTTPS                                  │
@@ -1141,8 +1141,8 @@ To deploy a new portal version: update the image tag in the Helm values file and
              │  React Query          │           │  RBAC enforcement    │
              │  ReactFlow (lineage)  │           │  Data aggregation    │
              └───────────────────────┘           └──────────┬───────────┘
-                         │                                  │
-                         │  /api/auth/*                     │
+                         │                                  │ 
+                         │  /api/auth/*                     │ 
                          ▼                                  │
              ┌───────────────────────┐                      │
              │  login.microsoft..    │                      │
@@ -1171,11 +1171,11 @@ To deploy a new portal version: update the image tag in the Helm values file and
                     │                          │  Dataset preview     │
                     │                          │  Row count fallback  │
                     │                          └──────────┬───────────┘
-                    │                                     │
+                    │                                     │            
                     │              ┌──────────────────────▼───────────┐
                     │              │  ADLS Gen2 (via Trino Delta conn) │
-                    │              │  silver/_platform/dq_results/   │
-                    │              │  silver/_platform/catalog/      │
+                    │              │  silver/_platform/dq_results/   │ 
+                    │              │  silver/_platform/catalog/      │ 
                     │              └──────────────────────────────────┘
                     │
           ┌─────────▼───────────┐
@@ -1196,7 +1196,7 @@ To deploy a new portal version: update the image tag in the Helm values file and
 
   ┌─────────────────────────────────────────────────────────────────┐
   │  ADLS Gen2 (direct read — portal workload identity)             │
-  │  silver/_platform/catalog/   ← dataset catalog Delta table     │
+  │  silver/_platform/catalog/   ← dataset catalog Delta table     │ 
   │  DeltaTable.forPath() — metadata only, no data file reads       │
   └─────────────────────────────────────────────────────────────────┘
 ```

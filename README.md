@@ -22,19 +22,19 @@ Forge is the core data engineering platform that handles everything from raw ing
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         Forge                              │
-│                                                              │
-│  ┌─────────────────┐    ┌──────────────────────────────┐    │
-│  │  Compute Cluster │    │   Orchestration Cluster       │    │
-│  │                  │    │                              │    │
-│  │  • Apache Spark  │    │  • Apache Airflow            │    │
-│  │  • Spark Connect │    │  • Data Quality Framework    │    │
-│  │  • Trino         │    │  • OpenLineage / Marquez     │    │
-│  └─────────────────┘    │  • Observability Stack        │    │
-│           │              │  • Developer Portal           │    │
-│           ▼              └──────────────────────────────┘    │
+│                            Forge                            │
+│                                                             │
+│  ┌──────────────────┐   ┌──────────────────────────────┐    │
+│  │  Compute Cluster │   │  Orchestration Cluster       │    │
+│  │                  │   │                              │    │
+│  │  • Apache Spark  │   │  • Apache Airflow            │    │
+│  │  • Spark Connect │   │  • Data Quality Framework    │    │
+│  │  • Trino         │   │  • OpenLineage / Marquez     │    │
+│  └──────────────────┘   │  • Observability Stack       │    │
+│           │             │  • Developer Portal          │    │
+│           ▼             └──────────────────────────────┘    │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │              ADLS Gen2 Lakehouse                     │    │
+│  │              ADLS Gen2 Lakehouse                    │    │
 │  │   bronze/ → silver/  →  gold/                       │    │
 │  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘

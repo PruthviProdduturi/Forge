@@ -42,94 +42,94 @@ Forge's network design is built on three constraints:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│  Azure Region: East US                                                                │
-│                                                                                       │
-│  forge-vnet  (10.0.0.0/8)                                                           │
-│                                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
-│  │  10.1.0.0/16  —  compute-cluster-subnet                                         │  │
-│  │                                                                                  │  │
-│  │  ┌────────────────────────────────────────────────────────────────────────────┐  │  │
-│  │  │  forge-compute AKS cluster                                                │  │  │
-│  │  │                                                                             │  │  │
-│  │  │  Node Pool: system   (10.1.1.0/24, 1–3 × Standard_D4s_v5)                  │  │  │
-│  │  │  Node Pool: spark    (10.1.2.0/22, 0–20 × Standard_E8s_v5, spot)           │  │  │
-│  │  │  Node Pool: trino    (10.1.6.0/24, 2–8 × Standard_E16s_v5)                 │  │  │
-│  │  │                                                                             │  │  │
-│  │  │  Pod CIDR (overlay):  192.168.0.0/16   (does not consume VNet space)       │  │  │
-│  │  │  Service CIDR:        172.20.0.0/16                                         │  │  │
-│  │  │                                                                             │  │  │
+│  Azure Region: East US                                                               │
+│                                                                                      │
+│  forge-vnet  (10.0.0.0/8)                                                            │
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │  10.1.0.0/16  —  compute-cluster-subnet                                         │ │
+│  │                                                                                  ││
+│  │  ┌────────────────────────────────────────────────────────────────────────────┐  ││
+│  │  │  forge-compute AKS cluster                                                │  │ │
+│  │  ││                                                                           │  ││
+│  │  │  Node Pool: system   (10.1.1.0/24, 1–3 × Standard_D4s_v5)                  │  ││
+│  │  │  Node Pool: spark    (10.1.2.0/22, 0–20 × Standard_E8s_v5, spot)           │  ││
+│  │  │  Node Pool: trino    (10.1.6.0/24, 2–8 × Standard_E16s_v5)                 │  ││
+│  │  ││                                                                           │  ││
+│  │  │  Pod CIDR (overlay):  192.168.0.0/16   (does not consume VNet space)       │  ││
+│  │  ││  Service CIDR:        172.20.0.0/16                                       │  ││
+│  │  ││                                                                           │  ││
 │  │  │  Azure Monitor Agent DaemonSet ────────────────────────────────────────────┼──┼──┼──▶ Azure Monitor / Log Analytics
-│  │  └────────────────────────────────────────────────────────────────────────────┘  │  │
-│  └─────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
-│  │  10.2.0.0/16  —  orchestration-cluster-subnet                                   │  │
-│  │                                                                                  │  │
-│  │  ┌────────────────────────────────────────────────────────────────────────────┐  │  │
-│  │  │  forge-orchestration AKS cluster                                          │  │  │
-│  │  │                                                                             │  │  │
-│  │  │  Node Pool: system    (10.2.1.0/24, 1–3 × Standard_D4s_v5)                 │  │  │
-│  │  │  Node Pool: airflow   (10.2.2.0/22, 2–10 × Standard_D8s_v5)                │  │  │
-│  │  │  Node Pool: platform  (10.2.6.0/24, 1–4 × Standard_D4s_v5)                 │  │  │
-│  │  │                                                                             │  │  │
-│  │  │  Pod CIDR (overlay):  192.169.0.0/16   (does not consume VNet space)       │  │  │
-│  │  │  Service CIDR:        172.21.0.0/16                                         │  │  │
-│  │  │                                                                             │  │  │
-│  │  │  Namespaces:                                                                │  │  │
-│  │  │    airflow        — scheduler, webserver, workers (KubernetesExecutor)      │  │  │
-│  │  │    lineage        — marquez-api, marquez-web                                │  │  │
-│  │  │    monitoring     — azure-monitor-agent, otel-collector                     │  │  │
-│  │  │    portal         — portal-api, portal-web                                  │  │  │
-│  │  ││  │  └────────────────────────────────────────────────────────────────────────────┘  │  │
-│  └─────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
+│  │  └────────────────────────────────────────────────────────────────────────────┘  ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │  10.2.0.0/16  —  orchestration-cluster-subnet                                   │ │
+│  │                                                                                  ││
+│  │  ┌────────────────────────────────────────────────────────────────────────────┐  ││
+│  │  │  forge-orchestration AKS cluster                                          │  │ │
+│  │  ││                                                                           │  ││
+│  │  │  Node Pool: system    (10.2.1.0/24, 1–3 × Standard_D4s_v5)                 │  ││
+│  │  │  Node Pool: airflow   (10.2.2.0/22, 2–10 × Standard_D8s_v5)                │  ││
+│  │  │  Node Pool: platform  (10.2.6.0/24, 1–4 × Standard_D4s_v5)                 │  ││
+│  │  ││                                                                           │  ││
+│  │  │  Pod CIDR (overlay):  192.169.0.0/16   (does not consume VNet space)       │  ││
+│  │  ││  Service CIDR:        172.21.0.0/16                                       │  ││
+│  │  ││                                                                           │  ││
+│  │  ││  Namespaces:                                                              │  ││
+│  │  ││    airflow        — scheduler, webserver, workers (KubernetesExecutor)    │  ││
+│  │  ││    lineage        — marquez-api, marquez-web                              │  ││
+│  │  ││    monitoring     — azure-monitor-agent, otel-collector                   │  ││
+│  │  ││    portal         — portal-api, portal-web                                │  ││
+│  │  └────────────────────────────────────────────────────────────────────────────┘  ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │  10.3.0.0/24  —  private-endpoints-subnet  (NSG: inbound from 10.0.0.0/8 only) │  │
-│  │                                                                                  │  │
-│  │  10.3.0.4   — ADLS Gen2 (dfs endpoint)       privatelink.dfs.core.windows.net   │  │
-│  │  10.3.0.5   — ADLS Gen2 (blob endpoint)      privatelink.blob.core.windows.net  │  │
-│  │  10.3.0.6   — Key Vault                       privatelink.vaultcore.azure.net    │  │
-│  │  10.3.0.7   — Azure Container Registry        privatelink.azurecr.io             │  │
-│  │  10.3.0.8   — PostgreSQL (Airflow metadata)   privatelink.postgres.database...   │  │
-│  │  10.3.0.9   — PostgreSQL (Marquez)            privatelink.postgres.database...   │  │
-│  │  10.3.0.10  — Azure Monitor (metrics)         privatelink.monitor.azure.com      │  │
-│  │  10.3.0.11  — Compute AKS API server          (AKS private endpoint)             │  │
-│  │  10.3.0.12  — Orchestration AKS API server    (AKS private endpoint)             │  │
-│  │  10.3.0.13  — Azure DevOps (agent outbound)   (service endpoint, not PE)         │  │
-│  │                                                                                  │  │
-│  └─────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
+│  │                                                                                  ││
+│  │  10.3.0.4   — ADLS Gen2 (dfs endpoint)       privatelink.dfs.core.windows.net   │ │
+│  │  10.3.0.5   — ADLS Gen2 (blob endpoint)      privatelink.blob.core.windows.net  │ │
+│  │  10.3.0.6   — Key Vault                       privatelink.vaultcore.azure.net    ││
+│  │  10.3.0.7   — Azure Container Registry        privatelink.azurecr.io             ││
+│  │  10.3.0.8   — PostgreSQL (Airflow metadata)   privatelink.postgres.database...   ││
+│  │  10.3.0.9   — PostgreSQL (Marquez)            privatelink.postgres.database...   ││
+│  │  10.3.0.10  — Azure Monitor (metrics)         privatelink.monitor.azure.com      ││
+│  │  10.3.0.11  — Compute AKS API server          (AKS private endpoint)             ││
+│  │  10.3.0.12  — Orchestration AKS API server    (AKS private endpoint)             ││
+│  │  10.3.0.13  — Azure DevOps (agent outbound)   (service endpoint, not PE)         ││
+│  │                                                                                  ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │  10.4.0.0/24  —  appgw-subnet  (NSG: inbound from Internet on 443; GatewayMgr) │  │
-│  │                                                                                  │  │
-│  │  Application Gateway v2 (WAF)                                                    │  │
-│  │    Public IP: <forge-appgw-pip>                                                 │  │
-│  │    DNS: portal.forge.<domain>  → Portal backend pool (10.2.x.x)               │  │
-│  │    DNS: grafana.forge.<domain> → Azure Managed Grafana (Azure-hosted)         │  │
+│  │                                                                                  ││
+│  │  Application Gateway v2 (WAF)                                                    ││
+│  │    Public IP: <forge-appgw-pip>                                                 │ │
+│  │    DNS: portal.forge.<domain>  → Portal backend pool (10.2.x.x)               │   │
+│  │    DNS: grafana.forge.<domain> → Azure Managed Grafana (Azure-hosted)         │   │
 │  │    TLS cert from Key Vault (cert name: forge-tls-cert)                         │  │
-│  │    WAF policy: OWASP 3.2 managed rules + custom exclusions                       │  │
-│  │                                                                                  │  │
-│  └─────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐  │
-│  │  10.5.0.0/24  —  bastion-subnet  (AzureBastionSubnet — name is fixed by Azure)  │  │
-│  │                                                                                  │  │
-│  │  Azure Bastion (Standard tier)                                                   │  │
-│  │    Provides RDP/SSH to VMs in the VNet without public IPs on VMs                 │  │
-│  │    Accessible only from corporate network (ExpressRoute / VPN)                   │  │
-│  │    Used for: emergency node shell access, jump to private resources               │  │
-│  │                                                                                  │  │
-│  └─────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                       │
-│  Private DNS Zones (linked to forge-vnet):                                          │
+│  │    WAF policy: OWASP 3.2 managed rules + custom exclusions                       ││
+│  │                                                                                  ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
+│  │  10.5.0.0/24  —  bastion-subnet  (AzureBastionSubnet — name is fixed by Azure)  │ │
+│  │                                                                                  ││
+│  │  Azure Bastion (Standard tier)                                                   ││
+│  │    Provides RDP/SSH to VMs in the VNet without public IPs on VMs                 ││
+│  │    Accessible only from corporate network (ExpressRoute / VPN)                   ││
+│  │    Used for: emergency node shell access, jump to private resources             │ │
+│  │                                                                                  ││
+│  └─────────────────────────────────────────────────────────────────────────────────┘ │
+│                                                                                      │
+│  Private DNS Zones (linked to forge-vnet):                                           │
 │    privatelink.dfs.core.windows.net       → 10.3.0.4                                 │
 │    privatelink.blob.core.windows.net      → 10.3.0.5                                 │
 │    privatelink.vaultcore.azure.net        → 10.3.0.6                                 │
 │    privatelink.azurecr.io                 → 10.3.0.7                                 │
-│    privatelink.postgres.database.azure.com → 10.3.0.8, 10.3.0.9                     │
+│    privatelink.postgres.database.azure.com → 10.3.0.8, 10.3.0.9                      │
 │    privatelink.monitor.azure.com          → 10.3.0.10                                │
-│                                                                                       │
+│                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 
 Traffic flows:

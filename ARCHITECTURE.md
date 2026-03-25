@@ -49,7 +49,7 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                             Developer Workflow                            │
+│                            Developer Workflow                            │
 │                                                                          │
 │   VS Code + Spark Connect        Git + DAG files        Portal UI        │
 │         │                              │                    │            │
@@ -57,14 +57,14 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
           │                              │                    │
           ▼                              ▼                    ▼
 ┌─────────────────────┐    ┌─────────────────────────────────────────────┐
-│   Compute Cluster   │    │            Orchestration Cluster             │
+│   Compute Cluster   │    │            Orchestration Cluster            │
 │   (AKS Private)     │    │            (AKS Private)                    │
-│                     │    │                                              │
-│  ┌───────────────┐  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐  │
-│  │ Spark Operator│  │    │  │ Airflow  │ │ Marquez  │ │  Prometheus│  │
-│  │ Spark Connect │  │    │  │ (Sched.) │ │(Lineage) │ │  + Grafana │  │
-│  │ Trino         │  │    │  └──────────┘ └──────────┘ └────────────┘  │
-│  └───────────────┘  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐  │
+│                     │    │                                             │
+│  ┌───────────────┐  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
+│  │ Spark Operator│  │    │  │ Airflow  │ │ Marquez  │ │  Prometheus│   │
+│  │ Spark Connect │  │    │  │ (Sched.) │ │(Lineage) │ │  + Grafana │   │
+│  │ Trino         │  │    │  └──────────┘ └──────────┘ └────────────┘   │
+│  └───────────────┘  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
 └─────────────────────┘    │  │  DQ      │ │  Loki    │ │  Portal    │  │
           │                │  │ Framework│ │ (Logs)   │ │  Backend   │  │
           │                │  └──────────┘ └──────────┘ └────────────┘  │
@@ -74,19 +74,19 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                        ADLS Gen2 Lakehouse                               │
 │                                                                          │
-│   ┌─────────────┐      ┌───────────────┐      ┌───────────────────┐    │
-│   │  bronze/     │ ──▶ │  silver/       │ ──▶ │  gold/             │   │
-│   │  (Delta)     │      │  (Delta Lake) │      │  (Delta Lake)     │    │
-│   │  append-only │      │  schema-enf.  │      │  SLA-governed     │    │
-│   └─────────────┘      └───────────────┘      └───────────────────┘    │
+│   ┌─────────────┐      ┌───────────────┐      ┌───────────────────┐      │
+│   │  bronze/     │ ──▶ │  silver/       │ ──▶ │  gold/             │     │
+│   │  (Delta)     │      │  (Delta Lake) │      │  (Delta Lake)     │     │
+│   │  append-only │      │  schema-enf.  │      │  SLA-governed     │     │
+│   └─────────────┘      └───────────────┘      └───────────────────┘      │
 └──────────────────────────────────────────────────────────────────────────┘
           │
           ▼
-┌──────────────────────────┐
-│  Shared Azure Resources  │
-│  Key Vault │ ACR │ Monitor│
-│  Private DNS │ Log Analytics│
-└──────────────────────────┘
+┌────────────────────────────────┐
+│    Shared Azure Resources      │
+│  Key Vault │ ACR │ Monitor     │
+│  Private DNS │ Log Analytics   │
+└────────────────────────────────┘
 ```
 
 ---
@@ -167,49 +167,49 @@ Source Systems
      │  (ingestion DAGs)
      ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  BRONZE                                                      │
-│  abfss://bronze@<account>.dfs.core.windows.net/            │
-│                                                              │
+│  BRONZE                                                     │
+│  abfss://bronze@<account>.dfs.core.windows.net/             │
+│                                                             │
 │  • Immutable. Append-only. No updates, no deletes.          │
-│  • Format: Delta Lake (all sources onboarded to Delta at ingestion) │
-│  • Partitioned by: year / month / day / hour (UTC)  │
+│  • Format: Delta Lake (all sources onboarded as Delta)      │
+│  • Partitioned by: year / month / day / hour (UTC)          │
 │  • Retention: 2 years (lifecycle policy)                    │
-│  • Access: Forge platform only                            │
+│  • Access: Forge platform only                              │
 └─────────────────┬───────────────────────────────────────────┘
                   │
                   │  (Silver transform DAGs — Spark Delta merge)
                   ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  SILVER                                                      │
-│  abfss://silver@<account>.dfs.core.windows.net/            │
-│                                                              │
+│  SILVER                                                     │
+│  abfss://silver@<account>.dfs.core.windows.net/             │
+│                                                             │
 │  • Delta Lake format. MERGE (upsert) semantics.             │
 │  • Schema enforced. Evolution via ALTER TABLE only.         │
 │  • DQ checks required before write succeeds.                │
 │  • Partitioned by: year / month / day / hour (UTC)          │
-│  • Retention: 2 years (lifecycle policy)       │
-│  • Access: Forge platform + approved internal tooling     │
+│  • Retention: 2 years (lifecycle policy)                    │
+│  • Access: Forge platform + approved internal tooling       │
 └─────────────────┬───────────────────────────────────────────┘
                   │
                   │  (Gold publish DAGs — Trino views + Delta optimize)
                   ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  GOLD                                                        │
-│  abfss://gold@<account>.dfs.core.windows.net/              │
-│                                                              │
+│  GOLD                                                       │
+│  abfss://gold@<account>.dfs.core.windows.net/               │
+│                                                             │
 │  • Delta Lake format. Optimized (Z-ORDER, VACUUM).          │
 │  • SLA-governed: freshness SLAs defined per dataset.        │
 │  • Consumer-ready: Trino catalogs, Spark reads, Portal.     │
-│  • Partitioned by: domain / entity (consumer-optimised)     │
+│  • Partitioned by: year / month / day / hour (UTC)          │
 │  • Access: all authenticated consumers                      │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│  SANDBOX                                                     │
-│  abfss://sandbox@<account>.dfs.core.windows.net/           │
-│                                                              │
+│  SANDBOX                                                    │
+│  abfss://sandbox@<account>.dfs.core.windows.net/            │
+│                                                             │
 │  • Per-user experimentation area. No SLAs. No DQ gates.     │
-│  • Path convention: sandbox/<user-or-team>/<project>/YYYYMMDD/                │
+│  • Path: sandbox/<user-or-team>/<project>/YYYYMMDD/         │
 │  • Every user in the platform has read/write to their path  │
 │  • No data from Sandbox ever promotes to Bronze/Silver/Gold │
 │    automatically — promotion is a deliberate pipeline act   │
@@ -332,7 +332,7 @@ Trino provides federated SQL across all lakehouse zones and external sources. It
                │  queries via connectors
                ▼
 ┌──────────────────────────────────────────────────────────┐
-│  Catalogs                                                 │
+│  Catalogs                                                │
 │  ┌────────────┐  ┌───────────┐  ┌──────────────────────┐ │
 │  │ lakehouse  │  │   hive    │  │       tpch           │ │
 │  │ (Delta)    │  │  (raw)    │  │   (benchmarking)     │ │
@@ -410,21 +410,21 @@ The DQ framework is a Python SDK (`forge.dq`) that runs inside Airflow task pods
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  DQ SDK (forge.dq)                                         │
-│                                                              │
+│  DQ SDK (forge.dq)                                          │
+│                                                             │
 │  ┌──────────────────┐    ┌───────────────────────────────┐  │
 │  │  YAML Ruleset    │───▶│  DQRunner                     │  │
 │  │  (per dataset)   │    │  • loads rules                │  │
 │  └──────────────────┘    │  • runs checks against DF     │  │
-│                           │  • aggregates DQRunReport     │  │
-│                           └───────────────┬───────────────┘  │
-│                                           │                  │
-│                           ┌───────────────▼───────────────┐  │
-│                           │  Reporters                    │  │
-│                           │  • StoreReporter → ADLS Delta │  │
-│                           │  • AlertReporter → Webhook    │  │
-│                           │  • LineageReporter → Marquez  │  │
-│                           └───────────────────────────────┘  │
+│                           │  • aggregates DQRunReport     │ │
+│                           └───────────────┬───────────────┘ │
+│                                           │                 │
+│                           ┌───────────────▼───────────────┐ │
+│                           │  Reporters                    │ │
+│                           │  • StoreReporter → ADLS Delta │ │
+│                           │  • AlertReporter → Webhook    │ │
+│                           │  • LineageReporter → Marquez  │ │
+│                           └───────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -537,14 +537,14 @@ PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpo
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│  Observability Stack (orchestration cluster, monitoring namespace)  │
-│                                                                     │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐  │
-│  │  Prometheus      │  │  Grafana         │  │  Loki           │  │
-│  │  (metrics)       │  │  (dashboards)    │  │  (log aggr.)    │  │
-│  │  30d retention   │  │  OIDC auth       │  │  14d retention  │  │
-│  └──────────────────┘  └──────────────────┘  └─────────────────┘  │
-│                                                                     │
+│  Observability Stack (orchestration cluster, monitoring namespace) │
+│                                                                    │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   │
+│  │  Prometheus      │  │  Grafana         │  │  Loki           │   │
+│  │  (metrics)       │  │  (dashboards)    │  │  (log aggr.)    │   │
+│  │  30d retention   │  │  OIDC auth       │  │  14d retention  │   │
+│  └──────────────────┘  └──────────────────┘  └─────────────────┘   │
+│                                                                    │
 │  ┌──────────────────┐  ┌──────────────────┐                        │
 │  │  Alertmanager    │  │  OpenTelemetry   │                        │
 │  │  → Teams/PagerD  │  │  Collector       │                        │
