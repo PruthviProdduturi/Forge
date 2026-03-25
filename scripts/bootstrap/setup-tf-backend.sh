@@ -13,7 +13,7 @@
 # =============================================================================
 set -euo pipefail
 
-LOCATION="eastus2"
+LOCATION="northcentralus"
 
 usage() {
   echo "Usage: $0 --env <dev|staging|prod> --subscription-id <uuid>"

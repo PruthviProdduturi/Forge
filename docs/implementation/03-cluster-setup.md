@@ -92,7 +92,7 @@ az provider register --namespace Microsoft.ManagedIdentity
 The Forge clusters use `Standard_E8s_v5` (Spark node pool) and `Standard_E16s_v5` (Trino node pool) in the primary region. Verify the subscription has sufficient quota before attempting cluster creation — insufficient quota causes silent failures or partial scale-up.
 
 ```bash
-LOCATION="eastus"
+LOCATION="northcentralus"
 
 # Check Standard Esv5 Family quota
 az vm list-usage \
@@ -192,7 +192,7 @@ Edit `infra/bicep/environments/{env}/main.bicepparam` with your environment valu
 using './main.bicep'
 
 param environment = '{env}'
-param location = 'eastus2'
+param location = 'northcentralus'
 param subscriptionId = '<your-subscription-id>'
 param tenantId = '<your-tenant-id>'
 param adminGroupObjectIds = ['<your-aks-admin-group-object-id>']
@@ -225,7 +225,7 @@ Run a what-if to see exactly what will be created or modified:
 
 ```bash
 az deployment sub what-if \
-  --location eastus2 \
+  --location northcentralus \
   --template-file infra/bicep/environments/${ENV}/main.bicep \
   --parameters @infra/bicep/environments/${ENV}/main.bicepparam \
   --name forge-${ENV}
@@ -249,7 +249,7 @@ A single command deploys all resources. Bicep resolves inter-module dependencies
 
 ```bash
 az deployment sub create \
-  --location eastus2 \
+  --location northcentralus \
   --template-file infra/bicep/environments/${ENV}/main.bicep \
   --parameters @infra/bicep/environments/${ENV}/main.bicepparam \
   --name forge-${ENV} \
@@ -275,11 +275,11 @@ Expected output (values will differ by environment):
 computeClusterName:
   value: aks-forge-compute-prod
 computeOidcIssuerUrl:
-  value: https://eastus2.oic.prod-aks.azure.com/<tenant-id>/<cluster-id>/
+  value: https://northcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id>/
 orchClusterName:
   value: aks-forge-orch-prod
 orchOidcIssuerUrl:
-  value: https://eastus2.oic.prod-aks.azure.com/<tenant-id>/<cluster-id-2>/
+  value: https://northcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id-2>/
 storageAccountName:
   value: forgeadlsprod
 keyVaultUri:

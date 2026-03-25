@@ -295,7 +295,7 @@ Both AKS clusters have `--enable-private-cluster` set. This means:
 
 - The Kubernetes API server (`kube-apiserver`) does **not** have a public endpoint
 - An Azure Private Endpoint NIC is created in the VNet with a private IP
-- The API server FQDN (e.g., `forge-compute-aks-abc123.abc123.privatelink.eastus.azmk8s.io`) resolves to the private IP when queried from within the VNet
+- The API server FQDN (e.g., `forge-compute-aks-abc123.abc123.privatelink.northcentralus.azmk8s.io`) resolves to the private IP when queried from within the VNet
 - From the public internet, the FQDN does not resolve at all (no public DNS record)
 
 ```
@@ -307,7 +307,7 @@ After private cluster:
                                       only accessible from VNet or connected networks
 ```
 
-The private endpoint for the AKS API server is placed in the `private-endpoints-subnet` (`10.3.0.0/24`) alongside all other PaaS private endpoints. A private DNS zone entry is created by AKS automatically in the `privatelink.eastus.azmk8s.io` zone.
+The private endpoint for the AKS API server is placed in the `private-endpoints-subnet` (`10.3.0.0/24`) alongside all other PaaS private endpoints. A private DNS zone entry is created by AKS automatically in the `privatelink.northcentralus.azmk8s.io` zone.
 
 ### 5.2 Developer kubectl Access
 
@@ -320,7 +320,7 @@ The VNet is connected to the corporate network via ExpressRoute or Site-to-Site 
 ```
 Developer laptop (VPN active)
   → corporate DNS server
-  → forwards *.privatelink.eastus.azmk8s.io to Azure DNS 168.63.129.16
+  → forwards *.privatelink.northcentralus.azmk8s.io to Azure DNS 168.63.129.16
   → Azure DNS returns 10.3.0.12 (private IP of orch cluster API server)
   → kubectl connects to 10.3.0.12:443
   → API server authenticates via Azure AD kubeconfig token
@@ -374,8 +374,8 @@ For ArgoCD-based GitOps, ArgoCD runs inside the orchestration cluster and manage
 | PostgreSQL (Airflow) | `psql-forge-airflow-<env>` | `pe-psql-airflow` | private-endpoints | 10.3.0.8 | `privatelink.postgres.database.azure.com` |
 | PostgreSQL (Marquez) | `psql-forge-marquez-<env>` | `pe-psql-marquez` | private-endpoints | 10.3.0.9 | `privatelink.postgres.database.azure.com` |
 | Azure Monitor | `azmon-forge-<env>` | `pe-azmon` | private-endpoints | 10.3.0.10 | `privatelink.monitor.azure.com` |
-| AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.eastus.azmk8s.io` |
-| AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.eastus.azmk8s.io` |
+| AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.northcentralus.azmk8s.io` |
+| AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.northcentralus.azmk8s.io` |
 
 **Why two ADLS private endpoints?** ADLS Gen2 has two sub-resources that each need their own private endpoint: `dfs` (Data Lake Storage — used by Spark and all Hadoop/ABFS clients) and `blob` (Blob Storage — used by ACR layer pulls and some Azure SDKs that fall back to blob). Both must be present for complete private access.
 
@@ -510,10 +510,10 @@ The pod would attempt to connect to the public IP. This connection would be **bl
 When the Airflow pod on the orchestration cluster reaches the compute cluster's Kubernetes API server:
 
 ```
-Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.eastus.azmk8s.io
+Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.northcentralus.azmk8s.io
   → CoreDNS (172.21.0.10)
   → 168.63.129.16 (Azure DNS)
-  → privatelink.eastus.azmk8s.io zone linked to forge-vnet
+  → privatelink.northcentralus.azmk8s.io zone linked to forge-vnet
   → A record: 10.3.0.11
   → Airflow connects to 10.3.0.11:443 (compute AKS API private endpoint)
   → kubectl auth via ServiceAccount token in the kubeconfig (fetched from Key Vault)

@@ -60,7 +60,7 @@ Before running any command in this guide:
 ```bash
 # Set once — adjust for your environment
 ENV="prod"                                   # dev | prod
-LOCATION="eastus"
+LOCATION="northcentralus"
 LOCATION_SECONDARY="westus2"                 # prod only, for geo-replication
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 VNET_RG="rg-forge-network-${ENV}"
@@ -102,7 +102,7 @@ Expected output:
 ```
 Name                  Location    State
 --------------------  ----------  ---------
-rg-forge-acr-prod   eastus      Succeeded
+rg-forge-acr-prod   northcentralus      Succeeded
 ```
 
 ---
@@ -757,7 +757,7 @@ variable "environment" {
 variable "location" {
   description = "Primary Azure region"
   type        = string
-  default     = "eastus"
+  default     = "northcentralus"
 }
 
 variable "location_secondary" {
@@ -832,7 +832,7 @@ output "acr_private_dns_zone_id" {
 
 Before proceeding to document `03-cluster-setup.md`, verify every item:
 
-- [ ] Resource group `rg-forge-acr-{env}` exists in `eastus`
+- [ ] Resource group `rg-forge-acr-{env}` exists in `northcentralus`
 - [ ] Registry `forgeacr{env}` is Premium SKU with admin account disabled
 - [ ] Geo-replication to `westus2` is in `Succeeded` state (prod only)
 - [ ] Private endpoint `pe-forge-acr-{env}` is provisioned and has a private IP

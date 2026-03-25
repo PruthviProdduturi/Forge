@@ -17,6 +17,27 @@ param corporateIpRange string = '10.0.0.0/8'
 param tags object = {}
 
 // ---------------------------------------------------------------------------
+// Platform Log Analytics Workspace — NSG and network diagnostics
+// S360: Network activity audit trail. All NSGs send diagnostic logs here.
+// ---------------------------------------------------------------------------
+resource platformLaw 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: 'law-forge-platform-${environment}'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 90
+    features: {
+      enableLogAccessUsingOnlyResourcePermissions: true
+    }
+    publicNetworkAccessForIngestion: 'Disabled'
+    publicNetworkAccessForQuery: 'Disabled'
+  }
+}
+
+// ---------------------------------------------------------------------------
 // NSG — Compute Subnet (AKS compute cluster nodes)
 // ---------------------------------------------------------------------------
 resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
@@ -104,15 +125,19 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
-        name: 'AllowInternetOutbound'
+        // S360: Restrict to AzureCloud (Azure platform APIs only) rather than
+        // open Internet. For full compliance, deploy Azure Firewall with UDR
+        // (0.0.0.0/0 → firewall) and remove this rule — all AKS-required
+        // endpoints are accessible via private endpoints or AzureCloud tag.
+        name: 'AllowAzureCloudOutbound'
         properties: {
           priority: 110
           direction: 'Outbound'
           access: 'Allow'
-          protocol: '*'
+          protocol: 'Tcp'
           sourceAddressPrefix: '*'
           sourcePortRange: '*'
-          destinationAddressPrefix: 'Internet'
+          destinationAddressPrefix: 'AzureCloud'
           destinationPortRange: '443'
         }
       }
@@ -234,15 +259,17 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
         }
       }
       {
-        name: 'AllowInternetOutbound'
+        // S360: See compute NSG comment — restrict to AzureCloud, replace with
+        // Azure Firewall UDR for full compliance.
+        name: 'AllowAzureCloudOutbound'
         properties: {
           priority: 110
           direction: 'Outbound'
           access: 'Allow'
-          protocol: '*'
+          protocol: 'Tcp'
           sourceAddressPrefix: '*'
           sourcePortRange: '*'
-          destinationAddressPrefix: 'Internet'
+          destinationAddressPrefix: 'AzureCloud'
           destinationPortRange: '443'
         }
       }
@@ -928,6 +955,45 @@ resource vnetLinkAgentsvc 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
 }
 
 // ---------------------------------------------------------------------------
+// NSG Diagnostic Settings — S360: audit all allow/deny decisions
+// ---------------------------------------------------------------------------
+resource nsgComputeDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-nsg-compute-${environment}'
+  scope: nsgCompute
+  properties: {
+    workspaceId: platformLaw.id
+    logs: [
+      {
+        category: 'NetworkSecurityGroupEvent'
+        enabled: true
+      }
+      {
+        category: 'NetworkSecurityGroupRuleCounter'
+        enabled: true
+      }
+    ]
+  }
+}
+
+resource nsgOrchestrationDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-nsg-orchestration-${environment}'
+  scope: nsgOrchestration
+  properties: {
+    workspaceId: platformLaw.id
+    logs: [
+      {
+        category: 'NetworkSecurityGroupEvent'
+        enabled: true
+      }
+      {
+        category: 'NetworkSecurityGroupRuleCounter'
+        enabled: true
+      }
+    ]
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 output vnetId string = vnet.id
@@ -954,3 +1020,4 @@ output privateDnsZoneIds object = {
 }
 
 output bastionId string = bastion.id
+output platformLogAnalyticsWorkspaceId string = platformLaw.id

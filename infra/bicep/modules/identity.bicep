@@ -49,6 +49,16 @@ var kvSecretsUserRoleId              = subscriptionResourceId('Microsoft.Authori
 var storageContainerBase = '${storageAccountId}/blobServices/default/containers'
 
 // ---------------------------------------------------------------------------
+// Existing resource reference — storage account
+// S360: Role assignments are scoped directly to the storage account rather
+// than the resource group, minimising blast radius per least-privilege.
+// ---------------------------------------------------------------------------
+resource storageAccountRef 'Microsoft.Storage/storageAccounts@2023-04-01' existing = {
+  name: last(split(storageAccountId, '/'))
+  scope: resourceGroup(split(storageAccountId, '/')[2], split(storageAccountId, '/')[4])
+}
+
+// ---------------------------------------------------------------------------
 // Managed Identity — spark
 // ---------------------------------------------------------------------------
 resource idSpark 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -72,7 +82,7 @@ resource fcSparkCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federa
 // RBAC — spark: Contributor on bronze, silver, code, checkpoints
 resource sparkBronzeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idSpark.properties.principalId, storageBlobDataContributorRoleId, '${storageContainerBase}/bronze')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
@@ -85,7 +95,7 @@ resource sparkBronzeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource sparkSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idSpark.properties.principalId, storageBlobDataContributorRoleId, '${storageContainerBase}/silver')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
@@ -98,7 +108,7 @@ resource sparkSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource sparkCodeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idSpark.properties.principalId, storageBlobDataContributorRoleId, '${storageContainerBase}/code')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
@@ -111,7 +121,7 @@ resource sparkCodeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 
 resource sparkCheckpointsContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idSpark.properties.principalId, storageBlobDataContributorRoleId, '${storageContainerBase}/checkpoints')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
@@ -144,7 +154,7 @@ resource fcTrinoCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federa
 // RBAC — trino: Reader on silver, gold
 resource trinoSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idTrino.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/silver')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idTrino.properties.principalId
@@ -157,7 +167,7 @@ resource trinoSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 
 resource trinoGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idTrino.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idTrino.properties.principalId
@@ -200,7 +210,7 @@ resource fcAirflowOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentitie
 // RBAC — airflow: Reader on code
 resource airflowCodeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idAirflow.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/code')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idAirflow.properties.principalId
@@ -243,7 +253,7 @@ resource fcDqOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/fed
 // RBAC — dq: Contributor on silver; Reader on bronze, gold
 resource dqSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idDq.properties.principalId, storageBlobDataContributorRoleId, '${storageContainerBase}/silver')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idDq.properties.principalId
@@ -256,7 +266,7 @@ resource dqSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 
 resource dqBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idDq.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/bronze')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idDq.properties.principalId
@@ -269,7 +279,7 @@ resource dqBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 resource dqGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idDq.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idDq.properties.principalId
@@ -312,7 +322,7 @@ resource fcPortalOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities
 // RBAC — portal: Reader on gold
 resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idPortal.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idPortal.properties.principalId
@@ -355,7 +365,7 @@ resource fcLineageOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentitie
 // RBAC — lineage: Reader on bronze, silver, gold
 resource lineageBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idLineage.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/bronze')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idLineage.properties.principalId
@@ -368,7 +378,7 @@ resource lineageBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01
 
 resource lineageSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idLineage.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/silver')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idLineage.properties.principalId
@@ -381,7 +391,7 @@ resource lineageSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01
 
 resource lineageGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idLineage.properties.principalId, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idLineage.properties.principalId
@@ -398,7 +408,7 @@ resource lineageGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 // ---------------------------------------------------------------------------
 resource kvSparkSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idSpark.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idSpark.properties.principalId
@@ -409,7 +419,7 @@ resource kvSparkSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource kvTrinoSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idTrino.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idTrino.properties.principalId
@@ -420,7 +430,7 @@ resource kvTrinoSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource kvAirflowSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idAirflow.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idAirflow.properties.principalId
@@ -431,7 +441,7 @@ resource kvAirflowSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-0
 
 resource kvDqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idDq.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idDq.properties.principalId
@@ -442,7 +452,7 @@ resource kvDqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 
 resource kvPortalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idPortal.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idPortal.properties.principalId
@@ -453,7 +463,7 @@ resource kvPortalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
 
 resource kvLineageSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idLineage.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: resourceGroup()
+  scope: storageAccountRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idLineage.properties.principalId

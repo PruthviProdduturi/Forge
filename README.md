@@ -94,7 +94,7 @@ All data lives in ADLS Gen2 with hierarchical namespace, structured into four Me
 ```bash
 # Edit infra/bicep/environments/dev/main.bicepparam with your subscription/tenant IDs
 az deployment sub create \
-  --location eastus2 \
+  --location northcentralus \
   --template-file infra/bicep/environments/dev/main.bicep \
   --parameters @infra/bicep/environments/dev/main.bicepparam \
   --name forge-dev

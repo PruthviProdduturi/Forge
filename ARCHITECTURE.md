@@ -105,25 +105,27 @@ Forge uses two dedicated private AKS clusters with separate node pools, separate
 
 #### `forge-compute` — Compute Cluster
 
-| Node Pool | VM SKU | Min/Max Nodes | Purpose |
-|-----------|--------|---------------|---------|
-| `system` | Standard_D4s_v5 | 1 / 3 | Kubernetes system components |
-| `spark` | Standard_E8s_v5 | 0 / 20 | Spark driver + executor pods |
-| `trino` | Standard_E16s_v5 | 2 / 8 | Trino coordinator + workers |
+| Node Pool | VM SKU | Dev Min/Max | Prod Min/Max | vCPUs (Prod max) | Purpose |
+|-----------|--------|-------------|--------------|------------------|---------|
+| `systempool` | Standard_D4s_v5 | 1 / 2 | 2 / 4 | — | Kubernetes system components |
+| `sparkpool` | Standard_E8s_v5 | 0 / 3 | 0 / 12 | **96** | Spark driver + executor pods |
+| `trinopool` | D4s_v5 (dev) / D8s_v5 (prod) | 0 / 3 | 0 / 10 | 80 | Trino coordinator + workers |
 
 - Azure CNI Overlay networking
-- Cluster autoscaler enabled on `spark` and `trino` pools
+- Cluster autoscaler enabled on `sparkpool` and `trinopool`
 - Workload identity (OIDC) enabled
 - Private API server endpoint
 - Node OS: Azure Linux (CBL-Mariner)
+- Dev: ~24 usable Spark cores; Prod: 96 usable Spark cores
 
 #### `forge-orchestration` — Orchestration Cluster
 
-| Node Pool | VM SKU | Min/Max Nodes | Purpose |
-|-----------|--------|---------------|---------|
-| `system` | Standard_D4s_v5 | 1 / 3 | Kubernetes system components |
-| `airflow` | Standard_D8s_v5 | 2 / 10 | Airflow scheduler, webserver, workers |
-| `platform` | Standard_D4s_v5 | 1 / 4 | Marquez, Portal, Prometheus, Grafana |
+Intentionally small — runs steady-state services only (no burst workloads).
+
+| Node Pool | VM SKU | Dev Min/Max | Prod Min/Max | Purpose |
+|-----------|--------|-------------|--------------|---------|
+| `systempool` | Standard_D4s_v5 | 1 / 2 | 2 / 4 | Kubernetes system components |
+| `workerpool` | Standard_D4s_v5 | 1 / 4 | 2 / 10 | Airflow, Marquez, Portal, Prometheus, Grafana, Loki |
 
 - Azure CNI Overlay networking
 - Workload identity (OIDC) enabled

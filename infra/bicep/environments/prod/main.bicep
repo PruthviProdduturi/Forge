@@ -23,7 +23,7 @@ targetScope = 'subscription'
 param environment string = 'prod'
 
 @description('Primary Azure region for all resources.')
-param location string = 'eastus2'
+param location string = 'northcentralus'
 
 @description('Azure subscription ID where resources will be deployed.')
 param subscriptionId string
@@ -48,21 +48,24 @@ param containerRegistryId string
 @maxValue(730)
 param logRetentionDays int = 90
 
+@description('Owner alias appended to top-level resource names for personal/shared deployment disambiguation. Leave empty (default) for production shared environments.')
+param ownerAlias string = ''
+
 @description('Resource tags applied to all resources.')
 param tags object = {}
 
 // ---------------------------------------------------------------------------
 // Generated name variables
 // ---------------------------------------------------------------------------
-var storageAccountName = 'forgeadls${environment}'
-var keyVaultName       = 'kv-forge-${environment}'
+var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
 
-// Resource group names
-var rgNetworking    = 'rg-forge-networking-${environment}'
-var rgCompute       = 'rg-forge-compute-${environment}'
-var rgOrchestration = 'rg-forge-orchestration-${environment}'
-var rgData          = 'rg-forge-data-${environment}'
-var rgSecurity      = 'rg-forge-security-${environment}'
+var storageAccountName = 'forgeadls${ownerAlias}${environment}'
+var keyVaultName       = 'kv-forge${aliasSuffix}-${environment}'
+
+// Resource group names — 3 RGs: platform (infra+compute), data, security
+var rgPlatform  = 'rg-forge-platform${aliasSuffix}-${environment}'
+var rgData      = 'rg-forge-data${aliasSuffix}-${environment}'
+var rgSecurity  = 'rg-forge-security${aliasSuffix}-${environment}'
 
 // Common tags merged with required platform tags
 var mergedTags = union(tags, {
@@ -74,20 +77,8 @@ var mergedTags = union(tags, {
 // ---------------------------------------------------------------------------
 // Resource Groups
 // ---------------------------------------------------------------------------
-resource rgNetworkingRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
-  name: rgNetworking
-  location: location
-  tags: mergedTags
-}
-
-resource rgComputeRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
-  name: rgCompute
-  location: location
-  tags: mergedTags
-}
-
-resource rgOrchestrationRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
-  name: rgOrchestration
+resource rgPlatformRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
+  name: rgPlatform
   location: location
   tags: mergedTags
 }
@@ -109,8 +100,8 @@ resource rgSecurityRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
 // ---------------------------------------------------------------------------
 module networking '../../modules/networking.bicep' = {
   name: 'networking-${environment}'
-  scope: resourceGroup(rgNetworking)
-  dependsOn: [rgNetworkingRes]
+  scope: resourceGroup(rgPlatform)
+  dependsOn: [rgPlatformRes]
   params: {
     environment: environment
     location: location
@@ -125,11 +116,12 @@ module networking '../../modules/networking.bicep' = {
 // ---------------------------------------------------------------------------
 module computeCluster '../../modules/aks.bicep' = {
   name: 'aks-compute-${environment}'
-  scope: resourceGroup(rgCompute)
-  dependsOn: [rgComputeRes]
+  scope: resourceGroup(rgPlatform)
+  dependsOn: [rgPlatformRes]
   params: {
     environment: environment
     location: location
+    ownerAlias: ownerAlias
     clusterPurpose: 'compute'
     kubernetesVersion: '1.29'
     subnetId: networking.outputs.subnetIds.compute
@@ -143,11 +135,12 @@ module computeCluster '../../modules/aks.bicep' = {
 
 module orchCluster '../../modules/aks.bicep' = {
   name: 'aks-orchestration-${environment}'
-  scope: resourceGroup(rgOrchestration)
-  dependsOn: [rgOrchestrationRes]
+  scope: resourceGroup(rgPlatform)
+  dependsOn: [rgPlatformRes]
   params: {
     environment: environment
     location: location
+    ownerAlias: ownerAlias
     clusterPurpose: 'orchestration'
     kubernetesVersion: '1.29'
     subnetId: networking.outputs.subnetIds.orchestration

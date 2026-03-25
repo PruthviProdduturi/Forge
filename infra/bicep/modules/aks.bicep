@@ -35,15 +35,19 @@ param containerRegistryId string
 @maxValue(730)
 param logRetentionDays int = 30
 
+@description('Owner alias appended to resource names for personal/shared deployment disambiguation (e.g., prproddu). Leave empty for shared environments.')
+param ownerAlias string = ''
+
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
 // ---------------------------------------------------------------------------
 // Derived variables
 // ---------------------------------------------------------------------------
-var clusterName = 'aks-forge-${clusterPurpose}-${environment}'
-var kubeletIdentityName = 'id-aks-kubelet-${clusterPurpose}-${environment}'
-var lawName = 'law-forge-${clusterPurpose}-${environment}'
+var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
+var clusterName = 'aks-forge-${clusterPurpose}${aliasSuffix}-${environment}'
+var kubeletIdentityName = 'id-aks-kubelet-${clusterPurpose}${aliasSuffix}-${environment}'
+var lawName = 'law-forge-${clusterPurpose}${aliasSuffix}-${environment}'
 
 // Network CIDRs differ per cluster to avoid overlap
 var podCidr = clusterPurpose == 'compute' ? '10.100.0.0/16' : '10.101.0.0/16'
@@ -94,7 +98,7 @@ resource kubeletIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-
 
 // The AKS control plane also needs its own identity
 resource aksControlPlaneIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-aks-controlplane-${clusterPurpose}-${environment}'
+  name: 'id-aks-controlplane-${clusterPurpose}${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }
@@ -133,9 +137,9 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       {
         name: 'systempool'
         vmSize: 'Standard_D4s_v5'
-        count: 2
-        minCount: 2
-        maxCount: 4
+        count: environment == 'dev' ? 1 : 2
+        minCount: environment == 'dev' ? 1 : 2
+        maxCount: environment == 'dev' ? 2 : 4
         enableAutoScaling: true
         osType: 'Linux'
         osSKU: 'AzureLinux'
@@ -192,6 +196,13 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
         enabled: true
         intervalHours: 48
       }
+      // S360: Microsoft Defender for Containers — runtime threat detection
+      defender: {
+        logAnalyticsWorkspaceResourceId: law.id
+        securityMonitoring: {
+          enabled: true
+        }
+      }
     }
 
     // Auto-scaler — KEDA disabled; Spark Operator handles scaling
@@ -222,9 +233,10 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       }
     }
 
-    // Auto upgrade channel — patch only for stability
+    // Auto upgrade channel — patch only for stability; NodeImage keeps OS CVEs current
     autoUpgradeProfile: {
       upgradeChannel: 'patch'
+      nodeOSUpgradeChannel: 'NodeImage'
     }
   }
 }
@@ -245,7 +257,7 @@ resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
     vmSize: 'Standard_E8s_v5'
     count: 0
     minCount: 0
-    maxCount: 20
+    maxCount: environment == 'dev' ? 3 : 12
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'
@@ -260,6 +272,8 @@ resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
     upgradeSettings: {
       maxSurge: '33%'
     }
+    // Spot instances — evicted pods are rescheduled by Spark Operator
+    scaleSetPriority: 'Spot'
     scaleSetEvictionPolicy: 'Delete'
     spotMaxPrice: -1
   }
@@ -269,10 +283,10 @@ resource trinoPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
   parent: aksCluster
   name: 'trinopool'
   properties: {
-    vmSize: 'Standard_D8s_v5'
+    vmSize: environment == 'dev' ? 'Standard_D4s_v5' : 'Standard_D8s_v5'
     count: 0
     minCount: 0
-    maxCount: 10
+    maxCount: environment == 'dev' ? 3 : 10
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'
@@ -298,9 +312,9 @@ resource workerPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-
   name: 'workerpool'
   properties: {
     vmSize: 'Standard_D4s_v5'
-    count: 2
-    minCount: 2
-    maxCount: 20
+    count: environment == 'dev' ? 1 : 2
+    minCount: environment == 'dev' ? 1 : 2
+    maxCount: environment == 'dev' ? 4 : 10
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'

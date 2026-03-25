@@ -1,7 +1,8 @@
 using './main.bicep'
 
 param environment = 'prod'
-param location = 'eastus2'
+param location = 'northcentralus'
+param ownerAlias = ''
 param subscriptionId = '<your-subscription-id>'
 param tenantId = '<your-tenant-id>'
 param adminGroupObjectIds = ['<your-aks-admin-group-object-id>']

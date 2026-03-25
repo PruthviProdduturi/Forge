@@ -88,11 +88,11 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-04-01'
   properties: {
     deleteRetentionPolicy: {
       enabled: true
-      days: 7
+      days: 90
     }
     containerDeleteRetentionPolicy: {
       enabled: true
-      days: 7
+      days: 90
     }
     isVersioningEnabled: true
     changeFeed: {
@@ -120,6 +120,24 @@ resource containerBronze 'Microsoft.Storage/storageAccounts/blobServices/contain
       tier: 'raw'
       description: 'Raw ingestion layer'
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Immutability Policy — Bronze Container (WORM / append-only)
+// S360: Raw ingestion data must be immutable after write.
+// allowProtectedAppendWrites permits Delta Lake append operations while
+// preventing overwrites and premature deletes.
+// Policy is Unlocked so admins can adjust the period; switch to Locked
+// after initial validation if regulations require it.
+// ---------------------------------------------------------------------------
+resource bronzeImmutabilityPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-04-01' = {
+  parent: containerBronze
+  name: 'default'
+  properties: {
+    immutabilityPeriodSinceCreationInDays: 1
+    allowProtectedAppendWrites: true
+    allowProtectedAppendWritesAll: false
   }
 }
 

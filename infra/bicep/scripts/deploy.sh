@@ -3,7 +3,7 @@
 # Forge Data Platform — Bicep Deployment Script
 # Usage: ./scripts/deploy.sh [environment] [location]
 #   environment  dev | prod            (default: dev)
-#   location     Azure region          (default: eastus2)
+#   location     Azure region          (default: northcentralus)
 #
 # Prerequisites:
 #   - Azure CLI >= 2.57.0 (for Bicep 0.26+ param file support)
@@ -17,7 +17,7 @@ set -euo pipefail
 # Arguments
 # ---------------------------------------------------------------------------
 ENVIRONMENT="${1:-dev}"
-LOCATION="${2:-eastus2}"
+LOCATION="${2:-northcentralus}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 DEPLOYMENT_NAME="forge-${ENVIRONMENT}-${TIMESTAMP}"
 
