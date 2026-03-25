@@ -227,22 +227,22 @@ Task Pod: validate_dq_silver_crm_orders.run_dq
         │  3. Executes checks in parallel:
         │
         │  ┌────────────────────────────────────────────────────────────────┐
-        │  │ Schema checks                                                   │
+        │  │ Schema checks                                                  │
         │  │  ✓ order_id:    STRING, NOT NULL → PASS                        │
-        │  │  ✓ order_total: DECIMAL(18,2)   → PASS                        │
+        │  │  ✓ order_total: DECIMAL(18,2)   → PASS                         │
         │  │  ✓ status:      STRING, NOT NULL → PASS                        │
-        │  │                                                                  │
+        │  │                                                                 │
         │  │ Content checks                                                  │
         │  │  ✓ order_id null rate: 0.0%  (threshold: 0%)    → PASS         │
         │  │  ✓ status values: all in {'open','closed','cancelled'} → PASS  │
-        │  │  ✓ order_total > 0: 99.97% (threshold: 99%)    → PASS         │
-        │  │                                                                  │
+        │  │  ✓ order_total > 0: 99.97% (threshold: 99%)    → PASS          │
+        │  │                                                                 │
         │  │ Volume checks                                                   │
         │  │  ✓ row count: 84,231  (min: 10,000)             → PASS         │
-        │  │  ✓ delta vs yesterday: +12% (threshold: <50%)  → PASS         │
-        │  │                                                                  │
+        │  │  ✓ delta vs yesterday: +12% (threshold: <50%)  → PASS          │
+        │  │                                                                 │
         │  │ Freshness checks                                                │
-        │  │  ✓ latest partition: 0h 23m ago (threshold: 2h) → PASS        │
+        │  │  ✓ latest partition: 0h 23m ago (threshold: 2h) → PASS         │
         │  └────────────────────────────────────────────────────────────────┘
         │
         │  4. DQRunReport: ALL PASSED
