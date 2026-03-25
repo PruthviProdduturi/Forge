@@ -1,0 +1,73 @@
+# =============================================================================
+# Stratum — Grafana Datasource Provisioning
+#
+# Grafana reads this file at startup and creates/updates the listed
+# datasources automatically. No manual UI configuration required.
+#
+# Sensitive values (passwords, tokens) are injected via environment variables
+# set at runtime by the Helm chart / Kubernetes Secrets. Grafana resolves
+# ${ENV_VAR} syntax in provisioning YAML natively.
+#
+# For Stratum, both Prometheus and Loki are accessed via in-cluster service
+# DNS names. No credentials are required — access is network-restricted to
+# the cluster.
+# =============================================================================
+
+apiVersion: 1
+
+datasources:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus
+  # Scrapes all platform metrics: Spark, Airflow, Trino, node-exporter,
+  # kube-state-metrics, statsd-exporter (Airflow StatsD metrics).
+  # ---------------------------------------------------------------------------
+  - name: Prometheus
+    type: prometheus
+    uid: stratum-prometheus
+    url: http://prometheus.observability.svc.cluster.local:9090
+    access: proxy
+    isDefault: true
+    editable: false
+    jsonData:
+      # Use Prometheus' native HTTP/1.1 API (not remote-write)
+      httpMethod: POST
+      # Prometheus query timeout for Grafana-initiated queries
+      timeoutSeconds: 60
+      # Exemplar support — enables trace-to-metrics correlation if Tempo is added later
+      exemplarTraceIdDestinations: []
+      # Increment query range based on the dashboard time window
+      incrementalQuerying: true
+      incrementalQueryOverlapWindow: 10m
+      # Cache Prometheus queries in Grafana backend
+      cacheLevel: Low
+
+  # ---------------------------------------------------------------------------
+  # Loki
+  # Centralised log aggregation for all Stratum workloads. Promtail scrapes
+  # pod logs from every node and ships them to Loki.
+  # ---------------------------------------------------------------------------
+  - name: Loki
+    type: loki
+    uid: stratum-loki
+    url: http://loki.observability.svc.cluster.local:3100
+    access: proxy
+    isDefault: false
+    editable: false
+    jsonData:
+      # Maximum number of log lines returned per query
+      maxLines: 5000
+      # Link Loki log lines to Prometheus metrics using derived fields.
+      # When a log line contains a Spark job ID or Airflow run ID, the user
+      # can jump directly to the corresponding Prometheus dashboard.
+      derivedFields:
+        - datasourceUid: stratum-prometheus
+          matcherRegex: "spark_app_id=([\\w-]+)"
+          name: SparkAppID
+          url: "/d/spark-jobs-overview?var-spark_app_id=${__value.raw}"
+        - datasourceUid: stratum-prometheus
+          matcherRegex: "dag_id=([\\w.]+).*run_id=([\\w.+-]+)"
+          name: AirflowRunID
+          url: "/d/airflow-dag-runs?var-dag_id=${__value.raw}"
+      # Timeout for Loki queries initiated from Grafana
+      timeout: 60

@@ -1,0 +1,101 @@
+# =============================================================================
+# Stratum — Airflow Image Python Requirements
+# Pinned versions for the stratumacr/airflow:2.9.3 image.
+#
+# These packages are installed on top of apache/airflow:2.9.3-python3.11.
+# Provider packages are installed with Airflow's official constraints file
+# (see Dockerfile). Non-provider packages are listed here for reference and
+# are installed directly.
+#
+# Last reviewed: 2026-03-24
+# =============================================================================
+
+# =============================================================================
+# Airflow Providers
+# Install with: pip install -c constraints-3.11.txt <package>==<version>
+# =============================================================================
+
+# Kubernetes provider — SparkKubernetesOperator, KubernetesPodOperator
+apache-airflow-providers-cncf-kubernetes==8.4.2
+
+# Azure provider — ADLS hooks, Azure Key Vault secrets backend,
+# AzureContainerInstancesOperator (not used but included for completeness)
+apache-airflow-providers-microsoft-azure==9.0.0
+
+# OpenLineage provider — wraps the openlineage-airflow package into an
+# Airflow-native integration with DAG-level configuration support
+apache-airflow-providers-openlineage==1.10.0
+
+# =============================================================================
+# OpenLineage
+# =============================================================================
+
+# Core OpenLineage Airflow integration — auto-emits lineage for all tasks
+openlineage-airflow==1.18.0
+
+# OpenLineage Python client (transport library used by openlineage-airflow)
+openlineage-python==1.18.0
+
+# =============================================================================
+# Azure SDK
+# =============================================================================
+
+# Azure Workload Identity credential provider
+azure-identity==1.17.1
+
+# Azure Data Lake Storage Gen2 (ADLS) file operations
+azure-storage-file-datalake==12.18.0
+
+# Azure Key Vault secrets (used by the Key Vault secrets backend)
+azure-keyvault-secrets==4.8.0
+
+# Azure Core (transitive dependency — pinned for reproducibility)
+azure-core==1.31.0
+
+# =============================================================================
+# Data processing
+# =============================================================================
+
+# Apache Arrow — used by DQ SDK and azure-storage-file-datalake
+pyarrow==16.1.0
+
+# Pandas — used by DQ SDK and data preview operators
+pandas==2.2.2
+
+# =============================================================================
+# HTTP / networking
+# =============================================================================
+
+# Requests — HTTP client used by custom Airflow hooks and operators
+requests==2.32.3
+
+# Tenacity — retry library used by Stratum operators and DQ SDK
+tenacity==9.0.0
+
+# =============================================================================
+# Serialisation / validation
+# =============================================================================
+
+# Pydantic v2 — used by Stratum DQ SDK and lineage SDK for model validation
+pydantic==2.7.4
+
+# =============================================================================
+# Database (Airflow metadata DB migrations run via Airflow, not this code)
+# =============================================================================
+
+# Psycopg2 — PostgreSQL adapter for Airflow metadata DB connection
+# (built from source — requires libpq-dev in the Dockerfile)
+psycopg2==2.9.9
+
+# =============================================================================
+# Utilities
+# =============================================================================
+
+# Python-dotenv — read .env files in local development DAG testing
+python-dotenv==1.0.1
+
+# Croniter — cron expression parsing used by SLA check operators
+croniter==2.0.5
+
+# PyYAML — YAML config loading used by DQ rulesets and lineage configs
+PyYAML==6.0.2

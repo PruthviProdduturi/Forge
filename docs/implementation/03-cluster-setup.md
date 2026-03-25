@@ -1,0 +1,1843 @@
+# Forge — AKS Cluster Setup Guide
+
+> **Document:** 03 — AKS Cluster Provisioning and Bootstrap
+> **Version:** 1.0
+> **Status:** Production
+> **Audience:** Platform engineers
+> **Last updated:** 2026-03-24
+
+---
+
+## Table of Contents
+
+- [Part 1 — Prerequisites](#part-1--prerequisites)
+- [Part 2 — Bicep Provisioning](#part-2--bicep-provisioning)
+- [Part 3 — Compute Cluster Bootstrap](#part-3--compute-cluster-bootstrap)
+- [Part 4 — Orchestration Cluster Bootstrap](#part-4--orchestration-cluster-bootstrap)
+- [Part 5 — Cross-Cluster Validation](#part-5--cross-cluster-validation)
+
+---
+
+## Part 1 — Prerequisites
+
+### 1.1 Azure CLI Extensions
+
+Install the extensions required for private AKS clusters, workload identity, and image integrity enforcement. Run these on any machine used to interact with the clusters (developer workstation, build agent, jump VM).
+
+```bash
+# Update CLI itself first
+az upgrade --yes
+
+# Add or upgrade all required extensions
+az extension add --name aks-preview --upgrade
+az extension add --name k8s-extension --upgrade
+
+# Verify installed versions
+az extension list --query "[?name=='aks-preview' || name=='k8s-extension'].{name:name, version:version}" -o table
+```
+
+Expected minimum versions: `aks-preview >= 3.0.0b6`
+
+### 1.2 Feature Flag Registration
+
+Several AKS capabilities used by Forge are controlled by subscription-level feature flags. Register all of them now. Registration is asynchronous and can take 15–60 minutes per flag.
+
+```bash
+# Workload Identity (OIDC federation for pods)
+az feature register \
+  --namespace Microsoft.ContainerService \
+  --name EnableWorkloadIdentityPreview
+
+# Private cluster with managed identity (avoids service principal on private API server)
+az feature register \
+  --namespace Microsoft.ContainerService \
+  --name AKS-EnableManagedIdentityPrivateCluster
+
+# Image Integrity (Notary v2 enforcement at admission)
+az feature register \
+  --namespace Microsoft.ContainerService \
+  --name EnableImageIntegrityPreview
+
+# Node auto-provisioning (NAP) — registered even if not yet used, to avoid re-registration later
+az feature register \
+  --namespace Microsoft.ContainerService \
+  --name NodeAutoProvisioningPreview
+```
+
+### 1.3 Check Feature Registration Status
+
+```bash
+az feature list \
+  --namespace Microsoft.ContainerService \
+  --query "[?name=='Microsoft.ContainerService/EnableWorkloadIdentityPreview' || \
+            name=='Microsoft.ContainerService/AKS-EnableManagedIdentityPrivateCluster' || \
+            name=='Microsoft.ContainerService/EnableImageIntegrityPreview' || \
+            name=='Microsoft.ContainerService/NodeAutoProvisioningPreview'].\
+            {name:name, state:properties.state}" \
+  -o table
+```
+
+Wait until all flags show `Registered` before proceeding. Re-run the command every few minutes. Once all are registered, propagate to the provider:
+
+```bash
+az provider register --namespace Microsoft.ContainerService
+az provider register --namespace Microsoft.Network
+az provider register --namespace Microsoft.Storage
+az provider register --namespace Microsoft.KeyVault
+az provider register --namespace Microsoft.ManagedIdentity
+```
+
+### 1.4 Subscription-Level vCPU Quota Verification
+
+The Forge clusters use `Standard_E8s_v5` (Spark node pool) and `Standard_E16s_v5` (Trino node pool) in the primary region. Verify the subscription has sufficient quota before attempting cluster creation — insufficient quota causes silent failures or partial scale-up.
+
+```bash
+LOCATION="eastus"
+
+# Check Standard Esv5 Family quota
+az vm list-usage \
+  --location "${LOCATION}" \
+  --query "[?name.value=='standardESv5Family'].{name:name.localizedValue, current:currentValue, limit:limit}" \
+  -o table
+
+# Check Standard DSv5 Family quota (system and airflow node pools)
+az vm list-usage \
+  --location "${LOCATION}" \
+  --query "[?name.value=='standardDSv5Family'].{name:name.localizedValue, current:currentValue, limit:limit}" \
+  -o table
+
+# Check total regional vCPU limit
+az vm list-usage \
+  --location "${LOCATION}" \
+  --query "[?name.value=='cores'].{name:name.localizedValue, current:currentValue, limit:limit}" \
+  -o table
+```
+
+**Required minimums:**
+
+| VM Family | Node Pool | Max nodes | vCPUs/node | vCPUs required |
+|-----------|-----------|-----------|------------|----------------|
+| Standard_E8s_v5 | spark (compute) | 20 | 8 | 160 |
+| Standard_E16s_v5 | trino (compute) | 8 | 16 | 128 |
+| Standard_D4s_v5 | system (both clusters) | 6 | 4 | 24 |
+| Standard_D8s_v5 | airflow (orch) | 10 | 8 | 80 |
+| Standard_D4s_v5 | platform (orch) | 4 | 4 | 16 |
+
+Total: approximately 408 vCPUs in `StandardESv5Family` + `StandardDSv5Family` combined, plus buffer.
+
+If the quota is insufficient, raise a support request:
+
+```bash
+az support tickets create \
+  --ticket-name "Forge platform vCPU quota increase ${LOCATION}" \
+  --title "vCPU quota increase request for Forge data platform" \
+  --description "Requesting Standard ESv5 Family quota increase to 200 vCPUs and Standard DSv5 to 150 vCPUs in East US for the Forge data platform deployment." \
+  --problem-classification "/providers/Microsoft.Support/services/quota/problemClassifications/CoresQuotaIncrease" \
+  --severity "moderate" \
+  --contact-first-name "Platform" \
+  --contact-last-name "Engineering" \
+  --contact-email "platform@yourorg.com" \
+  --contact-country "USA" \
+  --contact-phone "555-0100" \
+  --contact-timezone "Pacific Standard Time"
+```
+
+### 1.5 Tool Versions on the Operator Workstation
+
+```bash
+# Verify all tools are present
+kubectl version --client  # >= 1.29
+helm version           # >= 3.14
+kubelogin --version    # >= 0.1.3 (needed for private AKS clusters with AAD)
+```
+
+Install `kubelogin` if missing:
+
+```bash
+az aks install-cli
+```
+
+---
+
+## Part 2 — Bicep Provisioning
+
+### 2.1 Repository Layout
+
+The Forge Bicep configuration is in `infra/bicep/`. The relevant files are:
+
+```
+infra/bicep/
+├── environments/
+│   ├── dev/
+│   │   ├── main.bicep
+│   │   └── main.bicepparam
+│   └── prod/
+│       ├── main.bicep
+│       └── main.bicepparam
+└── modules/
+    ├── networking.bicep
+    ├── identity.bicep
+    ├── storage.bicep
+    ├── keyvault.bicep
+    └── aks.bicep
+```
+
+The root template (`main.bicep`) is subscription-scoped and orchestrates all modules in dependency order. A single deployment provisions all resource groups and resources — no manual ordering required.
+
+### 2.2 Parameter File
+
+Edit `infra/bicep/environments/{env}/main.bicepparam` with your environment values:
+
+```bicep
+using './main.bicep'
+
+param environment = '{env}'
+param location = 'eastus2'
+param subscriptionId = '<your-subscription-id>'
+param tenantId = '<your-tenant-id>'
+param adminGroupObjectIds = ['<your-aks-admin-group-object-id>']
+param platformAdminGroupObjectId = '<your-platform-admin-group-object-id>'
+param corporateIpRange = '10.0.0.0/8'
+param containerRegistryId = '/subscriptions/<sub-id>/resourceGroups/rg-forge-acr-{env}/providers/Microsoft.ContainerRegistry/registries/forgeacr-{env}'
+param logRetentionDays = 30
+param tags = {
+  environment: '{env}'
+  platform: 'forge'
+  managedBy: 'bicep'
+}
+```
+
+### 2.3 Validate — `az bicep build`
+
+Validate the template compiles cleanly before deploying:
+
+```bash
+ENV="prod"
+
+az bicep build --file infra/bicep/environments/${ENV}/main.bicep
+```
+
+No output means the template is valid. Errors appear inline with line numbers.
+
+### 2.4 What-If — Review Changes Before Applying
+
+Run a what-if to see exactly what will be created or modified:
+
+```bash
+az deployment sub what-if \
+  --location eastus2 \
+  --template-file infra/bicep/environments/${ENV}/main.bicep \
+  --parameters @infra/bicep/environments/${ENV}/main.bicepparam \
+  --name forge-${ENV}
+```
+
+Before approving the output, review:
+
+**Networking** — verify subnet CIDRs match the documented topology (`10.1.0.0/16` compute, `10.2.0.0/16` orchestration, `10.3.0.0/24` private endpoints). Any deviation means a parameter was set incorrectly.
+
+**Identity** — confirm each workload managed identity is created with federated credentials pointing to the correct AKS OIDC issuer.
+
+**Storage** — confirm ADLS Gen2 account has HNS enabled, public network access disabled, and the correct containers: `bronze`, `silver`, `gold`, `code`, `checkpoints`.
+
+**Key Vault** — confirm purge protection enabled, soft-delete retention 90 days, default action Deny.
+
+**AKS clusters** — confirm private cluster enabled, workload identity enabled, OIDC issuer enabled, node pool VM sizes and counts match the architecture document.
+
+### 2.5 Deploy
+
+A single command deploys all resources. Bicep resolves inter-module dependencies automatically.
+
+```bash
+az deployment sub create \
+  --location eastus2 \
+  --template-file infra/bicep/environments/${ENV}/main.bicep \
+  --parameters @infra/bicep/environments/${ENV}/main.bicepparam \
+  --name forge-${ENV} \
+  --verbose
+```
+
+This step takes 20–30 minutes. AKS private cluster provisioning is the longest step.
+
+If a module fails mid-deployment, re-run the same command after fixing the problem. Bicep deployments are idempotent — resources that already exist in the expected state are skipped.
+
+### 2.6 Expected Outputs After Deployment
+
+```bash
+az deployment sub show \
+  --name forge-${ENV} \
+  --query properties.outputs \
+  -o yaml
+```
+
+Expected output (values will differ by environment):
+
+```yaml
+computeClusterName:
+  value: aks-forge-compute-prod
+computeOidcIssuerUrl:
+  value: https://eastus2.oic.prod-aks.azure.com/<tenant-id>/<cluster-id>/
+orchClusterName:
+  value: aks-forge-orch-prod
+orchOidcIssuerUrl:
+  value: https://eastus2.oic.prod-aks.azure.com/<tenant-id>/<cluster-id-2>/
+storageAccountName:
+  value: forgeadlsprod
+keyVaultUri:
+  value: https://kv-forge-prod.vault.azure.net/
+workloadIdentities:
+  value:
+    spark:
+      clientId: <guid>
+    trino:
+      clientId: <guid>
+    airflow:
+      clientId: <guid>
+    portal:
+      clientId: <guid>
+```
+
+Store these values — you will need them throughout the cluster bootstrap sections.
+
+---
+
+## Part 3 — Compute Cluster Bootstrap
+
+All commands in this section target the **compute cluster** (`aks-forge-compute-{env}`).
+
+### 3.1 Get kubeconfig
+
+```bash
+ENV="prod"
+
+az aks get-credentials \
+  --name "aks-forge-compute-${ENV}" \
+  --resource-group "rg-forge-compute-${ENV}" \
+  --context "forge-compute-${ENV}" \
+  --overwrite-existing
+
+# Convert to kubelogin format (required for private AKS + AAD)
+kubelogin convert-kubeconfig \
+  --login azurecli \
+  --context "forge-compute-${ENV}"
+```
+
+### 3.2 Verify Connectivity
+
+```bash
+kubectl --context "forge-compute-${ENV}" get nodes -o wide
+```
+
+Expected output shows nodes in `Ready` state:
+
+```
+NAME                              STATUS   ROLES    AGE   VERSION    INTERNAL-IP   OS-IMAGE
+aks-system-00000000-vmss000000    Ready    <none>   8m    v1.29.2    10.1.1.4      Ubuntu 22.04.4 LTS
+aks-system-00000000-vmss000001    Ready    <none>   8m    v1.29.2    10.1.1.5      Ubuntu 22.04.4 LTS
+```
+
+The spark and trino node pools start with 0 nodes (autoscaler manages them) so only system pool nodes appear initially.
+
+Set the context for the rest of Part 3:
+
+```bash
+kubectl config use-context "forge-compute-${ENV}"
+# For brevity, remaining commands in Part 3 omit --context
+```
+
+### 3.3 Install CSI Secrets Store Driver and Azure Key Vault Provider
+
+```bash
+helm repo add secrets-store-csi-driver \
+  https://kubernetes-sigs.github.io/secrets-store-csi-driver/charts
+helm repo update
+
+helm upgrade --install csi-secrets-store \
+  secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system \
+  --version 1.4.4 \
+  --set syncSecret.enabled=true \
+  --set enableSecretRotation=true \
+  --set rotationPollInterval=2m \
+  --set nodeSelector."kubernetes\\.io/os"=linux \
+  --wait
+
+# Azure Key Vault provider
+helm repo add csi-secrets-store-provider-azure \
+  https://azure.github.io/secrets-store-csi-driver-provider-azure/charts
+helm repo update
+
+helm upgrade --install csi-azure-kv \
+  csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
+  --namespace kube-system \
+  --version 1.5.3 \
+  --set linux.enabled=true \
+  --set windows.enabled=false \
+  --wait
+```
+
+Verify:
+
+```bash
+kubectl get pods -n kube-system \
+  -l app=secrets-store-csi-driver
+
+kubectl get pods -n kube-system \
+  -l app=csi-secrets-store-provider-azure
+```
+
+Both should show all pods `Running`.
+
+### 3.4 Install Azure Workload Identity Webhook
+
+The workload identity webhook mutates pods annotated with `azure.workload.identity/use: "true"` to inject the OIDC token volume and environment variables that the Azure SDK picks up automatically.
+
+```bash
+helm repo add azure-workload-identity \
+  https://azure.github.io/azure-workload-identity/charts
+helm repo update
+
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+helm upgrade --install workload-identity-webhook \
+  azure-workload-identity/workload-identity-webhook \
+  --namespace azure-workload-identity-system \
+  --create-namespace \
+  --version 1.3.0 \
+  --set azureTenantID="${TENANT_ID}" \
+  --wait
+```
+
+Verify:
+
+```bash
+kubectl get pods -n azure-workload-identity-system
+```
+
+Expected: `azure-wi-webhook-controller-manager-*` pods in `Running` state.
+
+### 3.5 Install Calico Network Policies
+
+If the AKS cluster was provisioned with `networkPolicy: calico` in Bicep (which is the Forge default), Calico is already installed. Verify:
+
+```bash
+kubectl get pods -n kube-system -l k8s-app=calico-node
+```
+
+If not installed (e.g., networking module used `azure` CNI without network policy), install manually:
+
+```bash
+kubectl apply -f \
+  https://raw.githubusercontent.com/projectcalico/calico/v3.27.0/manifests/calico.yaml
+
+# Wait for Calico pods to become ready
+kubectl rollout status daemonset/calico-node -n kube-system --timeout=120s
+```
+
+### 3.6 Create Namespaces
+
+```bash
+kubectl create namespace spark-system
+kubectl create namespace spark-jobs
+kubectl create namespace trino
+kubectl create namespace monitoring
+
+# Label namespaces for workload identity and network policy targeting
+kubectl label namespace spark-system \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}"
+
+kubectl label namespace spark-jobs \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}" \
+  workload=spark
+
+kubectl label namespace trino \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}" \
+  workload=trino
+
+kubectl label namespace monitoring \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}"
+```
+
+### 3.7 Apply ResourceQuota and LimitRange for spark-jobs
+
+The `spark-jobs` namespace is where Spark driver and executor pods run. ResourceQuota and LimitRange prevent a runaway job from consuming the entire cluster and ensure pods always declare resource requests (required for the scheduler to make correct placement decisions).
+
+```bash
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: spark-jobs-quota
+  namespace: spark-jobs
+spec:
+  hard:
+    requests.cpu: "160"
+    requests.memory: "640Gi"
+    limits.cpu: "200"
+    limits.memory: "800Gi"
+    pods: "220"
+    persistentvolumeclaims: "50"
+EOF
+
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: spark-jobs-limits
+  namespace: spark-jobs
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "2"
+      memory: "4Gi"
+    defaultRequest:
+      cpu: "500m"
+      memory: "1Gi"
+    max:
+      cpu: "16"
+      memory: "128Gi"
+    min:
+      cpu: "100m"
+      memory: "256Mi"
+  - type: Pod
+    max:
+      cpu: "32"
+      memory: "256Gi"
+EOF
+```
+
+### 3.8 Create ServiceAccounts with Workload Identity Annotations
+
+Each workload needs a Kubernetes ServiceAccount annotated with its Azure managed identity client ID. The workload identity webhook uses this annotation to project the correct OIDC token into pods.
+
+```bash
+# Retrieve client IDs from Bicep deployment outputs
+SPARK_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
+  --query "properties.outputs.workloadIdentities.value.spark.clientId" -o tsv)
+TRINO_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
+  --query "properties.outputs.workloadIdentities.value.trino.clientId" -o tsv)
+
+# Spark driver ServiceAccount (spark-jobs namespace)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-driver-sa
+  namespace: spark-jobs
+  annotations:
+    azure.workload.identity/client-id: "${SPARK_MI_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "$(az account show --query tenantId -o tsv)"
+  labels:
+    azure.workload.identity/use: "true"
+EOF
+
+# Spark operator ServiceAccount (spark-system namespace, for operator itself)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark-operator-sa
+  namespace: spark-system
+  annotations:
+    azure.workload.identity/client-id: "${SPARK_MI_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "$(az account show --query tenantId -o tsv)"
+  labels:
+    azure.workload.identity/use: "true"
+EOF
+
+# Trino ServiceAccount
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: trino-sa
+  namespace: trino
+  annotations:
+    azure.workload.identity/client-id: "${TRINO_MI_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "$(az account show --query tenantId -o tsv)"
+  labels:
+    azure.workload.identity/use: "true"
+EOF
+```
+
+### 3.9 Create SecretProviderClass for Each Workload
+
+SecretProviderClass tells the CSI driver which Key Vault secrets to mount into a pod. Create one per workload.
+
+```bash
+KV_NAME="kv-forge-${ENV}"
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# Spark SecretProviderClass
+cat <<EOF | kubectl apply -f -
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: spark-secrets
+  namespace: spark-jobs
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    clientID: "${SPARK_MI_CLIENT_ID}"
+    keyvaultName: "${KV_NAME}"
+    tenantId: "${TENANT_ID}"
+    objects: |
+      array:
+        - |
+          objectName: spark-adls-account-name
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: spark-adls-container-bronze
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: spark-adls-container-silver
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: spark-adls-container-gold
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+  - secretName: spark-adls-config
+    type: Opaque
+    data:
+    - objectName: spark-adls-account-name
+      key: accountName
+    - objectName: spark-adls-container-bronze
+      key: bronzeContainer
+    - objectName: spark-adls-container-silver
+      key: silverContainer
+    - objectName: spark-adls-container-gold
+      key: goldContainer
+EOF
+
+# Trino SecretProviderClass
+cat <<EOF | kubectl apply -f -
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: trino-secrets
+  namespace: trino
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    clientID: "${TRINO_MI_CLIENT_ID}"
+    keyvaultName: "${KV_NAME}"
+    tenantId: "${TENANT_ID}"
+    objects: |
+      array:
+        - |
+          objectName: trino-hive-metastore-uri
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: trino-adls-account-name
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+  - secretName: trino-config
+    type: Opaque
+    data:
+    - objectName: trino-hive-metastore-uri
+      key: hiveMetastoreUri
+    - objectName: trino-adls-account-name
+      key: adlsAccountName
+EOF
+```
+
+### 3.10 Verify Workload Identity — Test Pod
+
+Before installing workloads, verify that a pod annotated with the spark identity can authenticate to ADLS.
+
+```bash
+ADLS_ACCOUNT=$(az deployment sub show --name forge-${ENV} \
+  --query "properties.outputs.storageAccountName.value" -o tsv)
+
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wi-test-spark
+  namespace: spark-jobs
+  labels:
+    azure.workload.identity/use: "true"
+spec:
+  serviceAccountName: spark-driver-sa
+  containers:
+  - name: test
+    image: "forgeacr-${ENV}.azurecr.io/spark:4.1.0"
+    command:
+    - /bin/bash
+    - -c
+    - |
+      python3 -c "
+      from azure.identity import WorkloadIdentityCredential
+      from azure.storage.filedatalake import DataLakeServiceClient
+
+      cred = WorkloadIdentityCredential()
+      token = cred.get_token('https://storage.azure.com/.default')
+      print('Token acquired, expires:', token.expires_on)
+
+      client = DataLakeServiceClient(
+          account_url='https://${ADLS_ACCOUNT}.dfs.core.windows.net',
+          credential=cred
+      )
+      fs = client.get_file_system_client('bronze')
+      props = fs.get_file_system_properties()
+      print('ADLS bronze container accessible, etag:', props['etag'])
+      print('WORKLOAD IDENTITY TEST: PASSED')
+      "
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "256Mi"
+  restartPolicy: Never
+  nodeSelector:
+    agentpool: spark
+  tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "spark"
+    effect: "NoSchedule"
+EOF
+
+# Wait for pod to complete
+kubectl wait pod/wi-test-spark \
+  --namespace spark-jobs \
+  --for=condition=Ready \
+  --timeout=120s
+
+kubectl logs wi-test-spark -n spark-jobs --follow
+
+# Clean up
+kubectl delete pod wi-test-spark -n spark-jobs
+```
+
+Expected log output ends with `WORKLOAD IDENTITY TEST: PASSED`. If the test fails:
+- Check the federated credential on the managed identity matches this cluster's OIDC issuer URL
+- Check the ServiceAccount name and namespace match the federated credential subject (`system:serviceaccount:spark-jobs:spark-driver-sa`)
+- Check the managed identity has `Storage Blob Data Contributor` on the ADLS account
+
+### 3.11 Install Spark Operator
+
+```bash
+helm repo add spark-operator \
+  https://kubeflow.github.io/spark-operator
+helm repo update
+
+ACR_SERVER="forgeacr-${ENV}.azurecr.io"
+
+helm upgrade --install spark-operator \
+  spark-operator/spark-operator \
+  --namespace spark-system \
+  --create-namespace \
+  --version 1.4.6 \
+  --set image.repository="${ACR_SERVER}/spark-operator" \
+  --set image.tag="1.4.6" \
+  --set webhook.enable=true \
+  --set webhook.port=8080 \
+  --set metrics.enable=true \
+  --set metrics.port=10254 \
+  --set metrics.endpoint=/metrics \
+  --set metrics.prefix=forge_spark \
+  --set sparkJobNamespace=spark-jobs \
+  --set serviceAccounts.spark.name=spark-driver-sa \
+  --set serviceAccounts.spark.create=false \
+  --set serviceAccounts.sparkoperator.name=spark-operator-sa \
+  --set serviceAccounts.sparkoperator.create=false \
+  --set controllerThreads=10 \
+  --set resyncInterval=30 \
+  --set logLevel=2 \
+  --set nodeSelector.agentpool=system \
+  --wait \
+  --timeout=5m
+```
+
+**Key values explained:**
+
+- `sparkJobNamespace=spark-jobs` — Operator only watches for SparkApplication CRDs in this namespace. Jobs submitted to other namespaces are ignored.
+- `serviceAccounts.spark.create=false` — We created `spark-driver-sa` manually with workload identity annotations. If the operator creates a new SA without those annotations, workload identity will not work.
+- `metrics.enable=true` — Exposes a Prometheus-compatible `/metrics` endpoint. The Azure Monitor Agent (AMA) scrapes this endpoint via the custom scrape ConfigMap.
+- `webhook.enable=true` — Required for the operator to mutate SparkApplication specs (injecting node affinity, tolerations, and workload identity annotations on driver/executor pods).
+
+### 3.12 Verify Spark Operator
+
+```bash
+kubectl get pods -n spark-system
+
+# Expected:
+# NAME                                        READY   STATUS    RESTARTS
+# spark-operator-<hash>                       1/1     Running   0
+# spark-operator-webhook-<hash>               1/1     Running   0
+
+# Verify CRD was installed
+kubectl get crd sparkapplications.sparkoperator.k8s.io
+kubectl get crd scheduledsparkapplications.sparkoperator.k8s.io
+
+# Verify webhook is registered
+kubectl get mutatingwebhookconfigurations \
+  -l app.kubernetes.io/name=spark-operator
+```
+
+### 3.13 Apply Calico Network Policies for Compute Cluster
+
+```bash
+# Allow spark-jobs pods to egress to ADLS, Key Vault, and ACR private endpoints only
+cat <<'EOF' | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spark-jobs-egress
+  namespace: spark-jobs
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  # Allow DNS
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow egress to private endpoints subnet (ADLS, KV, ACR)
+  - to:
+    - ipBlock:
+        cidr: 10.3.0.0/24
+  # Allow inter-pod communication within spark-jobs (driver <-> executor)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: spark-jobs
+  # Allow to Kubernetes API server (private endpoint)
+  - to:
+    - ipBlock:
+        cidr: 10.3.0.11/32
+    ports:
+    - protocol: TCP
+      port: 443
+EOF
+
+# Allow trino pods to egress to ADLS and Hive Metastore
+cat <<'EOF' | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: trino-egress
+  namespace: trino
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - to:
+    - ipBlock:
+        cidr: 10.3.0.0/24
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: trino
+EOF
+
+# Allow orchestration cluster to reach compute cluster API server
+# (Airflow submits SparkApplication CRDs from the orchestration cluster)
+cat <<'EOF' | kubectl apply -f -
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-orch-cluster-api-access
+  namespace: spark-jobs
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 10.2.0.0/16
+    ports:
+    - protocol: TCP
+      port: 443
+EOF
+```
+
+---
+
+## Part 4 — Orchestration Cluster Bootstrap
+
+All commands in this section target the **orchestration cluster** (`aks-forge-orch-{env}`).
+
+### 4.1 Get kubeconfig
+
+```bash
+az aks get-credentials \
+  --name "aks-forge-orch-${ENV}" \
+  --resource-group "rg-forge-orch-${ENV}" \
+  --context "forge-orch-${ENV}" \
+  --overwrite-existing
+
+kubelogin convert-kubeconfig \
+  --login azurecli \
+  --context "forge-orch-${ENV}"
+
+kubectl config use-context "forge-orch-${ENV}"
+```
+
+Verify:
+
+```bash
+kubectl get nodes -o wide
+```
+
+### 4.2 Install CSI Secrets Store Driver and Workload Identity Webhook
+
+Run the same commands as in sections 3.3 and 3.4, but targeting the orchestration cluster context. Since `kubectl config use-context` is already set to `forge-orch-${ENV}`, the commands are identical:
+
+```bash
+helm upgrade --install csi-secrets-store \
+  secrets-store-csi-driver/secrets-store-csi-driver \
+  --namespace kube-system \
+  --version 1.4.4 \
+  --set syncSecret.enabled=true \
+  --set enableSecretRotation=true \
+  --set rotationPollInterval=2m \
+  --set nodeSelector."kubernetes\\.io/os"=linux \
+  --wait
+
+helm upgrade --install csi-azure-kv \
+  csi-secrets-store-provider-azure/csi-secrets-store-provider-azure \
+  --namespace kube-system \
+  --version 1.5.3 \
+  --set linux.enabled=true \
+  --set windows.enabled=false \
+  --wait
+
+helm upgrade --install workload-identity-webhook \
+  azure-workload-identity/workload-identity-webhook \
+  --namespace azure-workload-identity-system \
+  --create-namespace \
+  --version 1.3.0 \
+  --set azureTenantID="${TENANT_ID}" \
+  --wait
+```
+
+### 4.3 Create Namespaces
+
+```bash
+kubectl create namespace airflow
+kubectl create namespace lineage
+kubectl create namespace monitoring
+kubectl create namespace portal
+
+kubectl label namespace airflow \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}" \
+  workload=airflow
+
+kubectl label namespace lineage \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}" \
+  workload=marquez
+
+kubectl label namespace monitoring \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}"
+
+kubectl label namespace portal \
+  app.kubernetes.io/part-of=forge \
+  environment="${ENV}" \
+  workload=portal
+```
+
+### 4.4 Create ServiceAccounts
+
+```bash
+AIRFLOW_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
+  --query "properties.outputs.workloadIdentities.value.airflow.clientId" -o tsv)
+PORTAL_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
+  --query "properties.outputs.workloadIdentities.value.portal.clientId" -o tsv)
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# Airflow
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airflow-sa
+  namespace: airflow
+  annotations:
+    azure.workload.identity/client-id: "${AIRFLOW_MI_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "${TENANT_ID}"
+  labels:
+    azure.workload.identity/use: "true"
+EOF
+
+# Marquez (lineage namespace — no Azure identity needed; accesses its own PostgreSQL)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: marquez-sa
+  namespace: lineage
+EOF
+
+# Portal
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: portal-sa
+  namespace: portal
+  annotations:
+    azure.workload.identity/client-id: "${PORTAL_MI_CLIENT_ID}"
+    azure.workload.identity/tenant-id: "${TENANT_ID}"
+  labels:
+    azure.workload.identity/use: "true"
+EOF
+```
+
+### 4.5 Create SecretProviderClasses
+
+```bash
+KV_NAME="kv-forge-${ENV}"
+
+# Airflow SecretProviderClass
+cat <<EOF | kubectl apply -f -
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: airflow-secrets
+  namespace: airflow
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    clientID: "${AIRFLOW_MI_CLIENT_ID}"
+    keyvaultName: "${KV_NAME}"
+    tenantId: "${TENANT_ID}"
+    objects: |
+      array:
+        - |
+          objectName: airflow-db-connection-string
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: airflow-fernet-key
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: airflow-webserver-secret-key
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: airflow-git-sync-ssh-key
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+  - secretName: airflow-config-secrets
+    type: Opaque
+    data:
+    - objectName: airflow-db-connection-string
+      key: connectionString
+    - objectName: airflow-fernet-key
+      key: fernetKey
+    - objectName: airflow-webserver-secret-key
+      key: webserverSecretKey
+    - objectName: airflow-git-sync-ssh-key
+      key: gitSyncSshKey
+EOF
+
+# Marquez SecretProviderClass
+cat <<EOF | kubectl apply -f -
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: marquez-secrets
+  namespace: lineage
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    clientID: "${AIRFLOW_MI_CLIENT_ID}"
+    keyvaultName: "${KV_NAME}"
+    tenantId: "${TENANT_ID}"
+    objects: |
+      array:
+        - |
+          objectName: marquez-db-password
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+  - secretName: marquez-db-credentials
+    type: Opaque
+    data:
+    - objectName: marquez-db-password
+      key: password
+EOF
+
+# Portal SecretProviderClass
+cat <<EOF | kubectl apply -f -
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: portal-secrets
+  namespace: portal
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    useVMManagedIdentity: "false"
+    clientID: "${PORTAL_MI_CLIENT_ID}"
+    keyvaultName: "${KV_NAME}"
+    tenantId: "${TENANT_ID}"
+    objects: |
+      array:
+        - |
+          objectName: portal-aad-client-id
+          objectType: secret
+          objectVersion: ""
+        - |
+          objectName: portal-aad-client-secret
+          objectType: secret
+          objectVersion: ""
+  secretObjects:
+  - secretName: portal-aad-config
+    type: Opaque
+    data:
+    - objectName: portal-aad-client-id
+      key: clientId
+    - objectName: portal-aad-client-secret
+      key: clientSecret
+EOF
+```
+
+### 4.6 Store Compute Cluster kubeconfig in Key Vault
+
+Airflow uses the `SparkKubernetesOperator` to submit `SparkApplication` CRDs to the compute cluster. To do this, it needs a kubeconfig for the compute cluster's API server. Store it in Key Vault so it is never in plaintext in a ConfigMap or environment variable.
+
+```bash
+# Get the compute cluster kubeconfig (not the kubelogin-converted one — the raw one)
+az aks get-credentials \
+  --name "aks-forge-compute-${ENV}" \
+  --resource-group "rg-forge-compute-${ENV}" \
+  --file /tmp/compute-kubeconfig.yaml \
+  --overwrite-existing
+
+# The kubeconfig references the private API server FQDN.
+# Verify it points to an internal IP (the private endpoint):
+cat /tmp/compute-kubeconfig.yaml | grep server
+
+# Store in Key Vault
+az keyvault secret set \
+  --vault-name "${KV_NAME}" \
+  --name "compute-cluster-kubeconfig" \
+  --file /tmp/compute-kubeconfig.yaml
+
+# Securely delete the local copy
+shred -u /tmp/compute-kubeconfig.yaml
+```
+
+Airflow retrieves this secret at runtime via the Key Vault secrets backend. The `KubernetesHook` in Airflow is configured to use this connection:
+
+```python
+# In Airflow, connection ID: compute_cluster_k8s
+# Connection type: Kubernetes
+# Extra: {"kube_config": "{{ conn.compute_cluster_kubeconfig.password }}" }
+```
+
+### 4.7 Enable Container Insights Add-on (Azure Monitor / Container Insights)
+
+The Container Insights add-on installs the Azure Monitor Agent (AMA) as a DaemonSet and wires both clusters to the Azure Monitor Workspace and Log Analytics Workspace. No Helm chart, no PVC, no self-hosted pods.
+
+```bash
+# Enable Container Insights on the orchestration cluster
+az aks enable-addons \
+  --resource-group rg-forge-prod \
+  --name aks-forge-orch-prod \
+  --addons monitoring \
+  --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
+
+# Enable Container Insights on the compute cluster
+az aks enable-addons \
+  --resource-group rg-forge-prod \
+  --name aks-forge-compute-prod \
+  --addons monitoring \
+  --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
+```
+
+Configure the AMA to scrape custom Prometheus-compatible `/metrics` endpoints (Spark, Trino, Airflow, Marquez, Portal) via a ConfigMap:
+
+```bash
+kubectl apply -f - <<'EOF'
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: ama-metrics-prometheus-config
+  namespace: kube-system
+data:
+  prometheus-config: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+      - job_name: spark-operator
+        static_configs:
+          - targets: ['spark-operator.spark-system.svc.cluster.local:10254']
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+EOF
+```
+
+Verify the AMA DaemonSet is running:
+
+```bash
+kubectl get pods -n kube-system -l component=ama-metrics
+# ama-metrics-xxx   2/2   Running  (one per node)
+
+# Verify metrics are flowing to Azure Monitor
+az monitor metrics list \
+  --resource "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.ContainerService/managedClusters/aks-forge-orch-prod" \
+  --metric "node_cpu_usage_percentage" \
+  --output table
+```
+
+### 4.8 Provision Azure Managed Grafana
+
+Azure Managed Grafana is provisioned via Bicep (not Helm). This step verifies it is accessible.
+
+```bash
+# Get the Managed Grafana endpoint
+GRAFANA_URL=$(az grafana show \
+  --name "grafana-forge-${ENV}" \
+  --resource-group "rg-forge-orchestration-${ENV}" \
+  --query properties.endpoint -o tsv)
+echo "Grafana URL: ${GRAFANA_URL}"
+
+# Verify the Managed Grafana instance is active
+az grafana show \
+  --name grafana-forge-prod \
+  --resource-group rg-forge-prod \
+  --query "properties.provisioningState" -o tsv
+# Expected: Succeeded
+
+# Open in browser (authenticates via Azure AD)
+echo "Open: ${GRAFANA_URL}"
+```
+
+### 4.9 Install Airflow
+
+```bash
+helm repo add apache-airflow https://airflow.apache.org
+helm repo update
+
+AIRFLOW_DB_CONN=$(az keyvault secret show \
+  --vault-name "${KV_NAME}" \
+  --name "airflow-db-connection-string" \
+  --query value -o tsv)
+
+AIRFLOW_FERNET_KEY=$(az keyvault secret show \
+  --vault-name "${KV_NAME}" \
+  --name "airflow-fernet-key" \
+  --query value -o tsv)
+
+AIRFLOW_WS_SECRET=$(az keyvault secret show \
+  --vault-name "${KV_NAME}" \
+  --name "airflow-webserver-secret-key" \
+  --query value -o tsv)
+
+cat <<EOF > /tmp/airflow-values.yaml
+airflowVersion: "2.9.3"
+
+images:
+  airflow:
+    repository: "forgeacr-${ENV}.azurecr.io/airflow"
+    tag: "2.9.3"
+    pullPolicy: Always
+  gitSync:
+    repository: "registry.k8s.io/git-sync/git-sync"
+    tag: "v4.2.1"
+
+executor: KubernetesExecutor
+
+data:
+  metadataConnection:
+    protocol: postgresql
+    host: ""  # host comes from connection string below
+
+config:
+  core:
+    dags_folder: /opt/airflow/dags
+    load_examples: "False"
+    parallelism: "64"
+    max_active_tasks_per_dag: "32"
+    max_active_runs_per_dag: "8"
+  kubernetes:
+    namespace: airflow
+    worker_container_repository: "forgeacr-${ENV}.azurecr.io/airflow"
+    worker_container_tag: "2.9.3"
+    delete_worker_pods: "True"
+    delete_worker_pods_on_failure: "False"
+    worker_service_account_name: airflow-sa
+  secrets:
+    backend: airflow.providers.microsoft.azure.secrets.key_vault.AzureKeyVaultBackend
+    backend_kwargs: '{"connections_prefix": "airflow-conn", "variables_prefix": "airflow-var", "vault_url": "https://${KV_NAME}.vault.azure.net/"}'
+  logging:
+    remote_logging: "True"
+    remote_log_conn_id: azure_data_lake_default
+    remote_base_log_folder: "abfss://checkpoint@${ADLS_ACCOUNT}.dfs.core.windows.net/airflow-logs"
+    encrypt_s3_logs: "False"
+
+env:
+- name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+  valueFrom:
+    secretKeyRef:
+      name: airflow-config-secrets
+      key: connectionString
+- name: AIRFLOW__CORE__FERNET_KEY
+  valueFrom:
+    secretKeyRef:
+      name: airflow-config-secrets
+      key: fernetKey
+- name: AIRFLOW__WEBSERVER__SECRET_KEY
+  valueFrom:
+    secretKeyRef:
+      name: airflow-config-secrets
+      key: webserverSecretKey
+
+scheduler:
+  replicas: 2
+  serviceAccount:
+    create: false
+    name: airflow-sa
+  nodeSelector:
+    agentpool: airflow
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+
+webserver:
+  replicas: 2
+  serviceAccount:
+    create: false
+    name: airflow-sa
+  nodeSelector:
+    agentpool: platform
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "2Gi"
+  service:
+    type: ClusterIP
+  authBackend: airflow.auth.managers.fab.fab_auth_manager.FabAuthManager
+  defaultUser:
+    enabled: false
+
+triggerer:
+  enabled: true
+  replicas: 1
+  serviceAccount:
+    create: false
+    name: airflow-sa
+  nodeSelector:
+    agentpool: airflow
+
+workers:
+  serviceAccount:
+    create: false
+    name: airflow-sa
+
+dags:
+  gitSync:
+    enabled: true
+    repo: "git@ssh.dev.azure.com:v3/yourorg/forge/dags"
+    branch: main
+    subPath: "dags/"
+    sshKeySecret: airflow-config-secrets
+    period: 60s
+
+volumeMounts:
+- name: airflow-secrets
+  mountPath: /mnt/secrets
+  readOnly: true
+
+volumes:
+- name: airflow-secrets
+  csi:
+    driver: secrets-store.csi.k8s.io
+    readOnly: true
+    volumeAttributes:
+      secretProviderClass: airflow-secrets
+
+serviceAccount:
+  create: false
+  name: airflow-sa
+
+podAnnotations:
+  azure.workload.identity/use: "true"
+EOF
+
+helm upgrade --install airflow \
+  apache-airflow/airflow \
+  --namespace airflow \
+  --version 1.13.1 \
+  --values /tmp/airflow-values.yaml \
+  --wait \
+  --timeout=15m
+```
+
+Verify Airflow is running:
+
+```bash
+kubectl get pods -n airflow
+
+# Expected:
+# airflow-scheduler-0                         2/2     Running
+# airflow-scheduler-1                         2/2     Running
+# airflow-triggerer-0                         2/2     Running
+# airflow-webserver-<hash>-<hash>             1/1     Running
+# airflow-webserver-<hash>-<hash>             1/1     Running
+```
+
+### 4.10 Install Marquez
+
+Marquez runs in the `lineage` namespace on the orchestration cluster. It stores lineage metadata in its own PostgreSQL database (separate from Airflow's).
+
+```bash
+helm repo add marquezproject \
+  https://marquezproject.github.io/marquez/charts
+helm repo update
+
+MARQUEZ_DB_PASS=$(az keyvault secret show \
+  --vault-name "${KV_NAME}" \
+  --name "marquez-db-password" \
+  --query value -o tsv)
+
+MARQUEZ_PG_HOST=$(az keyvault secret show \
+  --vault-name "${KV_NAME}" --name "postgres-host" --query value -o tsv)
+
+cat <<EOF > /tmp/marquez-values.yaml
+marquez:
+  image:
+    registry: "forgeacr-${ENV}.azurecr.io"
+    repository: marquez-api
+    tag: "0.47.0"
+  db:
+    host: "${MARQUEZ_PG_HOST}"
+    port: "5432"
+    name: "marquez"
+    user: "marquez"
+    password: ""  # injected from secret below
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1"
+      memory: "2Gi"
+  nodeSelector:
+    agentpool: platform
+  serviceAccount:
+    create: false
+    name: marquez-sa
+
+web:
+  image:
+    registry: "forgeacr-${ENV}.azurecr.io"
+    repository: marquez-web
+    tag: "0.47.0"
+  nodeSelector:
+    agentpool: platform
+
+postgresql:
+  enabled: false  # We use the managed PostgreSQL, not the chart's bundled postgres
+EOF
+
+helm upgrade --install marquez \
+  marquezproject/marquez \
+  --namespace lineage \
+  --version 0.47.0 \
+  --values /tmp/marquez-values.yaml \
+  --set marquez.db.password="${MARQUEZ_DB_PASS}" \
+  --wait \
+  --timeout=5m
+```
+
+Verify:
+
+```bash
+kubectl get pods -n lineage
+
+# Expected:
+# marquez-api-<hash>     1/1     Running
+# marquez-web-<hash>     1/1     Running
+```
+
+Check the Marquez API responds:
+
+```bash
+kubectl port-forward svc/marquez -n lineage 5000:5000 &
+curl -s http://localhost:5000/api/v1/namespaces | python3 -m json.tool
+kill %1
+```
+
+Expected: JSON response listing namespaces (initially empty `[]`).
+
+### 4.11 Verify Airflow Webserver is Accessible
+
+Port-forward to the Airflow webserver to confirm the UI loads before the Ingress is configured:
+
+```bash
+kubectl port-forward svc/airflow-webserver -n airflow 8080:8080 &
+curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health
+kill %1
+```
+
+Expected HTTP status: `200`
+
+---
+
+## Part 5 — Cross-Cluster Validation
+
+### 5.1 Test: Airflow Submits a SparkApplication to the Compute Cluster
+
+This test verifies the full orchestration-to-compute path. It creates a minimal SparkApplication CRD in the compute cluster through Airflow's SparkKubernetesOperator.
+
+**Step 1: Create a test DAG**
+
+Create `/tmp/test_spark_submit.py`:
+
+```python
+from datetime import datetime
+from airflow import DAG
+from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import (
+    SparkKubernetesOperator,
+)
+from airflow.providers.cncf.kubernetes.sensors.spark_kubernetes import (
+    SparkKubernetesSensor,
+)
+
+ENV = "prod"
+ACR = f"forgeacr-{ENV}.azurecr.io"
+
+with DAG(
+    dag_id="forge_cross_cluster_test",
+    start_date=datetime(2026, 3, 24),
+    schedule=None,
+    catchup=False,
+    tags=["test", "platform"],
+) as dag:
+
+    submit = SparkKubernetesOperator(
+        task_id="submit_spark_pi",
+        application_file="yaml",
+        application=f"""
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: pi-test-{{{{ ts_nodash | lower }}}}
+  namespace: spark-jobs
+spec:
+  type: Scala
+  mode: cluster
+  image: "{ACR}/spark:4.1.0"
+  imagePullPolicy: Always
+  mainClass: org.apache.spark.examples.SparkPi
+  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.13-4.1.0.jar"
+  arguments:
+    - "100"
+  sparkVersion: "4.1.0"
+  restartPolicy:
+    type: Never
+  driver:
+    cores: 1
+    memory: "1g"
+    serviceAccount: spark-driver-sa
+    annotations:
+      azure.workload.identity/use: "true"
+    nodeSelector:
+      agentpool: spark
+    tolerations:
+    - key: workload
+      operator: Equal
+      value: spark
+      effect: NoSchedule
+  executor:
+    cores: 1
+    instances: 2
+    memory: "1g"
+    nodeSelector:
+      agentpool: spark
+    tolerations:
+    - key: workload
+      operator: Equal
+      value: spark
+      effect: NoSchedule
+    - key: kubernetes.azure.com/scalesetpriority
+      operator: Equal
+      value: spot
+      effect: NoSchedule
+""",
+        kubernetes_conn_id="compute_cluster_k8s",
+        namespace="spark-jobs",
+    )
+
+    monitor = SparkKubernetesSensor(
+        task_id="monitor_spark_pi",
+        application_name=f"pi-test-{{{{ ts_nodash | lower }}}}",
+        namespace="spark-jobs",
+        kubernetes_conn_id="compute_cluster_k8s",
+        attach_log=True,
+    )
+
+    submit >> monitor
+```
+
+**Step 2: Copy the DAG to the git-sync repo**
+
+```bash
+cp /tmp/test_spark_submit.py path/to/dags/test_spark_submit.py
+git add path/to/dags/test_spark_submit.py
+git commit -m "chore: add cross-cluster validation DAG"
+git push origin main
+```
+
+Wait for git-sync (up to 60 seconds) then verify the DAG appears:
+
+```bash
+kubectl port-forward svc/airflow-webserver -n airflow 8080:8080 &
+curl -s http://localhost:8080/api/v1/dags/forge_cross_cluster_test \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print('DAG found:', d['dag_id'], '- paused:', d['is_paused'])"
+kill %1
+```
+
+**Step 3: Trigger the DAG**
+
+```bash
+# Unpause and trigger via Airflow REST API (from inside the cluster or via port-forward)
+curl -X PATCH http://localhost:8080/api/v1/dags/forge_cross_cluster_test \
+  -H "Content-Type: application/json" \
+  -d '{"is_paused": false}' \
+  -u admin:$(kubectl get secret airflow-webserver-secret -n airflow -o jsonpath='{.data.webserver-secret-key}' | base64 -d)
+
+curl -X POST http://localhost:8080/api/v1/dags/forge_cross_cluster_test/dagRuns \
+  -H "Content-Type: application/json" \
+  -d '{"dag_run_id": "cross_cluster_test_01"}' \
+  -u admin:$(kubectl get secret airflow-webserver-secret -n airflow -o jsonpath='{.data.webserver-secret-key}' | base64 -d)
+```
+
+**Step 4: Watch the SparkApplication on the compute cluster**
+
+Switch to the compute cluster context and watch:
+
+```bash
+kubectl config use-context "forge-compute-${ENV}"
+
+kubectl get sparkapplication -n spark-jobs --watch
+```
+
+Expected progression:
+
+```
+NAME                           STATUS      ATTEMPTS   START                  FINISH   AGE
+pi-test-20260324t120000        SUBMITTED   1                                          5s
+pi-test-20260324t120000        RUNNING     1          2026-03-24T12:00:05Z            15s
+pi-test-20260324t120000        SUCCEEDED   1          2026-03-24T12:00:05Z   ...      90s
+```
+
+**Step 5: Return to orchestration cluster**
+
+```bash
+kubectl config use-context "forge-orch-${ENV}"
+```
+
+Verify the Airflow task succeeded:
+
+```bash
+curl -s http://localhost:8080/api/v1/dags/forge_cross_cluster_test/dagRuns/cross_cluster_test_01/taskInstances \
+  | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for ti in data['task_instances']:
+    print(ti['task_id'], '->', ti['state'])
+"
+```
+
+Expected:
+```
+submit_spark_pi -> success
+monitor_spark_pi -> success
+```
+
+### 5.2 Test: Marquez Receives an OpenLineage Event
+
+When Airflow runs a task with the `openlineage-airflow` integration installed, it emits `START` and `COMPLETE` OpenLineage events to Marquez automatically. The test DAG above triggers this.
+
+Verify events arrived in Marquez:
+
+```bash
+kubectl port-forward svc/marquez -n lineage 5000:5000 &
+
+# Check for lineage runs associated with the test DAG
+curl -s "http://localhost:5000/api/v1/namespaces/forge/jobs" \
+  | python3 -m json.tool \
+  | grep -A3 "cross_cluster_test"
+
+# Check datasets that appeared (the SparkPi example does not produce ADLS output,
+# but the Airflow DAG job itself will appear)
+curl -s "http://localhost:5000/api/v1/namespaces/forge/runs?limit=5" \
+  | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for run in data['runs']:
+    print(run['id'], run['state'], run.get('jobVersion', {}).get('name', ''))
+"
+
+kill %1
+```
+
+Expected: at least one run entry for the `forge_cross_cluster_test.submit_spark_pi` job with state `COMPLETE`.
+
+### 5.3 Test: Metrics Appear in Azure Managed Grafana
+
+**Step 1: Verify Azure Monitor is receiving metrics**
+
+```bash
+# Check that Airflow metrics are arriving in Log Analytics
+az monitor log-analytics query \
+  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod" \
+  --analytics-query "InsightsMetrics | where Name startswith 'airflow' | take 5 | project TimeGenerated, Name, Val" \
+  --output table
+
+# Check Spark Operator metrics
+az monitor log-analytics query \
+  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod" \
+  --analytics-query "InsightsMetrics | where Name startswith 'spark' | take 5 | project TimeGenerated, Name, Val" \
+  --output table
+```
+
+**Step 2: Access Azure Managed Grafana and check the Forge Platform dashboard**
+
+```bash
+GRAFANA_URL=$(az grafana show \
+  --name "grafana-forge-${ENV}" \
+  --resource-group "rg-forge-orchestration-${ENV}" \
+  --query properties.endpoint -o tsv)
+echo "Open: ${GRAFANA_URL}"
+```
+
+Open the Grafana URL in a browser. Log in with Azure AD. Navigate to **Dashboards > Forge > Platform Overview**. Verify:
+- Cluster node counts appear
+- Airflow scheduler heartbeat is green
+- Spark Operator pod is shown as Running
+- No critical alerts are firing
+
+**Step 3: Verify logs are flowing to Azure Log Analytics**
+
+In Azure Managed Grafana, navigate to **Explore**, select the **Azure Monitor Logs** data source, choose the Log Analytics Workspace, and run this query:
+
+```kql
+ContainerLogV2
+| where Namespace == "airflow" and PodName startswith "airflow-scheduler"
+| order by TimeGenerated desc
+| take 20
+| project TimeGenerated, PodName, LogMessage
+```
+
+Expected: recent log lines from the Airflow scheduler. If no logs appear, check:
+- AMA DaemonSet pods are Running on all nodes: `kubectl get pods -n kube-system -l component=ama-logs`
+- Container Insights add-on is enabled: `az aks show --name aks-forge-orch-prod --resource-group rg-forge-prod --query "addonProfiles.omsagent.enabled"`
+
+### 5.4 Full Green-Light Checklist
+
+Do not declare the platform ready for pipeline onboarding until every item below is checked.
+
+**ACR**
+- [ ] `az acr login` succeeds from inside VNet
+- [ ] All required images are present in ACR (verify with `az acr repository list`)
+- [ ] Defender for Containers shows no CRITICAL findings on platform images
+- [ ] Public network access is Disabled
+
+**Networking**
+- [ ] `nslookup forgeacr-${ENV}.azurecr.io` from any cluster pod returns a private IP
+- [ ] `nslookup ${ADLS_ACCOUNT}.dfs.core.windows.net` returns a private IP
+- [ ] `nslookup ${KV_NAME}.vault.azure.net` returns a private IP
+- [ ] Compute cluster API server is reachable only via private endpoint
+- [ ] Orchestration cluster API server is reachable only via private endpoint
+
+**Compute Cluster**
+- [ ] All system node pool nodes are `Ready`
+- [ ] Spark node pool autoscales from 0 to at least 1 node when a SparkApplication is submitted
+- [ ] Trino node pool shows correct node count
+- [ ] CSI Secrets Store Driver pods are Running
+- [ ] Workload identity webhook pods are Running
+- [ ] Calico network policies are installed
+- [ ] `spark-driver-sa` ServiceAccount exists in `spark-jobs` with correct workload identity annotation
+- [ ] `trino-sa` ServiceAccount exists in `trino` with correct workload identity annotation
+- [ ] Workload identity test pod (Section 3.10) passed
+- [ ] Spark Operator pods are Running
+- [ ] Spark Operator CRDs are installed
+- [ ] Spark Operator webhook is registered
+
+**Orchestration Cluster**
+- [ ] All system node pool nodes are `Ready`
+- [ ] CSI Secrets Store Driver pods are Running
+- [ ] Workload identity webhook pods are Running
+- [ ] `airflow-sa`, `marquez-sa`, `portal-sa` ServiceAccounts exist with correct annotations
+- [ ] All SecretProviderClasses resolve secrets without error
+- [ ] Compute cluster kubeconfig is stored in Key Vault as `compute-cluster-kubeconfig`
+- [ ] Container Insights add-on is enabled on both clusters
+- [ ] Azure Monitor Agent (AMA) DaemonSet pods are Running on all nodes
+- [ ] Azure Monitor metrics query returns data for both clusters
+- [ ] Azure Managed Grafana instance is accessible and shows Forge dashboards
+- [ ] Airflow scheduler pods (2 replicas) show `2/2 Running`
+- [ ] Airflow webserver pods are Running and return HTTP 200 on `/health`
+- [ ] Airflow triggerer pod is Running
+- [ ] Marquez API pod is Running and returns 200 on `/api/v1/namespaces`
+- [ ] Marquez Web pod is Running
+
+**Cross-Cluster Validation**
+- [ ] Airflow `forge_cross_cluster_test` DAG triggered and reached state `success`
+- [ ] SparkApplication `pi-test-*` reached state `SUCCEEDED` on the compute cluster
+- [ ] Marquez received OpenLineage events from the test DAG run
+- [ ] Azure Managed Grafana shows metrics from both clusters
+- [ ] Azure Log Analytics shows logs from both clusters
+- [ ] No network policy violations logged by Calico during the test run
+
+**Security**
+- [ ] Zero pods running as `root` (check with `kubectl get pods -A -o json | jq '.items[].spec.containers[].securityContext.runAsUser'`)
+- [ ] Zero pods have `hostNetwork: true`
+- [ ] Zero static secrets in ConfigMaps or environment variables (all secrets are in Key Vault or projected by CSI driver)
+- [ ] Workload identity federated credentials match the correct OIDC issuer URL for each cluster
+- [ ] Microsoft Defender for Cloud shows no high-severity recommendations on the resource groups
+
+---
+
+*Once all items are checked, the platform clusters are ready for the first production pipeline onboarding. Proceed to document `04-pipeline-onboarding.md`.*

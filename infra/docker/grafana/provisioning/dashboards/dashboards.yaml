@@ -1,0 +1,106 @@
+# =============================================================================
+# Stratum — Grafana Dashboard Provider Configuration
+#
+# This file tells Grafana where to find dashboard JSON files and how to
+# manage them. Grafana reads all .json files in the specified path and
+# creates them as provisioned dashboards.
+#
+# Provisioned dashboards are read-only in the UI — they cannot be saved
+# over the baked-in version. This prevents configuration drift between
+# environments. Engineers who want to edit dashboards must modify the JSON
+# in the repo and rebuild the image.
+# =============================================================================
+
+apiVersion: 1
+
+providers:
+
+  # ---------------------------------------------------------------------------
+  # Spark Dashboards
+  # ---------------------------------------------------------------------------
+  - name: Spark
+    orgId: 1
+    folder: Spark
+    folderUid: stratum-spark
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 0
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards/spark
+      foldersFromFilesStructure: false
+
+  # ---------------------------------------------------------------------------
+  # Airflow / Orchestration Dashboards
+  # ---------------------------------------------------------------------------
+  - name: Airflow
+    orgId: 1
+    folder: Airflow
+    folderUid: stratum-airflow
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 0
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards/airflow
+      foldersFromFilesStructure: false
+
+  # ---------------------------------------------------------------------------
+  # Trino Dashboards
+  # ---------------------------------------------------------------------------
+  - name: Trino
+    orgId: 1
+    folder: Trino
+    folderUid: stratum-trino
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 0
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards/trino
+      foldersFromFilesStructure: false
+
+  # ---------------------------------------------------------------------------
+  # Data Quality Dashboards
+  # ---------------------------------------------------------------------------
+  - name: Data Quality
+    orgId: 1
+    folder: Data Quality
+    folderUid: stratum-dq
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 0
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards/dq
+      foldersFromFilesStructure: false
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure / Kubernetes Dashboards
+  # ---------------------------------------------------------------------------
+  - name: Infrastructure
+    orgId: 1
+    folder: Infrastructure
+    folderUid: stratum-infra
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 0
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards/infra
+      foldersFromFilesStructure: false
+
+  # ---------------------------------------------------------------------------
+  # Platform Overview (home dashboard)
+  # ---------------------------------------------------------------------------
+  - name: Platform
+    orgId: 1
+    folder: Platform
+    folderUid: stratum-platform
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 0
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards/platform
+      foldersFromFilesStructure: false
