@@ -1,6 +1,6 @@
 <div align="center">
 
-# ▲ Forge
+<img src="docs/forge-logo.svg" alt="Forge" height="52"/>
 
 ### **The Core Data Platform**
 
