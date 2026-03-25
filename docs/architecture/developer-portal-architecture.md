@@ -4,6 +4,8 @@
 > **Status:** Production
 > **Audience:** Platform engineers, data engineers, frontend/backend contributors
 
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
+
 ---
 
 ## Table of Contents

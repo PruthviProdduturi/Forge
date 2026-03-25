@@ -3,6 +3,8 @@
 > **Prerequisite:** Step 04 complete. Compute cluster is fully operational.
 > **Cluster context:** `aks-forge-orch-{env}`
 
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
+
 ---
 
 ## Overview

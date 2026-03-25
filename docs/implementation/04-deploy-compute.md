@@ -3,6 +3,8 @@
 > **Prerequisite:** Step 03 complete. Both AKS clusters are running. All images are in ACR.
 > **Cluster context:** `aks-forge-compute-{env}`
 
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io)
+
 ---
 
 ## Overview

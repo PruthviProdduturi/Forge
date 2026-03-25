@@ -2,6 +2,8 @@
 
 > **All code changes go through Git and Pull Requests. Nothing is deployed directly.**
 
+[![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
+
 ---
 
 ## Principles
