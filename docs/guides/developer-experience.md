@@ -17,6 +17,7 @@
 7. [Debugging Guide](#7-debugging-guide)
 8. [Environment Parity](#8-environment-parity)
 9. [forge-cli Reference](#9-forge-cli-reference)
+10. [Restatement & Backfill](#10-restatement--backfill)
 
 ---
 
@@ -1749,3 +1750,144 @@ OUTPUT (--wait):
 
   Run complete: SUCCESS (total: 3m 01s)
 ```
+
+---
+
+## 10. Restatement & Backfill
+
+Restatement is how you re-run a pipeline over historical data — to fix a bug, apply a logic change, or correct data that was delivered with errors. Every Forge pipeline is idempotent: re-running it for the same partition produces the same result. The **partition tracker** (`_tracker.json`) is the mechanism that makes this safe.
+
+### How Trackers Work
+
+After every successful pipeline run, the SDK writes a `_tracker.json` file alongside the output partition:
+
+```
+silver/sales/orders/date=2024-01-01/
+  part-0000.parquet
+  _tracker.json    ← "this partition is done"
+```
+
+When the pipeline starts, it checks for the tracker first:
+- **Tracker present** → skip (already processed, no re-work)
+- **Tracker missing** → process, write data, write tracker
+
+Restatement works by **deleting the trackers** for a date range, then triggering an Airflow backfill. The pipeline finds no trackers and reprocesses those partitions.
+
+### Triggering a Restatement from the Portal
+
+1. Navigate to **Datasets** → your dataset → click **"Restate"**
+   *(or Pipeline → your pipeline → "Backfill / Restate")*
+
+2. Fill in the form:
+   - **Date range** — start and end date (inclusive)
+   - **Layers** — Silver only, or Silver + Gold
+   - **Cascade** — optionally include downstream datasets (portal shows lineage graph)
+   - **Reason** — required text for audit trail
+
+3. Review the confirmation screen — it shows how many trackers will be deleted and which partitions are affected.
+
+4. Click **Confirm Restatement**. The portal:
+   - Deletes the trackers for the selected partitions
+   - Triggers Airflow backfill runs (one per partition per layer)
+   - Shows a live progress screen
+
+5. Monitor progress from the portal. Each partition shows as it completes. DQ re-runs automatically on each restated partition.
+
+### Triggering a Backfill via CLI
+
+```bash
+# Restate sales.orders for a 7-day range
+forge restate sales.orders \
+  --start 2024-01-01 \
+  --end   2024-01-07 \
+  --layers silver,gold \
+  --reason "Source redelivered corrected January data"
+
+# Restate with cascade (restates downstream datasets too)
+forge restate sales.orders \
+  --start 2024-01-01 \
+  --end   2024-01-07 \
+  --cascade full \
+  --reason "Bug fix in orders transformation"
+
+# Check restatement status
+forge restatement status rst-7f3a9c2b
+
+# List recent restatements for a dataset
+forge restatement list --dataset sales.orders --limit 10
+```
+
+### Writing Idempotent Pipelines
+
+All pipelines **must** use the tracker SDK. The `ForgeTransformOperator` handles this automatically:
+
+```python
+from forge.sdk.operators import ForgeTransformOperator
+
+transform_silver = ForgeTransformOperator(
+    task_id="transform_silver",
+    dataset="sales.orders",
+    layer="silver",
+    transform_fn="jobs.sales.orders.transform_silver",
+    schema_version="v3",
+    # use_tracker=True is the default — do not set to False
+)
+```
+
+If you write a raw Spark task, call the tracker client manually:
+
+```python
+from forge.sdk.tracker import TrackerClient
+
+tracker = TrackerClient()
+
+@task
+def transform_silver(execution_date: str, **context):
+    if tracker.exists("silver", "sales.orders", f"date={execution_date}"):
+        return  # already done — idempotent exit
+
+    # ... do work, write Delta partition ...
+
+    tracker.write(
+        layer="silver",
+        dataset="sales.orders",
+        partition=f"date={execution_date}",
+        row_count=df.count(),
+        schema_version="v3",
+        restatement_id=context.get("params", {}).get("restatement_id"),
+    )
+```
+
+**Never write the tracker before the data write completes.** If the write fails after the tracker is written, the partition will be skipped on the next run, leaving stale or missing data.
+
+### Restatement History
+
+Every restatement is recorded in the **Restatement Registry** (a Delta table queryable via Trino):
+
+```sql
+SELECT
+  restatement_id,
+  triggered_by,
+  date_range_start,
+  date_range_end,
+  reason,
+  status,
+  rows_after - rows_before AS row_delta
+FROM gold._platform.restatement_registry
+WHERE dataset_id = 'sales.orders'
+ORDER BY triggered_at DESC;
+```
+
+The portal's **Datasets → [dataset] → Restatements tab** shows the same history with a visual row delta chart.
+
+### Rules and Limits
+
+| Rule | Detail |
+|------|--------|
+| Max range via portal | 90 days. Larger ranges require `forge restate --force` run by the platform team. |
+| Concurrency | Only one active restatement per dataset at a time. |
+| DQ | DQ re-runs automatically on every restated partition. A DQ failure marks the partition `DQ_FAILED` and fires an alert. |
+| Bronze | Bronze has no trackers. To re-ingest bronze data, re-deliver from the source system. |
+| Cancellation | An in-progress restatement can be cancelled. Completed partitions keep their new data; remaining partitions will be reprocessed on the next regular Airflow run. |
+
+See [Restatement Architecture](../architecture/restatement-architecture.md) for the full technical design.
