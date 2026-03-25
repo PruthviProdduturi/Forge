@@ -55,7 +55,7 @@ No cluster node ever pulls from a public registry. This eliminates:
 
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
-| **Apache Airflow** | 2.9.3 | `apache/airflow:2.9.3-python3.11` | `forgeacr/airflow:2.9.3` | Custom image — see below |
+| **Apache Airflow** | 3.1.0 | `apache/airflow:3.1.0-python3.12` | `forgeacr/airflow:3.1.0` | Custom image — see below |
 | **Marquez API** | 0.47.0 | `marquezproject/marquez:0.47.0` | `forgeacr/marquez-api:0.47.0` | Imported, not modified |
 | **Marquez Web** | 0.47.0 | `marquezproject/marquez-web:0.47.0` | `forgeacr/marquez-web:0.47.0` | Imported, not modified |
 
@@ -110,12 +110,12 @@ Built from `Dockerfile` at `infra/docker/spark/Dockerfile`.
 - Delta Lake minor/patch release
 - Security CVE in base image (automated by Defender alert → CI pipeline)
 
-### `forgeacr/airflow:2.9.3`
+### `forgeacr/airflow:3.1.0`
 
 Built from `Dockerfile` at `infra/docker/airflow/Dockerfile`.
 
 **What's included:**
-- Official `apache/airflow:2.9.3-python3.11` base
+- Official `apache/airflow:3.1.0-python3.12` base
 - `apache-airflow-providers-cncf-kubernetes` (SparkKubernetesOperator)
 - `apache-airflow-providers-microsoft-azure` (ADLS hooks, Key Vault backend)
 - `openlineage-airflow` (automatic OpenLineage emission)

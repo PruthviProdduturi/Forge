@@ -125,7 +125,7 @@ The backend is stateless. All data lives in upstream systems. The only state the
 
 | Data Source | Purpose | Protocol |
 |-------------|---------|----------|
-| Airflow REST API | DAG list, DAG run history, task instance state, task log streaming, manual trigger | HTTP/JSON (Airflow 2.x stable API) |
+| Airflow REST API | DAG list, DAG run history, task instance state, task log streaming, manual trigger | HTTP/JSON (Airflow 3.x stable API) |
 | Marquez REST API | Lineage graph, dataset list, job list, dataset versions, run facets | HTTP/JSON (OpenLineage Marquez API v1) |
 | Trino (DQ Delta table) | DQ run results, pass rate calculations, failing rule details, trend queries | JDBC via `trino-python-client` |
 | Azure Cost Management API | Cost by resource, cost by tag, anomaly detection | Azure SDK (`azure-mgmt-costmanagement`) |
@@ -401,7 +401,7 @@ The pipelines section gives engineers a real-time view of every Airflow DAG mana
 
 ### Data Source: Airflow REST API
 
-All pipeline data originates from the Airflow 2.x stable REST API. The portal backend authenticates to Airflow using a service account JWT (stored in Key Vault, loaded via CSI driver). The Airflow REST API base URL is an internal cluster service (`http://airflow-webserver.airflow.svc.cluster.local:8080`).
+All pipeline data originates from the Airflow 3.x stable REST API. The portal backend authenticates to Airflow using a service account JWT (stored in Key Vault, loaded via CSI driver). The Airflow REST API base URL is an internal cluster service (`http://airflow-webserver.airflow.svc.cluster.local:8080`).
 
 No direct PostgreSQL access is made to the Airflow metadata database. The REST API is the only interface.
 

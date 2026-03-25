@@ -1269,12 +1269,12 @@ AIRFLOW_WS_SECRET=$(az keyvault secret show \
   --query value -o tsv)
 
 cat <<EOF > /tmp/airflow-values.yaml
-airflowVersion: "2.9.3"
+airflowVersion: "3.1.0"
 
 images:
   airflow:
     repository: "forgeacr-${ENV}.azurecr.io/airflow"
-    tag: "2.9.3"
+    tag: "3.1.0"
     pullPolicy: Always
   gitSync:
     repository: "registry.k8s.io/git-sync/git-sync"
@@ -1297,7 +1297,7 @@ config:
   kubernetes:
     namespace: airflow
     worker_container_repository: "forgeacr-${ENV}.azurecr.io/airflow"
-    worker_container_tag: "2.9.3"
+    worker_container_tag: "3.1.0"
     delete_worker_pods: "True"
     delete_worker_pods_on_failure: "False"
     worker_service_account_name: airflow-sa

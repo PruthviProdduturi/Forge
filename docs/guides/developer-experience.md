@@ -1196,7 +1196,7 @@ main  (production-ready, protected)
   ├── feature/ingest-supplier-invoices      ← new pipeline
   ├── feature/add-dq-rules-orders           ← ruleset update
   ├── fix/spark-job-oom-curated-orders      ← bug fix
-  └── chore/upgrade-airflow-2.9.4           ← dependency upgrade
+  └── chore/upgrade-airflow-3.1.0           ← dependency upgrade
 ```
 
 There is one long-lived branch: `main`. Every change arrives via a short-lived feature branch and a Pull Request. Merge commits are used (no squash, no rebase) to preserve individual commit history.

@@ -93,7 +93,7 @@ Quick reference for custom images:
 |-------|---------|-----------|
 | `spark` | 4.0.0 | `infra/docker/spark/Dockerfile` |
 | `trino` | 438 | `infra/docker/trino/Dockerfile` |
-| `airflow` | 2.9.3 | `infra/docker/airflow/Dockerfile` |
+| `airflow` | 3.1.0 | `infra/docker/airflow/Dockerfile` |
 | `grafana` | 10.4.2 | `infra/docker/grafana/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |

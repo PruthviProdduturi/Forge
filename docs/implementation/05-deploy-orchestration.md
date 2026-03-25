@@ -204,7 +204,7 @@ helm upgrade --install airflow \
   --namespace airflow \
   --values infra/helm/orchestration/airflow/values.yaml \
   --set images.airflow.repository=forgeacr-{env}.azurecr.io/airflow \
-  --set images.airflow.tag=2.9.3 \
+  --set images.airflow.tag=3.1.0 \
   --set data.metadataConnection.host=$(az keyvault secret show --vault-name kv-forge-{env} --name postgres-host --query value -o tsv) \
   --set data.metadataConnection.db=airflow \
   --set data.metadataConnection.user=airflow \

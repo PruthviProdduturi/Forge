@@ -159,7 +159,7 @@ Events are sent synchronously from the emitter. If Marquez is unreachable, the e
 
 ### Airflow OpenLineage Provider
 
-The Airflow image (`forgeacr/airflow:2.9.3`) includes the `openlineage-airflow` package (version 1.18.0). When installed, this package installs an Airflow plugin that hooks into the Airflow task lifecycle via `TaskInstanceStateChangedCallback`:
+The Airflow image (`forgeacr/airflow:3.1.0`) includes the `openlineage-airflow` package (version 1.18.0). When installed, this package installs an Airflow plugin that hooks into the Airflow task lifecycle via `TaskInstanceStateChangedCallback`:
 
 ```
 Airflow Scheduler

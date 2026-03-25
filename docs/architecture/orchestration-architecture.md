@@ -50,7 +50,7 @@ All configuration is managed via Helm chart at `infra/helm/orchestration/airflow
 
 With KubernetesExecutor, the Airflow scheduler does not maintain a pool of long-running worker processes. Instead, for every task instance that is ready to run, the scheduler creates a Kubernetes Pod in the `airflow` namespace. When the task finishes (success, failure, or upstream skip), the pod terminates and its resources are released.
 
-The pod runs the same Docker image as the scheduler — `forgeacr/airflow:2.9.3` — with the `airflow tasks run` command as its entrypoint. This means every task has an identical, isolated Python environment, the same installed packages, and the same access to secrets.
+The pod runs the same Docker image as the scheduler — `forgeacr/airflow:3.1.0` — with the `airflow tasks run` command as its entrypoint. This means every task has an identical, isolated Python environment, the same installed packages, and the same access to secrets.
 
 ### Why KubernetesExecutor Over CeleryExecutor
 
@@ -139,7 +139,7 @@ Scheduler marks task instance as QUEUED
           │  [scheduler loop, ~5s cadence]
           ▼
 Scheduler builds pod spec
-  • Image: forgeacr/airflow:2.9.3
+  • Image: forgeacr/airflow:3.1.0
   • Command: airflow tasks run <dag_id> <task_id> <run_id>
   • Environment: AIRFLOW__* config vars from ConfigMap
   • Secrets: mounted from Key Vault via CSI driver
@@ -349,7 +349,7 @@ The Git credentials (a read-only Azure DevOps PAT) are stored in Key Vault and p
 
 Airflow **serializes DAGs** to the PostgreSQL metadata database. When a DAG Python file changes on disk, the scheduler detects the new file hash and updates the serialized DAG in the metadata DB. The scheduler and webserver both read from the serialized DAG, not from the Python file directly — this means webserver replicas always see the same DAG definition regardless of which replica's git-sync has already pulled the latest commit.
 
-Serialized DAGs are versioned in the `dag_version` table (Airflow 2.9+). The metadata DB retains the previous serialized version until the new one is confirmed parsed successfully.
+Serialized DAGs are versioned in the `dag_version` table (Airflow 3.0+). The metadata DB retains the previous serialized version until the new one is confirmed parsed successfully.
 
 ### Safe Deployment — No Breaking Running DAGs
 
@@ -372,7 +372,7 @@ This means a DAG can be safely updated at any time, including while a run is in 
 
 ### TaskFlow API
 
-All new DAGs in Forge use the **TaskFlow API** (`@task` decorator, introduced in Airflow 2.0). TaskFlow eliminates the need to explicitly create XCom pushes and pulls — return values from one `@task` function become the input to the next automatically.
+All new DAGs in Forge use the **TaskFlow API** (`@task` decorator, available since Airflow 2.0). TaskFlow eliminates the need to explicitly create XCom pushes and pulls — return values from one `@task` function become the input to the next automatically.
 
 Standard four-stage DAG pattern:
 
@@ -442,7 +442,7 @@ orders_pipeline()
 
 ### Dynamic Task Mapping
 
-For pipelines that process multiple entities of the same type, Airflow 2.3+ dynamic task mapping eliminates the need to write one DAG per entity:
+For pipelines that process multiple entities of the same type, Airflow 3.x dynamic task mapping eliminates the need to write one DAG per entity:
 
 ```python
 @dag(dag_id="multi_domain_ingest", schedule="@daily", ...)
@@ -541,7 +541,7 @@ The `on_sla_miss` callback posts a structured alert to the Teams/Slack webhook a
 
 ## 7. Operator Inventory
 
-The following operators are used in Forge DAGs. Each is part of the `forgeacr/airflow:2.9.3` image.
+The following operators are used in Forge DAGs. Each is part of the `forgeacr/airflow:3.1.0` image.
 
 ### SparkKubernetesOperator
 
@@ -750,7 +750,7 @@ TLS termination is at the Application Gateway. The internal path uses HTTP (the 
 
 ### Multiple Schedulers
 
-Forge runs **two Airflow scheduler replicas** in HA mode. Both schedulers are active simultaneously — this is Airflow's native HA model since version 2.0, based on database-level row locking.
+Forge runs **two Airflow scheduler replicas** in HA mode. Both schedulers are active simultaneously — this is Airflow's native HA model since version 3.0, based on database-level row locking.
 
 How it works:
 
@@ -1085,7 +1085,7 @@ Airflow upgrades in Forge follow these constraints:
 
 ### Pre-Upgrade Checklist
 
-Before upgrading to a new Airflow minor version (`2.9 → 2.10`, for example):
+Before upgrading to a new Airflow minor version (`3.0 → 3.1`, for example):
 
 1. **Read the migration guide.** Check the Airflow release notes for deprecated providers, config changes, and metadata DB migration steps.
 2. **Test all DAGs in dev.** Deploy the new image to `forge-orchestration-dev`. Run every DAG. Check for import errors (`airflow dags list-import-errors`), behavior changes, and provider compatibility.
@@ -1149,7 +1149,7 @@ If the Alembic migration is not reversible (some Airflow versions add non-revers
 
 DAG Python files themselves do not need to be updated for a minor Airflow version upgrade unless deprecated APIs are removed. The strategy is:
 
-- **Minor version (2.9 → 2.10):** DAGs using the TaskFlow API and standard providers require no changes. Any use of deprecated operators is caught in the dev environment test.
+- **Minor version (3.0 → 3.1):** DAGs using the TaskFlow API and standard providers require no changes. Any use of deprecated operators is caught in the dev environment test.
 - **Major version (2.x → 3.x):** A compatibility sweep of all DAGs is required. Run `airflow upgrade-check` (included in the Airflow CLI) to enumerate all deprecated API usages.
 
 The `git-sync` sidecar means DAG files do not need redeployment separately from the image upgrade — they are always the latest Git commit.

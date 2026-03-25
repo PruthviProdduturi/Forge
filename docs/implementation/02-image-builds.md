@@ -17,7 +17,7 @@
 4. [Custom Images](#4-custom-images)
    - [spark:4.1.0](#41-spark351)
    - [trino:438](#42-trino438)
-   - [airflow:2.9.3](#43-airflow293)
+   - [airflow:3.1.0](#43-airflow293)
    - [grafana:10.4.2](#44-grafana1042)
    - [portal-api](#45-portal-api)
    - [portal-web](#46-portal-web)
@@ -124,7 +124,7 @@ All images in ACR use the following tag scheme:
 
 ```
 forgeacr-prod.azurecr.io/spark:4.1.0-prod
-forgeacr-dev.azurecr.io/airflow:2.9.3-dev
+forgeacr-dev.azurecr.io/airflow:3.1.0-dev
 forgeacr-prod.azurecr.io/portal-api:a3f92c1-prod
 forgeacr-prod.azurecr.io/prometheus:2.51.0-prod
 ```
@@ -217,12 +217,12 @@ docker push "${REGISTRY}/trino:${VERSION}-${ENV}"
 
 ---
 
-### 4.3 airflow:2.9.3
+### 4.3 airflow:3.1.0
 
 **Purpose:** Airflow scheduler, webserver, and worker pods. All DAG orchestration for Bronze ingestion, Silver transformation, DQ validation, and Gold publication runs from this image.
 
 **What is included:**
-- Official `apache/airflow:2.9.3-python3.11` base
+- Official `apache/airflow:3.1.0-python3.12` base
 - `apache-airflow-providers-cncf-kubernetes` — `SparkKubernetesOperator`, `KubernetesPodOperator`
 - `apache-airflow-providers-microsoft-azure` — ADLS hooks, Azure Key Vault secrets backend
 - `openlineage-airflow` — automatic OpenLineage START/COMPLETE/FAIL emission for every task
@@ -238,12 +238,12 @@ docker push "${REGISTRY}/trino:${VERSION}-${ENV}"
 ```bash
 REGISTRY="forgeacr-dev.azurecr.io"
 ENV="dev"
-VERSION="2.9.3"
+VERSION="3.1.0"
 
 docker build \
   --tag "${REGISTRY}/airflow:${VERSION}-${ENV}" \
   --file infra/docker/airflow/Dockerfile \
-  --build-arg AIRFLOW_VERSION="2.9.3" \
+  --build-arg AIRFLOW_VERSION="3.1.0" \
   infra/docker/airflow/
 ```
 
