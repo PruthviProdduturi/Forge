@@ -54,34 +54,9 @@ silver/
 
 ### 2.2 Tracker Schema
 
-```json
-{
-  "tracker_version": "1",
-  "pipeline_id":      "ingest_sales_orders",
-  "dag_run_id":       "scheduled__2024-01-01T00:00:00+00:00",
-  "airflow_task_id":  "transform_silver",
-  "layer":            "silver",
-  "dataset":          "sales.orders_v1",
-  "asset_version":    "v1",
-  "partition":        "year=2024/month=01/day=01/hour=00",
-  "completed_at":     "2024-01-01T06:23:11Z",
-  "duration_seconds": 142,
-  "row_count":        48293,
-  "output_size_bytes":12483920,
-  "schema_version":   "v3",
-  "spark_app_id":     "spark-abc123def",
-  "restatement_id":   null
-}
-```
+The canonical tracker file schema — all fields, types, and descriptions — is defined in [Storage Architecture §5.3](storage-architecture.md#53-tracker-file-schema).
 
-| Field | Description |
-|-------|-------------|
-| `tracker_version` | Schema version of the tracker format itself. Increment on breaking changes. |
-| `pipeline_id` | The Airflow DAG ID that produced this partition. |
-| `dag_run_id` | The specific Airflow run that produced this data. Links back to full run metadata. |
-| `restatement_id` | `null` for normal runs. UUID of the restatement that produced this data if it was restated. |
-| `schema_version` | Version of the **output dataset's** schema at time of write. Used to detect when a schema change requires restatement. |
-| `row_count` | Row count at write time. Used in DQ validation and restatement impact reports. |
+The `restatement_id` field is the key field for this document: it is `null` on normal writes and set to the UUID of the originating restatement request when the partition was produced by a restatement run. This is how the Restatement Registry identifies which partitions have been corrected and whether a restatement is still in progress.
 
 ### 2.3 Tracker Location Convention
 

@@ -370,6 +370,8 @@ This means a DAG can be safely updated at any time, including while a run is in 
 
 ## 6. DAG Authoring Patterns
 
+> **Hands-on guide:** For step-by-step DAG writing, testing, and debugging examples see the [Developer Experience Guide §3 — Airflow DAG Development](../guides/developer-experience.md#3-airflow-dag-development). This section covers the architectural patterns and constraints that govern how DAGs are structured on Forge.
+
 ### TaskFlow API
 
 All new DAGs in Forge use the **TaskFlow API** (`@task` decorator, available since Airflow 2.0). TaskFlow eliminates the need to explicitly create XCom pushes and pulls — return values from one `@task` function become the input to the next automatically.

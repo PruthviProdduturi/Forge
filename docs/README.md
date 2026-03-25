@@ -9,6 +9,9 @@ Deep-dive into how each part of the platform is designed.
 | Document | What it covers |
 |----------|---------------|
 | [`end-to-end-flow.md`](./architecture/end-to-end-flow.md) | **Start here.** Full system map, Bronze→Silver→Gold flow, DAG lifecycle, lineage graph, observability during a run |
+| [`environment-promotion.md`](./architecture/environment-promotion.md) | Dev vs prod, Spark Connect vs Spark Operator, PR→CI→dev→prod promotion flow, rollback |
+| [`storage-architecture.md`](./architecture/storage-architecture.md) | Medallion zones, partitioning standard, run trackers, DQ results files, versioning |
+| [`restatement-architecture.md`](./architecture/restatement-architecture.md) | Partition restatement, backfill, Restatement Registry, safety guards, SDK usage |
 | [`compute-architecture.md`](./architecture/compute-architecture.md) | Spark Operator, Spark Connect, Trino, node pools, ADLS access, cost tracking |
 | [`orchestration-architecture.md`](./architecture/orchestration-architecture.md) | Airflow KubernetesExecutor, DAG git-sync, Key Vault secrets backend, scheduler HA |
 | [`dq-framework.md`](./architecture/dq-framework.md) | YAML rulesets, 4 check types (schema/content/volume/freshness), severity gating, DQ results store |
@@ -52,3 +55,4 @@ How-to guides for day-to-day use.
 |------|---------|
 | [`/README.md`](../README.md) | Platform overview, quick start |
 | [`/ARCHITECTURE.md`](../ARCHITECTURE.md) | Architecture summary with ADRs — read before the deep-dives |
+| [`/docs/DESIGN.md`](./DESIGN.md) | **Platform design reference** — principles, two-cluster model, all layers, delivery lifecycle, roadmap, and deep-dive index |

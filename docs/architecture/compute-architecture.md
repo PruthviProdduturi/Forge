@@ -230,6 +230,8 @@ This is a controlled retry — map tasks re-execute, not the entire job. The ESS
 
 ## 2. Spark Connect Server
 
+> **Hands-on connection guide:** For VS Code setup, getting the Spark Connect endpoint, connecting a notebook, and debugging slow queries see the [Developer Experience Guide §2 — Spark Connect Development](../guides/developer-experience.md#2-spark-connect-development). This section covers the server-side architecture, auth model, and session management.
+
 ### What Spark Connect Is
 
 Spark Connect, introduced in Apache Spark 3.4, separates the Spark client (DataFrame API) from the Spark server (plan execution). The client sends an **unresolved logical plan** expressed in the Connect protocol (protobuf over gRPC) to the server. The server resolves the plan, optimizes it, and executes it against the cluster. Results are streamed back to the client in Apache Arrow format.

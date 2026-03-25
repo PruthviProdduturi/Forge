@@ -6,6 +6,20 @@ import { useTheme } from "../../contexts/ThemeContext";
 
 const CATEGORIES = [
   {
+    id: "design",
+    label: "Design Reference",
+    icon: "fa-compass-drafting",
+    description: "The single document that explains what Forge is, how it is designed, and where to go for more detail.",
+    docs: [
+      {
+        slug: "DESIGN",
+        title: "Platform Design Reference",
+        description: "Principles, two-cluster model, compute, orchestration, lakehouse, developer experience, delivery lifecycle, and full deep-dive index.",
+        icon: "fa-compass-drafting",
+      },
+    ],
+  },
+  {
     id: "architecture",
     label: "Architecture",
     icon: "fa-layer-group",
