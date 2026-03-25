@@ -69,10 +69,10 @@ All data lives in ADLS Gen2 with hierarchical namespace, structured into four Me
 
 | Zone | Path | Format | Purpose |
 |------|------|--------|---------|
-| Bronze | `abfss://bronze@<account>.dfs.core.windows.net/` | Parquet / native | Immutable source data, append-only |
+| Bronze | `abfss://bronze@<account>.dfs.core.windows.net/` | Delta Lake | Immutable source data, append-only |
 | Silver | `abfss://silver@<account>.dfs.core.windows.net/` | Delta Lake | Cleaned, validated, schema-enforced |
 | Gold | `abfss://gold@<account>.dfs.core.windows.net/` | Delta Lake | Aggregated, SLA-governed, consumer-ready |
-| Sandbox | `abfss://sandbox@<account>.dfs.core.windows.net/` | Any | Per-user experimentation, 30-day TTL, no lineage |
+| Sandbox | `abfss://sandbox@<account>.dfs.core.windows.net/` | Any | Per-user experimentation, 28-day TTL, no lineage |
 
 ---
 

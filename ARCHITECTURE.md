@@ -173,7 +173,7 @@ Source Systems
 │  • Immutable. Append-only. No updates, no deletes.          │
 │  • Format: source-native (Parquet preferred, CSV tolerated) │
 │  • Partitioned by: source_system / entity / ingestion_date  │
-│  • Retention: 7 years (lifecycle policy)                    │
+│  • Retention: 2 years (lifecycle policy)                    │
 │  • Access: Forge platform only                            │
 └─────────────────┬───────────────────────────────────────────┘
                   │
@@ -186,8 +186,8 @@ Source Systems
 │  • Delta Lake format. MERGE (upsert) semantics.             │
 │  • Schema enforced. Evolution via ALTER TABLE only.         │
 │  • DQ checks required before write succeeds.                │
-│  • Partitioned by: domain / entity / year / month          │
-│  • Retention: unlimited (Delta log compaction weekly)       │
+│  • Partitioned by: year / month / day / hour (UTC)          │
+│  • Retention: 2 years (lifecycle policy)       │
 │  • Access: Forge platform + approved internal tooling     │
 └─────────────────┬───────────────────────────────────────────┘
                   │
@@ -209,11 +209,11 @@ Source Systems
 │  abfss://sandbox@<account>.dfs.core.windows.net/           │
 │                                                              │
 │  • Per-user experimentation area. No SLAs. No DQ gates.     │
-│  • Path convention: sandbox/{user_alias}/...                │
+│  • Path convention: sandbox/<user-or-team>/<project>/YYYYMMDD/                │
 │  • Every user in the platform has read/write to their path  │
 │  • No data from Sandbox ever promotes to Bronze/Silver/Gold │
 │    automatically — promotion is a deliberate pipeline act   │
-│  • Retention: 30 days (lifecycle policy auto-deletes)       │
+│  • Retention: 28 days (lifecycle policy auto-deletes)       │
 │  • Access: all platform users (scoped to own path)          │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -738,7 +738,7 @@ Source System (e.g. CRM, ERP, event stream)
         │
         │  1. Bronze Ingestion DAG (Airflow + Spark)
         │     • SparkApplication reads source
-        │     • Writes Parquet to bronze/
+        │     • Writes Delta to bronze/
         │     • Emits OpenLineage START → COMPLETE
         ▼
 bronze/ container (ADLS Gen2)

@@ -15,6 +15,17 @@ Restatement is the controlled process of invalidating trackers for a date range 
 - **Re-applying** a logic change (e.g. a bug fix in the transformation) to historical partitions
 - **Recovering** from a partial write failure that left data in an inconsistent state
 
+### Restatement Mode vs New Version
+
+Two modes exist. Choose based on whether the correction changes the semantic contract of the dataset:
+
+| Mode | When | Mechanism |
+|------|------|-----------|
+| **Same-version restatement** | Bug fix, corrected source data — schema and semantics unchanged | Delete trackers → trigger Airflow backfill → overwrite partitions in-place. Delta Lake time travel preserves prior state for the configured log retention window. |
+| **New version** | Schema change, semantic change, grain change, or any correction where existing consumers must explicitly migrate | Publish `vN+1` alongside `vN`. Old version continues serving during the 90–180 day deprecation window. Coordinate consumer migrations before retiring `vN`. |
+
+Corrections to historical data must **not** silently overwrite a prior version when the correction changes the contract. In that case a new version is required. See [Storage Architecture — Versioning](./storage-architecture.md#3-data-asset-versioning) for the full versioning rules.
+
 Restatement is a first-class operation in Forge. It is triggered from the **Developer Portal**, tracked in the **Restatement Registry**, and fully observable in **Azure Monitor / Grafana**.
 
 ---
@@ -29,13 +40,16 @@ A tracker is a JSON file written to the output partition path after the pipeline
 silver/
   sales/
     orders/
-      date=2024-01-01/
-        part-0000.parquet
-        part-0001.parquet
-        _tracker.json          ← tracker for this partition
-      date=2024-01-02/
-        part-0000.parquet
-        _tracker.json
+      v1/
+        delta/
+          year=2024/month=01/day=01/hour=00/   ← data
+            part-0000.parquet
+        _tracker/
+          year=2024/month=01/day=01/hour=00/
+            _SUCCESS.json                          ← tracker for this partition
+        _dq/
+          year=2024/month=01/day=01/hour=00/
+            dq_result_abc123_20240101060000.json    ← DQ results
 ```
 
 ### 2.2 Tracker Schema
@@ -46,10 +60,10 @@ silver/
   "pipeline_id":      "ingest_sales_orders",
   "dag_run_id":       "scheduled__2024-01-01T00:00:00+00:00",
   "airflow_task_id":  "transform_silver",
-  "execution_date":   "2024-01-01",
   "layer":            "silver",
-  "dataset":          "sales.orders",
-  "partition":        "date=2024-01-01",
+  "dataset":          "sales.orders_v1",
+  "asset_version":    "v1",
+  "partition":        "year=2024/month=01/day=01/hour=00",
   "completed_at":     "2024-01-01T06:23:11Z",
   "duration_seconds": 142,
   "row_count":        48293,
@@ -75,9 +89,9 @@ Trackers are co-located with data, always at the root of the partition directory
 
 | Layer | Path pattern |
 |-------|-------------|
-| Silver | `silver/{domain}/{dataset}/date={yyyy-mm-dd}/_tracker.json` |
-| Gold | `gold/{domain}/{dataset}/date={yyyy-mm-dd}/_tracker.json` |
-| Gold (no date partition) | `gold/{domain}/{dataset}/_tracker.json` |
+| Silver | `silver/<domain>/<entity>/v<N>/_tracker/year=YYYY/month=MM/day=DD/hour=HH/_SUCCESS.json` |
+| Gold (analytics) | `gold/analytics/<domain>/<asset>/v<N>/_tracker/year=YYYY/month=MM/day=DD/hour=HH/_SUCCESS.json` |
+| Gold (data product) | `gold/data_products/<product>/v<N>/_tracker/year=YYYY/month=MM/day=DD/hour=HH/_SUCCESS.json` |
 
 Bronze does **not** use trackers. Bronze is append-only raw data — reprocessing bronze means re-ingesting from source, which is a source system concern, not a Forge concern.
 
@@ -94,11 +108,11 @@ tracker = TrackerClient()
 
 @task
 def transform_silver(execution_date: str, **context):
-    partition = f"date={execution_date}"
-    dataset   = "sales.orders"
+    partition = f"year={execution_date[:4]}/month={execution_date[5:7]}/day={execution_date[8:10]}/hour=00"
+    dataset   = "sales.orders_v1"
 
     # Check tracker — skip if already processed
-    if tracker.exists(layer="silver", dataset=dataset, partition=partition):
+    if tracker.exists(layer="silver", dataset=dataset, asset_version="v1", partition=partition):
         log.info("Tracker found — partition already processed, skipping.")
         return  # idempotent exit
 
@@ -113,10 +127,11 @@ def transform_silver(execution_date: str, **context):
     tracker.write(
         layer="silver",
         dataset=dataset,
+        asset_version="v1",
         partition=partition,
         row_count=df_silver.count(),
         output_size_bytes=get_partition_size(partition),
-        schema_version="v3",
+        schema_version="v1",
     )
 ```
 
@@ -238,7 +253,7 @@ The Portal API deletes `_tracker.json` files from all affected partition paths i
 ```python
 # Portal API — restatement service
 for partition in affected_partitions:
-    tracker_path = f"abfss://{layer}@{account}.dfs.core.windows.net/{dataset_path}/{partition}/_tracker.json"
+    tracker_path = f"abfss://{layer}@{account}.dfs.core.windows.net/{dataset_path}/v1/_tracker/{partition}/_SUCCESS.json"
     adls_client.delete_file(tracker_path)
     log.info(f"Deleted tracker: {tracker_path}")
 ```
@@ -473,32 +488,36 @@ tracker = TrackerClient()   # picks up workload identity and storage account fro
 # Check if a partition has been processed
 exists: bool = tracker.exists(
     layer="silver",
-    dataset="sales.orders",
-    partition="date=2024-01-01",
+    dataset="sales.orders_v1",
+    asset_version="v1",
+    partition="year=2024/month=01/day=01/hour=00",
 )
 
 # Write a tracker after successful data write
 tracker.write(
     layer="silver",
-    dataset="sales.orders",
-    partition="date=2024-01-01",
+    dataset="sales.orders_v1",
+    asset_version="v1",
+    partition="year=2024/month=01/day=01/hour=00",
     row_count=48293,
     output_size_bytes=12483920,
-    schema_version="v3",
+    schema_version="v1",
     restatement_id=context.get("params", {}).get("restatement_id"),
 )
 
 # Delete a tracker (used by restatement service — not called from pipelines)
 tracker.delete(
     layer="silver",
-    dataset="sales.orders",
-    partition="date=2024-01-01",
+    dataset="sales.orders_v1",
+    asset_version="v1",
+    partition="year=2024/month=01/day=01/hour=00",
 )
 
 # List all partitions without a tracker (used for backfill detection)
 missing: list[str] = tracker.list_missing(
     layer="silver",
-    dataset="sales.orders",
+    dataset="sales.orders_v1",
+    asset_version="v1",
     start_date="2024-01-01",
     end_date="2024-01-31",
 )
