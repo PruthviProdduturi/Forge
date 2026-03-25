@@ -117,7 +117,7 @@ def transform_silver(execution_date: str, **context):
         return  # idempotent exit
 
     # --- do the work ---
-    df = spark.read.parquet(f"abfss://bronze@{ACCOUNT}.dfs.core.windows.net/sales/orders/{partition}/")
+    df = spark.read.format("delta").load(f"abfss://bronze@{ACCOUNT}.dfs.core.windows.net/sales/orders/v1/year={partition[:4]}/month={partition[5:7]}/day={partition[8:10]}/hour=00/")
     df_silver = apply_transformations(df)
     df_silver.write.mode("overwrite").parquet(
         f"abfss://silver@{ACCOUNT}.dfs.core.windows.net/sales/orders/{partition}/"
@@ -248,7 +248,7 @@ A record is written to the Restatement Registry before any destructive action. T
 
 #### Step 4 — API: Delete Trackers
 
-The Portal API deletes `_tracker.json` files from all affected partition paths in ADLS Gen2.
+The Portal API deletes `_SUCCESS.json` tracker files from all affected partition paths in ADLS Gen2.
 
 ```python
 # Portal API — restatement service
@@ -332,7 +332,7 @@ The Restatement Registry is a Delta Lake table in the gold layer:
 
 ```
 gold/_platform/restatement_registry/
-  _tracker.json   ← the registry table itself has a tracker
+  _SUCCESS.json   ← the registry table itself has a tracker
   *.parquet
 ```
 
@@ -645,7 +645,7 @@ Lineage consumers (audit tools, downstream teams) can distinguish restated data 
            ┌─────────────┴─────────────┐
            ▼                           ▼
    ADLS Gen2                      Airflow DAG Runs
-   Delete _tracker.json           (per partition per layer)
+   Delete tracker _SUCCESS.json   (per partition per layer)
    files for affected                     │
    partitions                             ▼
                                Spark writes Delta partition

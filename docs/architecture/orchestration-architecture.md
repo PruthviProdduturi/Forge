@@ -1004,7 +1004,7 @@ The Azure Managed Grafana "Airflow Health" dashboard includes a pre-built log pa
 ║                                                                                  ║
 ║  ┌──────────────────────────┐   ┌──────────────────────────┐                   ║
 ║  │  Azure Key Vault          │   │  ADLS Gen2               │                   ║
-║  │  kv-forge-{env}         │   │  raw/ curated/ serving/  │                   ║
+║  │  kv-forge-{env}         │   │  bronze/ silver/ gold/   │                   ║
 ║  │  • airflow connections    │   │  _platform/dq_results/   │                   ║
 ║  │  • airflow variables      │   │  airflow-logs/           │                   ║
 ║  │  • kubeconfig             │   └──────────────────────────┘                   ║

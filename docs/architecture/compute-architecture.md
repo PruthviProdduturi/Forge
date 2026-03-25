@@ -441,8 +441,8 @@ No storage account key configuration is present anywhere in the cluster.
 ### No Storage Keys
 
 The `id-forge-spark` managed identity has Azure RBAC role assignments:
-- `Storage Blob Data Contributor` on `raw/` container
-- `Storage Blob Data Contributor` on `curated/` container
+- `Storage Blob Data Contributor` on `bronze/` container
+- `Storage Blob Data Contributor` on `silver/` container
 - `Storage Blob Data Reader` on `code/` container
 - `Storage Blob Data Contributor` on `checkpoints/` container
 
@@ -776,8 +776,8 @@ Forge uses these connectors:
 
 | Connector | Catalog Name | Data Source | Notes |
 |-----------|--------------|-------------|-------|
-| `delta` | `lakehouse` | curated/ and serving/ Delta tables | Built into Trino 438; reads Delta log |
-| `hive` | `raw` | raw/ Parquet files | Legacy Hive-compatible for Bronze layer |
+| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 438; reads Delta log |
+| `hive` | `bronze` | bronze/ Delta files | Legacy Hive-compatible for Bronze layer |
 | `tpch` | `tpch` | In-memory benchmark data | Benchmarking and query testing only |
 
 ### Catalog Discovery
@@ -817,9 +817,9 @@ fs.azure.account.oauth2.msi.tenant.forgeprodadls.dfs.core.windows.net=<tenant-id
 ```
 
 The `id-forge-trino` managed identity has:
-- `Storage Blob Data Reader` on `curated/` container
-- `Storage Blob Data Reader` on `serving/` container
-- **No access** to `raw/` or `code/` containers
+- `Storage Blob Data Reader` on `silver/` container
+- `Storage Blob Data Reader` on `gold/` container
+- **No access** to `bronze/` or `code/` containers
 
 This enforces that Trino cannot read Bronze layer data (which may contain PII before masking), even if a user constructs an ABFS path manually.
 
@@ -1201,7 +1201,7 @@ This facet is stored by Marquez alongside all other run facets in PostgreSQL. Th
      ┌──────────────────────────┐    ┌──────────────────────────┐  ILB
      │  ADLS Gen2 Lakehouse     │    │  Azure AD (OIDC)         │  15002
      │  (private endpoint)      │    │  Token validation for    │  Developer
-     │  raw/ curated/ serving/  │    │  Spark Connect + Trino   │  VS Code
+     │  bronze/ silver/ gold/   │    │  Spark Connect + Trino   │  VS Code
      └──────────────────────────┘    └──────────────────────────┘
 
 Cross-cluster communication (Orchestration → Compute):

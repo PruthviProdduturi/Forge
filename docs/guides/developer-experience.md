@@ -1765,16 +1765,20 @@ OUTPUT (--wait):
 
 ## 10. Restatement & Backfill
 
-Restatement is how you re-run a pipeline over historical data — to fix a bug, apply a logic change, or correct data that was delivered with errors. Every Forge pipeline is idempotent: re-running it for the same partition produces the same result. The **partition tracker** (`_tracker.json`) is the mechanism that makes this safe.
+Restatement is how you re-run a pipeline over historical data — to fix a bug, apply a logic change, or correct data that was delivered with errors. Every Forge pipeline is idempotent: re-running it for the same partition produces the same result. The **partition tracker** (`_SUCCESS.json`) is the mechanism that makes this safe.
 
 ### How Trackers Work
 
-After every successful pipeline run, the SDK writes a `_tracker.json` file alongside the output partition:
+After every successful pipeline run, the SDK writes a `_SUCCESS.json` tracker file under the partition path:
 
 ```
-silver/sales/orders/date=2024-01-01/
-  part-0000.parquet
-  _tracker.json    ← "this partition is done"
+silver/sales/orders/v1/
+  delta/year=2024/month=01/day=01/hour=00/   ← data
+    part-0000.parquet
+  _tracker/year=2024/month=01/day=01/hour=00/
+    _SUCCESS.json                              ← "this partition is done"
+  _dq/year=2024/month=01/day=01/hour=00/
+    dq_result_abc123_20240101060000.json       ← DQ results
 ```
 
 When the pipeline starts, it checks for the tracker first:

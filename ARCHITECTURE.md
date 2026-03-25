@@ -75,8 +75,8 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 │                        ADLS Gen2 Lakehouse                               │
 │                                                                          │
 │   ┌─────────────┐      ┌───────────────┐      ┌───────────────────┐    │
-│   │  raw/        │ ──▶ │  curated/      │ ──▶ │  serving/          │   │
-│   │  (Parquet)   │      │  (Delta Lake) │      │  (Delta Lake)     │    │
+│   │  bronze/     │ ──▶ │  silver/       │ ──▶ │  gold/             │   │
+│   │  (Delta)     │      │  (Delta Lake) │      │  (Delta Lake)     │    │
 │   │  append-only │      │  schema-enf.  │      │  SLA-governed     │    │
 │   └─────────────┘      └───────────────┘      └───────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -141,7 +141,7 @@ Clusters communicate **only through shared data stores** — never directly:
 ```
 Compute Cluster                     Orchestration Cluster
       │                                      │
-      │  writes results to ADLS serving/     │
+      │  writes results to ADLS gold/     │
       ├──────────────────────────────────────▶ ADLS Gen2
       │                                      │
       │  emits OpenLineage events to Marquez │
@@ -171,8 +171,8 @@ Source Systems
 │  abfss://bronze@<account>.dfs.core.windows.net/            │
 │                                                              │
 │  • Immutable. Append-only. No updates, no deletes.          │
-│  • Format: source-native (Parquet preferred, CSV tolerated) │
-│  • Partitioned by: source_system / entity / ingestion_date  │
+│  • Format: Delta Lake (all sources onboarded to Delta at ingestion) │
+│  • Partitioned by: year / month / day / hour (UTC)  │
 │  • Retention: 2 years (lifecycle policy)                    │
 │  • Access: Forge platform only                            │
 └─────────────────┬───────────────────────────────────────────┘
@@ -336,8 +336,8 @@ Trino provides federated SQL across all lakehouse zones and external sources. It
 │  ┌────────────┐  ┌───────────┐  ┌──────────────────────┐ │
 │  │ lakehouse  │  │   hive    │  │       tpch           │ │
 │  │ (Delta)    │  │  (raw)    │  │   (benchmarking)     │ │
-│  │ curated/   │  │ raw/      │  │                      │ │
-│  │ serving/   │  │           │  │                      │ │
+│  │ silver/    │  │ bronze/   │  │                      │ │
+│  │ gold/      │  │           │  │                      │ │
 │  └────────────┘  └───────────┘  └──────────────────────┘ │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -442,7 +442,7 @@ The DQ framework is a Python SDK (`forge.dq`) that runs inside Airflow task pods
 All DQ run results are written as a Delta table to:
 
 ```
-abfss://curated@<account>.dfs.core.windows.net/_platform/dq_results/
+abfss://gold@<account>.dfs.core.windows.net/_platform/dq_results/
 ```
 
 Schema:
@@ -507,7 +507,7 @@ Airflow Task / Spark Job
 
 ```
 Dataset Node          Job Node           Dataset Node
-(raw/orders)  ──▶  (transform_orders) ──▶  (curated/orders)
+(bronze/orders)  ──▶  (transform_orders) ──▶  (silver/orders)
      │                     │                      │
   schema facet         run facet              schema facet
   storage facet        DQ facet               DQ facet

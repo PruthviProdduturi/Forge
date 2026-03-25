@@ -122,7 +122,7 @@ spark = SparkSession.builder \
     .remote("sc://<spark-connect-lb-ip>:15002") \
     .getOrCreate()
 
-df = spark.read.parquet("abfss://raw@<account>.dfs.core.windows.net/my-dataset/")
+df = spark.read.format("delta").load("abfss://bronze@<account>.dfs.core.windows.net/my-dataset/v1/")
 df.show()
 ```
 
@@ -135,7 +135,7 @@ df.show()
 | Component | Version | Namespace |
 |-----------|---------|-----------|
 | Spark Operator | 1.4.x | `spark-system` |
-| Spark Connect | 3.5.x | `spark-system` |
+| Spark Connect | 4.1.x | `spark-system` |
 | Trino | 438 | `trino` |
 
 ### Orchestration Cluster (`forge-orchestration`)
@@ -179,7 +179,7 @@ from dags.ingestion.raw_ingestion_template import build_raw_ingestion_dag
 
 dag = build_raw_ingestion_dag(
     dag_id="ingest_sales_orders",
-    source_config={"type": "blob", "path": "abfss://raw@.../sales/orders/"},
+    source_config={"type": "blob", "path": "abfss://bronze@.../sales/orders/"},
     schedule="@daily",
 )
 ```
