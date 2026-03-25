@@ -824,7 +824,7 @@ export default function AboutPage() {
                 </div>
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Compute Cluster</div>
-                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8" }}>stratum-compute</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8" }}>forge-compute</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
@@ -868,7 +868,7 @@ export default function AboutPage() {
                 </div>
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Orchestration Cluster</div>
-                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8" }}>stratum-orchestration</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8" }}>forge-orchestration</div>
                 </div>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
@@ -1270,7 +1270,7 @@ dags/
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder \\
-  .remote("sc://spark.stratum.internal") \\
+  .remote("sc://spark.forge.internal") \\
   .getOrCreate()
 
 df = spark.read.format("delta") \\

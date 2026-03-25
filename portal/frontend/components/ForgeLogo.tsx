@@ -49,7 +49,7 @@ export function ForgeLogo({
 
   return (
     <button
-      className="stratum-logo-btn"
+      className="forge-logo-btn"
       onClick={handleClick}
       aria-label="Forge — home"
       type="button"

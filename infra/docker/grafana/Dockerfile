@@ -1,11 +1,11 @@
 # =============================================================================
-# Stratum — Grafana 10.4.2 Image
+# Forge — Grafana 10.4.2 Image
 # Base: grafana/grafana:10.4.2
 #
 # Additions over the official image:
 #   - Datasource provisioning config (Prometheus + Loki) baked in
 #   - Dashboard provider config pointing to /var/lib/grafana/dashboards/
-#   - All Stratum platform dashboards baked into /var/lib/grafana/dashboards/
+#   - All Forge platform dashboards baked into /var/lib/grafana/dashboards/
 #   - Runs as grafana user (GID 472)
 # =============================================================================
 
@@ -39,7 +39,7 @@ COPY --chown=472:472 \
 
 # ----------------------------------------------------------------------------
 # Dashboard JSON files
-# All Stratum platform dashboards are baked into the image so no external
+# All Forge platform dashboards are baked into the image so no external
 # storage or git sync is required. Each subdirectory corresponds to a folder
 # visible in the Grafana UI.
 #
@@ -92,7 +92,7 @@ USER 472
 # ----------------------------------------------------------------------------
 # Metadata
 # ----------------------------------------------------------------------------
-LABEL org.opencontainers.image.title="stratum-grafana" \
+LABEL org.opencontainers.image.title="forge-grafana" \
       org.opencontainers.image.version="10.4.2" \
-      org.opencontainers.image.description="Grafana 10.4.2 with Stratum platform dashboards and datasources baked in" \
-      org.opencontainers.image.vendor="Stratum Platform Team"
+      org.opencontainers.image.description="Grafana 10.4.2 with Forge platform dashboards and datasources baked in" \
+      org.opencontainers.image.vendor="Forge Platform Team"

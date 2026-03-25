@@ -1,5 +1,5 @@
 # =============================================================================
-# Stratum — Airflow 2.9.3 Image
+# Forge — Airflow 2.9.3 Image
 # Base: apache/airflow:2.9.3-python3.11
 #
 # Additions over the official image:
@@ -7,8 +7,8 @@
 #   - apache-airflow-providers-microsoft-azure (ADLS, Key Vault backend)
 #   - openlineage-airflow (automatic lineage emission for all tasks)
 #   - azure-identity, azure-storage-file-datalake (workload identity)
-#   - stratum-dq wheel (Stratum DQ SDK) — from build context if present
-#   - stratum-lineage wheel (Stratum lineage helpers) — from build context if present
+#   - forge-dq wheel (Forge DQ SDK) — from build context if present
+#   - forge-lineage wheel (Forge lineage helpers) — from build context if present
 #   - All versions pinned in requirements.txt
 # =============================================================================
 
@@ -81,9 +81,9 @@ RUN pip install --no-cache-dir \
         "pandas==2.2.2"
 
 # ----------------------------------------------------------------------------
-# Install Stratum SDK wheels (stratum-dq, stratum-lineage)
+# Install Forge SDK wheels (forge-dq, forge-lineage)
 #
-# These wheels are built from the Stratum SDK monorepo (sdk/) and copied
+# These wheels are built from the Forge SDK monorepo (sdk/) and copied
 # into the Docker build context before the image is built.
 #
 # The CI pipeline runs:
@@ -101,22 +101,22 @@ COPY --chown=airflow:root wheels/ /opt/airflow/wheels/
 RUN set -eux; \
     WHEELS_DIR="/opt/airflow/wheels"; \
     \
-    # Install stratum-dq wheel if present
-    STRATUM_DQ=$(ls "${WHEELS_DIR}"/stratum_dq-*.whl 2>/dev/null | head -1); \
-    if [ -n "${STRATUM_DQ}" ]; then \
-        echo "Installing stratum-dq: ${STRATUM_DQ}"; \
-        pip install --no-cache-dir "${STRATUM_DQ}"; \
+    # Install forge-dq wheel if present
+    FORGE_DQ=$(ls "${WHEELS_DIR}"/forge_dq-*.whl 2>/dev/null | head -1); \
+    if [ -n "${FORGE_DQ}" ]; then \
+        echo "Installing forge-dq: ${FORGE_DQ}"; \
+        pip install --no-cache-dir "${FORGE_DQ}"; \
     else \
-        echo "WARNING: stratum-dq wheel not found in ${WHEELS_DIR}, skipping"; \
+        echo "WARNING: forge-dq wheel not found in ${WHEELS_DIR}, skipping"; \
     fi; \
     \
-    # Install stratum-lineage wheel if present
-    STRATUM_LINEAGE=$(ls "${WHEELS_DIR}"/stratum_lineage-*.whl 2>/dev/null | head -1); \
-    if [ -n "${STRATUM_LINEAGE}" ]; then \
-        echo "Installing stratum-lineage: ${STRATUM_LINEAGE}"; \
-        pip install --no-cache-dir "${STRATUM_LINEAGE}"; \
+    # Install forge-lineage wheel if present
+    FORGE_LINEAGE=$(ls "${WHEELS_DIR}"/forge_lineage-*.whl 2>/dev/null | head -1); \
+    if [ -n "${FORGE_LINEAGE}" ]; then \
+        echo "Installing forge-lineage: ${FORGE_LINEAGE}"; \
+        pip install --no-cache-dir "${FORGE_LINEAGE}"; \
     else \
-        echo "WARNING: stratum-lineage wheel not found in ${WHEELS_DIR}, skipping"; \
+        echo "WARNING: forge-lineage wheel not found in ${WHEELS_DIR}, skipping"; \
     fi
 
 # ----------------------------------------------------------------------------
@@ -147,7 +147,7 @@ ENV AIRFLOW__CORE__LOAD_EXAMPLES="False" \
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG="False" \
     AIRFLOW__WEBSERVER__RBAC="True" \
     AIRFLOW__LINEAGE__BACKEND="openlineage.lineage_backend.OpenLineageBackend" \
-    AIRFLOW__OPENLINEAGE__NAMESPACE="stratum" \
+    AIRFLOW__OPENLINEAGE__NAMESPACE="forge" \
     # Transport URL is set at runtime via secret: AIRFLOW__OPENLINEAGE__TRANSPORT
     PYTHONDONTWRITEBYTECODE="1" \
     PYTHONUNBUFFERED="1"
@@ -155,7 +155,7 @@ ENV AIRFLOW__CORE__LOAD_EXAMPLES="False" \
 # ----------------------------------------------------------------------------
 # Metadata
 # ----------------------------------------------------------------------------
-LABEL org.opencontainers.image.title="stratum-airflow" \
+LABEL org.opencontainers.image.title="forge-airflow" \
       org.opencontainers.image.version="2.9.3" \
-      org.opencontainers.image.description="Airflow 2.9.3 with Kubernetes, Azure, and OpenLineage providers for the Stratum data platform" \
-      org.opencontainers.image.vendor="Stratum Platform Team"
+      org.opencontainers.image.description="Airflow 2.9.3 with Kubernetes, Azure, and OpenLineage providers for the Forge data platform" \
+      org.opencontainers.image.vendor="Forge Platform Team"

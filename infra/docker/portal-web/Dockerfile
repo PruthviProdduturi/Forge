@@ -1,9 +1,9 @@
 # =============================================================================
-# Stratum — Portal Frontend Image
+# Forge — Portal Frontend Image
 # Base: node:20-alpine
 #
-# Build:  docker build --build-arg API_URL=http://api:8080 -t stratum/portal-web .
-# Run:    docker run -p 3001:3001 stratum/portal-web
+# Build:  docker build --build-arg API_URL=http://api:8080 -t forge/portal-web .
+# Run:    docker run -p 3001:3001 forge/portal-web
 # =============================================================================
 
 FROM node:20-alpine AS deps

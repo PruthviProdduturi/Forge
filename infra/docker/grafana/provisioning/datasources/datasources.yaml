@@ -1,5 +1,5 @@
 # =============================================================================
-# Stratum — Grafana Datasource Provisioning
+# Forge — Grafana Datasource Provisioning
 #
 # Grafana reads this file at startup and creates/updates the listed
 # datasources automatically. No manual UI configuration required.
@@ -8,7 +8,7 @@
 # set at runtime by the Helm chart / Kubernetes Secrets. Grafana resolves
 # ${ENV_VAR} syntax in provisioning YAML natively.
 #
-# For Stratum, both Prometheus and Loki are accessed via in-cluster service
+# For Forge, both Prometheus and Loki are accessed via in-cluster service
 # DNS names. No credentials are required — access is network-restricted to
 # the cluster.
 # =============================================================================
@@ -24,7 +24,7 @@ datasources:
   # ---------------------------------------------------------------------------
   - name: Prometheus
     type: prometheus
-    uid: stratum-prometheus
+    uid: forge-prometheus
     url: http://prometheus.observability.svc.cluster.local:9090
     access: proxy
     isDefault: true
@@ -44,12 +44,12 @@ datasources:
 
   # ---------------------------------------------------------------------------
   # Loki
-  # Centralised log aggregation for all Stratum workloads. Promtail scrapes
+  # Centralised log aggregation for all Forge workloads. Promtail scrapes
   # pod logs from every node and ships them to Loki.
   # ---------------------------------------------------------------------------
   - name: Loki
     type: loki
-    uid: stratum-loki
+    uid: forge-loki
     url: http://loki.observability.svc.cluster.local:3100
     access: proxy
     isDefault: false
@@ -61,11 +61,11 @@ datasources:
       # When a log line contains a Spark job ID or Airflow run ID, the user
       # can jump directly to the corresponding Prometheus dashboard.
       derivedFields:
-        - datasourceUid: stratum-prometheus
+        - datasourceUid: forge-prometheus
           matcherRegex: "spark_app_id=([\\w-]+)"
           name: SparkAppID
           url: "/d/spark-jobs-overview?var-spark_app_id=${__value.raw}"
-        - datasourceUid: stratum-prometheus
+        - datasourceUid: forge-prometheus
           matcherRegex: "dag_id=([\\w.]+).*run_id=([\\w.+-]+)"
           name: AirflowRunID
           url: "/d/airflow-dag-runs?var-dag_id=${__value.raw}"

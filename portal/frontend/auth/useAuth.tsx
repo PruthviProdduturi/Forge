@@ -374,7 +374,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isAuthenticated: true,
       noAccess: false,
       provider: "local",
-      user: { name: "Dev Admin", email: "admin@stratum.local", initials: "DA" },
+      user: { name: "Dev Admin", email: "admin@forge.local", initials: "DA" },
       role: "Admin",
       token: "dev",
     });

@@ -1,5 +1,5 @@
 # =============================================================================
-# Stratum — Spark 4.1.0 Image
+# Forge — Spark 4.1.0 Image
 # Base: eclipse-temurin:17-jre-jammy
 #
 # Included:

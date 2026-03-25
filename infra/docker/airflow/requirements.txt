@@ -1,6 +1,6 @@
 # =============================================================================
-# Stratum — Airflow Image Python Requirements
-# Pinned versions for the stratumacr/airflow:2.9.3 image.
+# Forge — Airflow Image Python Requirements
+# Pinned versions for the forgeacr/airflow:2.9.3 image.
 #
 # These packages are installed on top of apache/airflow:2.9.3-python3.11.
 # Provider packages are installed with Airflow's official constraints file
@@ -69,14 +69,14 @@ pandas==2.2.2
 # Requests — HTTP client used by custom Airflow hooks and operators
 requests==2.32.3
 
-# Tenacity — retry library used by Stratum operators and DQ SDK
+# Tenacity — retry library used by Forge operators and DQ SDK
 tenacity==9.0.0
 
 # =============================================================================
 # Serialisation / validation
 # =============================================================================
 
-# Pydantic v2 — used by Stratum DQ SDK and lineage SDK for model validation
+# Pydantic v2 — used by Forge DQ SDK and lineage SDK for model validation
 pydantic==2.7.4
 
 # =============================================================================

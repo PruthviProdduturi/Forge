@@ -1,11 +1,11 @@
 # =============================================================================
-# Stratum — Trino 438 Image
+# Forge — Trino 438 Image
 # Base: trinodb/trino:438
 #
 # Additions over the official image:
 #   - OpenLineage Trino plugin 1.18.0
 #     Installed to /usr/lib/trino/plugin/openlineage/
-#   - Custom catalog-discovery plugin (Stratum-built JAR)
+#   - Custom catalog-discovery plugin (Forge-built JAR)
 #     Installed to /usr/lib/trino/plugin/catalog-discovery/
 #     (copied from build context if present; skipped if not found)
 #   - Corrected file ownership for all plugin directories
@@ -42,13 +42,13 @@ RUN set -eux; \
     chown -R trino:trino "${PLUGIN_DIR}"
 
 # ----------------------------------------------------------------------------
-# Copy Stratum catalog-discovery plugin (optional)
+# Copy Forge catalog-discovery plugin (optional)
 #
 # The catalog-discovery plugin enables Trino to dynamically register tenant
 # catalogs from a configuration store, avoiding static catalog property files
 # for each tenant.
 #
-# The JAR is built from the Stratum platform SDK and placed in the build
+# The JAR is built from the Forge platform SDK and placed in the build
 # context at: infra/docker/trino/plugins/catalog-discovery/
 #
 # If the directory is absent from the build context (e.g., during initial
@@ -107,7 +107,7 @@ USER trino
 # ----------------------------------------------------------------------------
 # Metadata
 # ----------------------------------------------------------------------------
-LABEL org.opencontainers.image.title="stratum-trino" \
+LABEL org.opencontainers.image.title="forge-trino" \
       org.opencontainers.image.version="438" \
-      org.opencontainers.image.description="Trino 438 with OpenLineage plugin for the Stratum data platform" \
-      org.opencontainers.image.vendor="Stratum Platform Team"
+      org.opencontainers.image.description="Trino 438 with OpenLineage plugin for the Forge data platform" \
+      org.opencontainers.image.vendor="Forge Platform Team"

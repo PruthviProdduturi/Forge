@@ -141,9 +141,9 @@ export function LoginPage() {
         {(provider === "local" || provider === "google" || provider === null) && (
           <form className="login-form" onSubmit={handleLocalLogin} noValidate>
             <div className="login-field">
-              <label htmlFor="stratum-username">Username</label>
+              <label htmlFor="forge-username">Username</label>
               <input
-                id="stratum-username"
+                id="forge-username"
                 type="text"
                 autoComplete="username"
                 placeholder="Enter your username"
@@ -155,9 +155,9 @@ export function LoginPage() {
               />
             </div>
             <div className="login-field">
-              <label htmlFor="stratum-password">Password</label>
+              <label htmlFor="forge-password">Password</label>
               <input
-                id="stratum-password"
+                id="forge-password"
                 type="password"
                 autoComplete="current-password"
                 placeholder="Enter your password"

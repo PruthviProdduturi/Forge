@@ -30,22 +30,22 @@ export function StratumLogo({
 
   return (
     <button
-      className="stratum-logo-btn"
+      className="forge-logo-btn"
       onClick={handleClick}
-      aria-label="Stratum — home"
+      aria-label="Forge — home"
       type="button"
       style={{ gap: showName ? "0.45rem" : 0 }}
     >
       <span
-        className={`stratum-logo-mark${revolving ? " revolving" : ""}`}
+        className={`forge-logo-mark${revolving ? " revolving" : ""}`}
         style={{ fontSize }}
         aria-hidden="true"
       >
         ▲
       </span>
       {showName && (
-        <span className="stratum-logo-name" style={{ fontSize: nameFontSize }}>
-          Stratum
+        <span className="forge-logo-name" style={{ fontSize: nameFontSize }}>
+          Forge
         </span>
       )}
     </button>

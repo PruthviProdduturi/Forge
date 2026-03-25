@@ -1,4 +1,4 @@
-# Stratum — Platform Architecture
+# Forge — Platform Architecture
 
 > **Version:** 1.0
 > **Status:** Draft for Review
@@ -27,7 +27,7 @@
 
 ## 1. Platform Philosophy
 
-Stratum is built around four principles:
+Forge is built around four principles:
 
 **Separation of concerns.**
 Compute, orchestration, storage, and observability are independently deployed and scaled. A failure in one layer does not cascade into others.
@@ -99,11 +99,11 @@ A single AKS cluster mixing compute and orchestration creates hidden coupling:
 - A Spark upgrade requiring node pool changes shouldn't require an Airflow maintenance window
 - Security posture differs: compute workers need broad storage access; orchestration workers need narrow API credentials
 
-Stratum uses two dedicated private AKS clusters with separate node pools, separate managed identities, and no direct network path between them — all coordination happens through the shared lakehouse and shared Marquez API.
+Forge uses two dedicated private AKS clusters with separate node pools, separate managed identities, and no direct network path between them — all coordination happens through the shared lakehouse and shared Marquez API.
 
 ### Cluster Specifications
 
-#### `stratum-compute` — Compute Cluster
+#### `forge-compute` — Compute Cluster
 
 | Node Pool | VM SKU | Min/Max Nodes | Purpose |
 |-----------|--------|---------------|---------|
@@ -117,7 +117,7 @@ Stratum uses two dedicated private AKS clusters with separate node pools, separa
 - Private API server endpoint
 - Node OS: Azure Linux (CBL-Mariner)
 
-#### `stratum-orchestration` — Orchestration Cluster
+#### `forge-orchestration` — Orchestration Cluster
 
 | Node Pool | VM SKU | Min/Max Nodes | Purpose |
 |-----------|--------|---------------|---------|
@@ -153,7 +153,7 @@ Airflow has read-write access to the compute cluster's Kubernetes API server via
 
 ## 4. Lakehouse Architecture
 
-Stratum uses the **Medallion architecture** — Bronze, Silver, Gold — as the organisational model for the ADLS Gen2 lakehouse. Each layer is a dedicated container, with a separate **Sandbox** container for all user experimentation.
+Forge uses the **Medallion architecture** — Bronze, Silver, Gold — as the organisational model for the ADLS Gen2 lakehouse. Each layer is a dedicated container, with a separate **Sandbox** container for all user experimentation.
 
 ### Medallion Layers
 
@@ -170,7 +170,7 @@ Source Systems
 │  • Format: source-native (Parquet preferred, CSV tolerated) │
 │  • Partitioned by: source_system / entity / ingestion_date  │
 │  • Retention: 7 years (lifecycle policy)                    │
-│  • Access: Stratum platform only                            │
+│  • Access: Forge platform only                            │
 └─────────────────┬───────────────────────────────────────────┘
                   │
                   │  (Silver transform DAGs — Spark Delta merge)
@@ -184,7 +184,7 @@ Source Systems
 │  • DQ checks required before write succeeds.                │
 │  • Partitioned by: domain / entity / year / month          │
 │  • Retention: unlimited (Delta log compaction weekly)       │
-│  • Access: Stratum platform + approved internal tooling     │
+│  • Access: Forge platform + approved internal tooling     │
 └─────────────────┬───────────────────────────────────────────┘
                   │
                   │  (Gold publish DAGs — Trino views + Delta optimize)
@@ -236,7 +236,7 @@ All pipeline outputs — Bronze, Silver, and Gold — are written as **Delta Lak
 ### Storage Account Layout
 
 ```
-stratum<env>adls (ADLS Gen2, HNS enabled)
+forge<env>adls (ADLS Gen2, HNS enabled)
 ├── bronze/                      ← container
 │   └── {source_system}/{entity}/{yyyy-mm-dd}/
 ├── silver/                      ← container
@@ -257,7 +257,7 @@ stratum<env>adls (ADLS Gen2, HNS enabled)
 
 ### Apache Spark (Spark Operator + Spark Connect)
 
-Stratum runs Spark in two modes:
+Forge runs Spark in two modes:
 
 #### 1. Batch Jobs (Spark Operator)
 
@@ -268,7 +268,7 @@ Airflow DAG
     │
     │  kubectl apply SparkApplication CRD
     ▼
-Spark Operator (stratum-compute)
+Spark Operator (forge-compute)
     │
     ├── launches Driver Pod
     │       │
@@ -299,7 +299,7 @@ Developer's VS Code (local)
     │
     │  SparkSession.builder.remote("sc://<internal-lb>:15002")
     ▼
-Spark Connect Server Pod (stratum-compute)
+Spark Connect Server Pod (forge-compute)
     │
     ├── translates Connect protocol → Spark plan
     └── executes against ADLS Gen2 with workload identity
@@ -349,7 +349,7 @@ Trino is the primary query engine for:
 
 ### Apache Airflow
 
-Airflow runs on the `stratum-orchestration` cluster with **KubernetesExecutor** — every task runs in a fresh, isolated pod. There are no long-running worker nodes.
+Airflow runs on the `forge-orchestration` cluster with **KubernetesExecutor** — every task runs in a fresh, isolated pod. There are no long-running worker nodes.
 
 ```
 Airflow Scheduler (always-on)
@@ -402,11 +402,11 @@ DAGs live in Git (`orchestration/airflow/dags/`) and are synced to Airflow via `
 
 ### Architecture
 
-The DQ framework is a Python SDK (`stratum.dq`) that runs inside Airflow task pods and Spark jobs. It is not a separate service.
+The DQ framework is a Python SDK (`forge.dq`) that runs inside Airflow task pods and Spark jobs. It is not a separate service.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  DQ SDK (stratum.dq)                                         │
+│  DQ SDK (forge.dq)                                         │
 │                                                              │
 │  ┌──────────────────┐    ┌───────────────────────────────┐  │
 │  │  YAML Ruleset    │───▶│  DQRunner                     │  │
@@ -587,7 +587,7 @@ PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpo
 
 ### Identity Model
 
-Stratum uses **Azure Workload Identity** (OIDC federation) exclusively. No service principal secrets. No storage account keys. No SAS tokens.
+Forge uses **Azure Workload Identity** (OIDC federation) exclusively. No service principal secrets. No storage account keys. No SAS tokens.
 
 ```
 Pod (annotated with service account)
@@ -605,16 +605,16 @@ Azure Resource (ADLS, Key Vault, ACR, etc.)
 
 | Identity | Permissions |
 |----------|-------------|
-| `id-stratum-spark` | Storage Blob Data Contributor on raw + curated + code containers |
-| `id-stratum-trino` | Storage Blob Data Reader on curated + serving containers |
-| `id-stratum-airflow` | Key Vault Secrets User; Storage Blob Data Contributor on checkpoints |
-| `id-stratum-dq` | Storage Blob Data Contributor on curated (DQ results table) |
-| `id-stratum-lineage` | No storage access; only Marquez API |
-| `id-stratum-portal` | Storage Blob Data Reader on serving; Key Vault Secrets User |
+| `id-forge-spark` | Storage Blob Data Contributor on raw + curated + code containers |
+| `id-forge-trino` | Storage Blob Data Reader on curated + serving containers |
+| `id-forge-airflow` | Key Vault Secrets User; Storage Blob Data Contributor on checkpoints |
+| `id-forge-dq` | Storage Blob Data Contributor on curated (DQ results table) |
+| `id-forge-lineage` | No storage access; only Marquez API |
+| `id-forge-portal` | Storage Blob Data Reader on serving; Key Vault Secrets User |
 
 ### Secret Management
 
-All secrets live in **Azure Key Vault** (`kv-stratum-<env>`). Pods access secrets via the **CSI Secrets Store Driver** — secrets are mounted as files or projected as environment variables at pod startup.
+All secrets live in **Azure Key Vault** (`kv-forge-<env>`). Pods access secrets via the **CSI Secrets Store Driver** — secrets are mounted as files or projected as environment variables at pod startup.
 
 Secrets never appear in:
 - Helm values files (reference Key Vault secret names only)
@@ -648,7 +648,7 @@ All roles backed by Azure AD groups — no local user accounts in any platform c
 ### VNet Layout
 
 ```
-stratum-vnet (10.0.0.0/8)
+forge-vnet (10.0.0.0/8)
 ├── 10.1.0.0/16  —  compute-cluster-subnet     (AKS compute nodes)
 ├── 10.2.0.0/16  —  orchestration-cluster-subnet (AKS orch nodes)
 ├── 10.3.0.0/24  —  private-endpoints-subnet    (all PaaS private endpoints)

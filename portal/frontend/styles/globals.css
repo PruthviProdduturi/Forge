@@ -337,7 +337,7 @@ main {
 }
 
 /* ─── Forge Logo ─────────────────────────────────────────────────────────── */
-.stratum-logo-btn {
+.forge-logo-btn {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
@@ -352,18 +352,18 @@ main {
   color: var(--forge-primary);
 }
 
-.stratum-logo-btn:hover {
+.forge-logo-btn:hover {
   background: rgba(30, 58, 95, 0.06);
   text-decoration: none;
 }
 
 /* ⊙ crosshair rotates 45° on hover — targeting lock */
-.stratum-logo-btn:hover .forge-crosshair {
+.forge-logo-btn:hover .forge-crosshair {
   transform: rotate(45deg);
 }
 
 /* F gets a subtle forge-heat shimmer on hover */
-.stratum-logo-btn:hover .forge-f {
+.forge-logo-btn:hover .forge-f {
   animation: forge-shimmer 0.6s ease forwards;
 }
 
@@ -378,7 +378,7 @@ main {
   transform-origin: center;
 }
 
-.stratum-logo-mark {
+.forge-logo-mark {
   font-size: 22px;
   color: var(--forge-primary);
   line-height: 1;
@@ -387,11 +387,11 @@ main {
   transition: transform 0.4s ease;
 }
 
-.stratum-logo-mark.revolving {
+.forge-logo-mark.revolving {
   animation: logoRevolve 0.4s ease;
 }
 
-.stratum-logo-name {
+.forge-logo-name {
   font-size: 16px;
   font-weight: 700;
   color: inherit;
