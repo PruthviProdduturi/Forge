@@ -47,7 +47,7 @@
          │  └────────┬────────┘   │  │  └──────────────┬────────────────────┘ │
          │           │            │  │                 │                      │
          └───────────┼────────────┘  │  ┌─────────────▼────────────────────┐  │
-                     │               │  │  Marquez API (lineage store)     │  │
+                     │               │  │  Microsoft Purview (lineage)      │  │
                      │               │  └──────────────────────────────────┘  │
                      │               │  ┌──────────────────────────────────┐  │
                      │               │  │  Azure Monitor + Managed Grafana │  │
@@ -130,7 +130,7 @@ Task Pod: ingest_bronze_sales_orders.run_spark_job
         │  3. CSI Secrets Store mounts Key Vault secrets as env vars:
         │     ADLS_ACCOUNT, OPENLINEAGE_URL, etc.
         │
-        │  4. OpenLineage emits START event to Marquez:
+        │  4. OpenLineage emits START event to Purview:
         │     {job: "ingest_bronze_sales_orders", eventType: "START"}
         │
         │  5. SparkKubernetesOperator submits SparkApplication CRD
@@ -164,7 +164,7 @@ Spark Driver + Executors
         │  11. OpenLineage Spark plugin captures:
         │     - Input dataset: source path + schema
         │     - Output dataset: bronze path + schema + row count
-        │     - Emits COMPLETE event to Marquez
+        │     - Emits COMPLETE event to Purview
         ▼
 ADLS Bronze: bronze/crm/orders/2026-03-24/part-*.parquet
         │
@@ -251,7 +251,7 @@ Task Pod: validate_dq_silver_crm_orders.run_dq
         │     silver/_platform/dq_results/
         │     (Delta table, append)
         │
-        │  6. LineageReporter emits DQ facet to Marquez:
+        │  6. LineageReporter emits DQ facet to Purview (via OpenLineage):
         │     silver/crm_orders version 47 → DQ: PASSED, 8/8 rules
         │
         │  7. Task → SUCCESS
@@ -336,7 +336,7 @@ Forge Git Repository
 │
 ├── infra/                       ← PLATFORM TEAM
 │   ├── bicep/                   ← AKS, ADLS, KV, ACR, networking
-│   ├── helm/                    ← Spark, Trino, Airflow, Marquez, Observability
+│   ├── helm/                    ← Spark, Trino, Airflow, Observability
 │   └── docker/                  ← Custom image Dockerfiles
 │
 └── orchestration/               ← DATA ENGINEERS
@@ -425,7 +425,7 @@ All pods             →  Azure Log Analytics Workspace (via Azure Monitor Agent
                            - Structured JSON logs with dag_id, run_id, task_id fields
                            - Searchable by pipeline in portal Log Viewer
 
-OpenLineage events   →  Marquez
+OpenLineage events   →  Purview
                            - Every task START/COMPLETE/FAIL
                            - Queryable as lineage graph
 

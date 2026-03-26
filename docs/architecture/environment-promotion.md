@@ -31,7 +31,7 @@ Forge runs two environments — `dev` and `prod`. They are structurally identica
 │  ┌────────────────────────┐     ┌──────────────────────────────┐    │
 │  │  Spark Operator        │     │  Airflow (dev DAGs)          │    │
 │  │  Spark Connect ◄───────┼─────┼── VS Code / notebooks        │    │
-│  │  Trino                 │     │  Marquez                     │    │
+│  │  Trino                 │     │  Developer Portal           │    │
 │  └────────────────────────┘     │  Azure Monitor / Grafana     │    │
 │                                 └──────────────────────────────┘    │
 │  ADLS dev account                                                    │
@@ -44,7 +44,7 @@ Forge runs two environments — `dev` and `prod`. They are structurally identica
 │  forge-compute-prod (AKS)       forge-orchestration-prod (AKS)      │
 │  ┌────────────────────────┐     ┌──────────────────────────────┐    │
 │  │  Spark Operator        │     │  Airflow (prod DAGs)         │    │
-│  │  NO Spark Connect      │     │  Marquez                     │    │
+│  │  NO Spark Connect      │     │  Developer Portal           │    │
 │  │  Trino                 │     │  Azure Monitor / Grafana     │    │
 │  └────────────────────────┘     └──────────────────────────────┘    │
 │                                                                      │
@@ -69,7 +69,7 @@ This is the single most important distinction for data engineers on the platform
 | **SparkSession** | `SparkSession.builder.remote("sc://10.x.x.x:15002").getOrCreate()` | `SparkSession.builder.appName("my-job").getOrCreate()` — Spark Operator injects cluster config |
 | **Use case** | Writing and iterating on transformation logic interactively | Running scheduled, automated, production-grade pipeline jobs |
 | **Data written** | To dev ADLS only (you control the path) | To the appropriate ADLS container per the pipeline definition |
-| **Lineage emitted** | No automatic lineage (sandbox is excluded) | Yes — OpenLineage emits START/COMPLETE/FAIL events to Marquez |
+| **Lineage emitted** | No automatic lineage (sandbox is excluded) | Yes — OpenLineage emits START/COMPLETE/FAIL events to Purview |
 
 ### The mental model
 
@@ -152,7 +152,7 @@ VS Code                            compute/spark/jobs/               Airflow DAG
 │    Spark UI → job completed, no OOM                                    │
 │    silver/crm/orders/ → data written correctly                         │
 │    DQ task → all checks passed                                         │
-│    Marquez → lineage graph shows bronze → silver edge                  │
+│    Purview → lineage graph shows bronze → silver edge                  │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │  dev run passes
                                      ▼
@@ -228,7 +228,7 @@ Before creating a `release/` branch, confirm:
 - [ ] All CI checks green on `main`
 - [ ] Job ran successfully in dev (Spark Operator — not just Spark Connect interactive)
 - [ ] DQ checks passed in dev
-- [ ] Lineage graph visible in Marquez dev
+- [ ] Lineage graph visible in Purview dev
 - [ ] No pending infra `what-if` changes that need separate review
 - [ ] Data volume in dev run is representative (not just a 10-row sample)
 
@@ -242,7 +242,7 @@ Before creating a `release/` branch, confirm:
 | Spark Operator | ✅ Yes | ✅ Yes |
 | Trino | ✅ Yes | ✅ Yes |
 | Airflow | ✅ Yes (git-sync from `main`) | ✅ Yes (git-sync from release tag) |
-| Marquez | ✅ Yes | ✅ Yes |
+| Microsoft Purview | ✅ Yes | ✅ Yes |
 | Azure Managed Grafana | ✅ Yes | ✅ Yes |
 | Sandbox ADLS container | ✅ Yes (28-day TTL) | ❌ No |
 | ADLS bronze/silver/gold | ✅ dev account | ✅ prod account |

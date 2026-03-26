@@ -71,10 +71,10 @@ All observability signals are collected by the Azure Monitor Agent (AMA), which 
 │  │  ┌─────────────────────────────────────────────────────────────────┐   │    │
 │  │  │  Signal Sources (orchestration cluster)                          │   │   │
 │  │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐           │   │     │
-│  │  │  │ Airflow  │ │ Marquez  │ │  Portal  │ │  AKS     │           │   │     │
-│  │  │  │ metrics  │ │ /metrics │ │ API      │ │ nodes    │           │   │     │
-│  │  │  │          │ │          │ │ /metrics │ │ (host    │           │   │     │
-│  │  │  │          │ │          │ │          │ │ metrics) │           │   │     │
+│  │  │  │ Airflow  │ │  Portal  │ │  AKS     │                       │   │     │
+│  │  │  │ metrics  │ │ API      │ │ nodes    │                       │   │     │
+│  │  │  │          │ │ /metrics │ │ (host    │                       │   │     │
+│  │  │  │          │ │          │ │ metrics) │                       │   │     │
 │  │  │  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘           │   │     │
 │  │  └───────┼────────────┼────────────┼────────────┼───────────────────┘   │   │
 │  │          │            │            │            │                         │ │
@@ -152,7 +152,7 @@ Structured and unstructured log lines from all pods on both clusters, collected 
 
 ### 3.3 Traces (OpenTelemetry → Azure Monitor / Application Insights)
 
-Distributed traces for the Developer Portal API and (optionally) Spark jobs. Traces capture the full request path through portal-api → Airflow API → Marquez API, enabling precise latency attribution. Traces are ingested via OTLP (OpenTelemetry Protocol) and stored in Azure Monitor / Application Insights.
+Distributed traces for the Developer Portal API and (optionally) Spark jobs. Traces capture the full request path through portal-api → Airflow API → Purview Data Map API, enabling precise latency attribution. Traces are ingested via OTLP (OpenTelemetry Protocol) and stored in Azure Monitor / Application Insights.
 
 Trace IDs are injected into structured logs as `trace_id` fields, enabling Azure Managed Grafana's exemplar linking: click a slow portal API call in the latency histogram → jump directly to the trace.
 
@@ -187,7 +187,7 @@ Spark driver               /metrics on :4040 (SparkUI)          PodAnnotation sc
 Spark executor             /metrics on :4040 (per executor)     PodAnnotation scrape
 Trino coordinator          /v1/info + /v1/cluster :8080         PodAnnotation scrape
 Trino worker               /v1/info :8080                       PodAnnotation scrape
-Marquez API                /metrics :8080                       PodAnnotation scrape
+Microsoft Purview          (managed service)                    Azure Monitor metrics (via Purview Diagnostic Settings)
 Portal API                 /metrics :8000 (prometheus-fastapi)  PodAnnotation scrape
 AKS nodes                  Container Insights add-on (built-in) Add-on (automatic)
 kube-state-metrics         Managed (Container Insights add-on)  Add-on (automatic)
@@ -236,7 +236,7 @@ mappings:
 |-----------|-------|-----------|
 | Azure Monitor Workspace retention | 18 months (default) | Covers SLO trend analysis and FinOps reporting; no PVC or disk to manage |
 | Container Insights retention | Configurable in Log Analytics (default 30 days) | Operational debugging window; extend to 90 days for compliance |
-| Long-term cost trend data | DQ results Delta table + Marquez event store | Durable record — not Azure Monitor |
+| Long-term cost trend data | DQ results Delta table + Purview event store | Durable record — not Azure Monitor |
 
 All retention is managed through Azure portal / Bicep on the Azure Monitor Workspace and Log Analytics Workspace resources. No pod restarts or disk resizes required.
 
@@ -250,7 +250,7 @@ infra/bicep/modules/observability/
     airflow.bicep         — Airflow scheduler, task failure, SLA miss rules
     spark.bicep           — Spark OOM, executor loss, job failure rules
     trino.bicep           — Trino query failure, high latency, OOM rules
-    marquez.bicep         — Marquez API error rate, event backlog rules
+    purview.bicep         — Purview event ingestion failure rules
     platform.bicep        — Node pressure, pod crashloop rules
     slos.bicep            — SLO burn rate rules (see Section 9)
     recording-rules.bicep — Pre-aggregated recording rules for dashboards
@@ -378,7 +378,7 @@ Forge/
 │   ├── Airflow Health          — scheduler lag, task state breakdown, SLA misses
 │   └── DAG Performance         — per-DAG run duration trend, success/failure rate
 ├── Lineage/
-│   └── Lineage Activity        — OpenLineage event rate, Marquez API latency
+│   └── Lineage Activity        — OpenLineage event delivery rate, Purview ingestion
 ├── Cost/
 │   ├── Cost Overview           — spend by pipeline, by cluster, projected vs actual
 │   └── Cost Anomaly            — pipelines with cost deviation > 2σ from baseline
@@ -657,20 +657,20 @@ def configure_tracing(app):
     trace.set_tracer_provider(provider)
 
     FastAPIInstrumentor.instrument_app(app)
-    HTTPXClientInstrumentor().instrument()   # traces outbound calls to Airflow, Marquez APIs
+    HTTPXClientInstrumentor().instrument()   # traces outbound calls to Airflow, Purview APIs
     SQLAlchemyInstrumentor().instrument()    # traces PostgreSQL queries (if any)
 ```
 
 This produces a trace for every API call that includes:
 - The portal-api HTTP span (route, method, status code, duration)
-- Child spans for each outbound HTTP call (to Airflow REST API, Marquez API, Trino)
+- Child spans for each outbound HTTP call (to Airflow REST API, Purview Data Map API, Trino)
 - The `trace_id` is injected into the structured log as a field, enabling Azure Managed Grafana exemplar linking
 
 ### 8.2 Trace Context Propagation
 
-The portal frontend sends an `X-Request-ID` header with each API call. The portal-api reads this and uses it as the trace parent if no W3C `traceparent` header is present. All downstream HTTP calls from portal-api to Airflow, Marquez, and Trino carry the W3C `traceparent` and `tracestate` headers automatically via `HTTPXClientInstrumentor`.
+The portal frontend sends an `X-Request-ID` header with each API call. The portal-api reads this and uses it as the trace parent if no W3C `traceparent` header is present. All downstream HTTP calls from portal-api to Airflow, Purview, and Trino carry the W3C `traceparent` and `tracestate` headers automatically via `HTTPXClientInstrumentor`.
 
-This means a full portal user interaction — from browser click through portal-api → Airflow → Marquez — is captured as a single trace in Azure Monitor / Application Insights.
+This means a full portal user interaction — from browser click through portal-api → Airflow → Purview — is captured as a single trace in Azure Monitor / Application Insights.
 
 ### 8.3 OpenTelemetry Collector
 
@@ -917,23 +917,22 @@ Exposed via Trino's built-in `/v1/info` and cluster endpoints with a Prometheus-
 - Query queue depth sustained high (warning — cluster is undersized for load)
 - Blocked queries sustained (warning — deadlock or resource leak scenario)
 
-### 10.4 Marquez
+### 10.4 Microsoft Purview
 
-Exposed at `/metrics` (Micrometer/Prometheus format). Scraped by the AMA as `job="marquez"`.
+Microsoft Purview is a managed service — there are no self-hosted `/metrics` endpoints to scrape. Purview health and ingestion signals are observed via Azure Monitor and the Purview Data Map API.
 
-| Metric | Labels | Type | Alert Threshold |
+| Signal | Source | Type | Alert Threshold |
 |--------|--------|------|-----------------|
-| `marquez_api_requests_total` | `method`, `path`, `status` | Counter | 5xx rate > 1% |
-| `marquez_api_request_duration_seconds` | `method`, `path` | Histogram | P95 > 500ms |
-| `marquez_lineage_events_received_total` | `event_type={START,COMPLETE,FAIL,ABORT}` | Counter | Drop > 50% vs previous hour |
-| `marquez_lineage_events_processing_duration_seconds` | — | Histogram | P99 > 2s |
-| `marquez_db_pool_active_connections` | — | Gauge | > 80% of pool max |
-| `marquez_db_pool_pending_connections` | — | Gauge | > 0 for > 1 minute |
+| OpenLineage HTTP response code | App Insights (portal-api outbound traces) | Trace/Counter | 5xx rate > 1% on Purview endpoint |
+| OpenLineage HTTP latency | App Insights (HTTPXClientInstrumentor) | Histogram | P95 > 2s to Purview endpoint |
+| Lineage event volume (emitter side) | Custom metric: `openlineage.events.sent` (Airflow, Spark, Trino) | Counter | Drop > 50% vs previous hour |
+| Purview Data Map API latency | App Insights (portal-api → Purview calls) | Histogram | P95 > 500ms |
+| Purview service health | Azure Service Health (resource: `purview-forge-{env}`) | Azure Monitor alert | Any `Degraded` or `Unavailable` event |
 
-**What to alert on for Marquez:**
-- API 5xx error rate > 1% (lineage events are being lost — pipelines will have gaps in lineage)
-- Lineage event volume drops to zero (Marquez unreachable, or no pipelines running — distinguish via Airflow metrics)
-- DB connection pool exhausted (PostgreSQL overloaded)
+**What to alert on for Purview:**
+- Outbound 5xx rate to Purview endpoint > 1% (lineage events are being lost — pipelines will have gaps in lineage)
+- Lineage event volume drops to zero while pipelines are running (Purview endpoint unreachable or workload identity token failure)
+- Purview service health degradation (Azure Service Health alert — route to PagerDuty)
 
 ### 10.5 Portal API
 
@@ -999,10 +998,10 @@ Source 2: OpenLineage Cost Facet
 │   }                                         │
 │ }                                           │
 └──────────────────────┬──────────────────────┘
-                       │  stored in Marquez
+                       │  stored in Purview
                        ▼
-               Marquez lineage store
-               (PostgreSQL — cost facets queryable)
+               Microsoft Purview lineage store
+               (managed service — cost facets queryable via Data Map API)
 ```
 
 **Cost facet calculation by Airflow:**

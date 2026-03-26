@@ -1440,16 +1440,16 @@ If DQ passes on retry, Airflow continues to `publish_serving` automatically.
 
 **Step 1: Check whether OpenLineage events were emitted**
 
-In Marquez: **portal → Lineage → silver/sales/orders → [job node] → Run detail → Events**.
+In Purview: **portal → Lineage → silver/sales/orders → [job node] → Run detail → Events** (or via the Developer Portal lineage explorer, which queries the Purview Data Map API).
 
 Each job run should show START and COMPLETE (or FAIL) events. If only START is present with no COMPLETE, the OpenLineage library failed to emit the COMPLETE event (usually because the Spark job crashed before the event was sent).
 
-Check the Marquez API log for ingestion errors:
+Check the Airflow scheduler log for OpenLineage transport errors (events are emitted in-process by the `openlineage-airflow` package, so failures surface in the scheduler log):
 
 ```bash
 kubectl --context forge-orchestration-prod \
-  logs -n lineage deploy/marquez-api \
-  --tail=100 | grep -i error
+  logs -n airflow deploy/airflow-scheduler \
+  --tail=200 | grep -i openlineage
 ```
 
 **Step 2: Check Airflow OpenLineage integration**
@@ -1463,15 +1463,16 @@ kubectl --context forge-orchestration-prod \
   exec -n airflow deploy/airflow-scheduler \
   -- env | grep OPENLINEAGE
 # Expected:
-# OPENLINEAGE_URL=http://marquez-api.lineage.svc.cluster.local:5000
-# OPENLINEAGE_NAMESPACE=airflow
+# OPENLINEAGE_URL=https://purview-forge-prod.purview.azure.com/dataMap/openlineage/namespaces/forge-prod/events
+# OPENLINEAGE_TRANSPORT={"type":"http","url":"...","auth":{"type":"azure_identity"}}
+# OPENLINEAGE_NAMESPACE=forge-prod
 ```
 
 If `OPENLINEAGE_URL` is not set, the Airflow OpenLineage integration is silently disabled. Fix the Helm values and redeploy Airflow.
 
 **Step 3: Manually replay a run's lineage**
 
-If the events were missing due to a transient Marquez outage, you can replay them:
+If the events were missing due to a transient Purview endpoint outage, you can replay them:
 
 ```bash
 # Trigger the DAG with lineage_replay=true flag
@@ -1503,7 +1504,7 @@ Exactly one thing is different between the dev and prod clusters: **sizing**. Ev
 | Spark configuration (JVM, shuffle, memory fractions) | Identical | Identical |
 | Delta Lake 4.0.0 (same) |
 | ADLS access method | Workload identity (same) | Workload identity (same) |
-| OpenLineage config | Points to dev Marquez | Points to prod Marquez |
+| OpenLineage config | Points to `purview-forge-dev` endpoint | Points to `purview-forge-prod` endpoint |
 | Airflow configuration | `KubernetesExecutor` (same) | `KubernetesExecutor` (same) |
 | Node pool sizes | `spark`: 0–5 nodes, `E4s_v5` | `spark`: 0–20 nodes, `E8s_v5` |
 | Data | Dev ADLS account (subset of prod data) | Prod ADLS account |

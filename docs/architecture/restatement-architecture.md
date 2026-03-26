@@ -367,7 +367,7 @@ When a Bronze or Silver dataset is restated, its downstream derived datasets sho
 
 ### 5.1 Lineage-Driven Cascade
 
-The portal uses the **Marquez lineage graph** to determine downstream impact. When the user selects cascade, the portal queries Marquez for all datasets downstream of the target:
+The portal uses the **Purview lineage graph** to determine downstream impact. When the user selects cascade, the portal queries Purview for all datasets downstream of the target:
 
 ```
 ingest_sales_orders  →  silver/sales/orders
@@ -589,7 +589,7 @@ The following metrics are emitted to Azure Monitor:
 
 ### 9.3 Lineage
 
-Every restatement run emits OpenLineage events stamped with `restatement_id`. This means the Marquez lineage graph shows:
+Every restatement run emits OpenLineage events stamped with `restatement_id`. This means the Purview lineage graph shows:
 
 - **Normal runs** — steady-state lineage
 - **Restatement runs** — visually distinct (tagged `restatement`) overlaid on the same dataset nodes

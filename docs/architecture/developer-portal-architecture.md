@@ -60,7 +60,7 @@ This distinction shapes every design decision: the portal shows raw run history,
 The portal consists of two independently deployed pods:
 
 - **`portal-web`** — Next.js 14 frontend, App Router, server-side rendered pages with client-side data fetching via React Query
-- **`portal-api`** — FastAPI backend, Python 3.11, aggregates data from Airflow, Marquez, Trino (DQ store), Azure Cost Management, and ADLS catalog
+- **`portal-api`** — FastAPI backend, Python 3.11, aggregates data from Airflow, Purview Data Map API, Trino (DQ store), Azure Cost Management, and ADLS catalog
 
 Both pods run on the `platform` node pool of the `forge-orchestration` AKS cluster.
 
@@ -114,10 +114,10 @@ State management is entirely local to each route (no Redux, no Zustand global st
 The FastAPI backend is a thin aggregation layer. It does not own any data — it queries upstream data sources and assembles responses for the frontend. Its responsibilities are:
 
 1. **Authentication** — validate Azure AD Bearer tokens on every request, extract user identity and role
-2. **Data aggregation** — call Airflow REST API, Marquez REST API, Trino (DQ Delta table), Azure Cost Management API, and ADLS catalog table; assemble unified responses
+2. **Data aggregation** — call Airflow REST API, Purview Data Map API, Trino (DQ Delta table), Azure Cost Management API, and ADLS catalog table; assemble unified responses
 3. **Authorization** — enforce RBAC (Admin, Editor, Reader) per endpoint
 4. **Pagination and filtering** — apply cursor-based or offset pagination before returning collections
-5. **Error normalization** — translate upstream errors (Airflow 5xx, Marquez timeout) into structured portal error responses
+5. **Error normalization** — translate upstream errors (Airflow 5xx, Purview API timeout) into structured portal error responses
 
 The backend is stateless. All data lives in upstream systems. The only state the backend holds is a Redis cache entry (when Redis is enabled) and in-memory Python LRU caches for cheap, rarely-changing data (e.g., DAG list).
 
@@ -126,12 +126,12 @@ The backend is stateless. All data lives in upstream systems. The only state the
 | Data Source | Purpose | Protocol |
 |-------------|---------|----------|
 | Airflow REST API | DAG list, DAG run history, task instance state, task log streaming, manual trigger | HTTP/JSON (Airflow 3.x stable API) |
-| Marquez REST API | Lineage graph, dataset list, job list, dataset versions, run facets | HTTP/JSON (OpenLineage Marquez API v1) |
+| Purview Data Map API | Lineage graph, dataset list, job list, dataset versions, run facets | HTTPS/JSON (Azure Purview Data Map REST API) |
 | Trino (DQ Delta table) | DQ run results, pass rate calculations, failing rule details, trend queries | JDBC via `trino-python-client` |
 | Azure Cost Management API | Cost by resource, cost by tag, anomaly detection | Azure SDK (`azure-mgmt-costmanagement`) |
 | ADLS catalog Delta table | Dataset discovery, schema, partition list, row count, freshness | Delta reader via `deltalake` Python library (direct ADLS read) |
 
-The backend does **not** call PostgreSQL directly (Airflow's or Marquez's). All access goes through their REST APIs. The only direct storage access is the ADLS catalog table and the DQ results table (via Trino).
+The backend does **not** call PostgreSQL directly (Airflow's). All access goes through REST APIs. The only direct storage access is the ADLS catalog table and the DQ results table (via Trino).
 
 ---
 
@@ -488,18 +488,18 @@ The datasets section is the lakehouse catalog — a searchable, browseable list 
 
 Datasets are discovered from two complementary sources that are merged by the backend:
 
-**Source 1: Marquez Dataset Registry**
+**Source 1: Purview Asset Registry**
 
-Marquez maintains a registry of every dataset that has appeared as an input or output in any OpenLineage event. This is the authoritative list of what the platform knows about. The backend queries:
+Microsoft Purview maintains a registry of every dataset (asset) that has appeared as an input or output in any OpenLineage event. This is the authoritative list of what the platform knows about. The backend queries:
 
 ```
 GET /api/v1/namespaces            → list all namespaces
 GET /api/v1/namespaces/{ns}/datasets   → list datasets in namespace
 ```
 
-Namespaces in Marquez correspond to ADLS containers: `raw`, `curated`, `serving`. Dataset names follow the path convention: `{domain}/{entity}`.
+Namespaces in Purview correspond to ADLS containers: `raw`, `curated`, `serving`. Dataset names follow the path convention: `{domain}/{entity}`.
 
-Each Marquez dataset record includes:
+Each Purview dataset asset record includes:
 - Name, namespace
 - Last modified timestamp (from most recent run that touched it)
 - Schema (from the schema facet of the most recent run)
@@ -513,7 +513,7 @@ The platform maintains a catalog Delta table at:
 abfss://silver@<account>.dfs.core.windows.net/_platform/catalog/
 ```
 
-This table is written by the serving publish DAG at the end of each successful pipeline run. It contains columns not carried by Marquez:
+This table is written by the serving publish DAG at the end of each successful pipeline run. It contains columns not carried by Purview:
 
 ```
 catalog/
@@ -535,11 +535,11 @@ The backend reads this table using the `deltalake` Python library (`DeltaTable.f
 
 **Merging the Two Sources**
 
-The backend performs an in-memory merge: the Marquez dataset list provides lineage-context and schema; the catalog table provides row counts, partition info, owner, tags, and SLA. The merge key is `(namespace, dataset_name)`. Datasets in Marquez but not in the catalog table are shown with a "catalog pending" badge (they have been seen in lineage but the serving publish has not yet run). Datasets in the catalog table but not in Marquez have no lineage context (typically tables created manually or imported without OpenLineage instrumentation).
+The backend performs an in-memory merge: the Purview asset list provides lineage-context and schema; the catalog table provides row counts, partition info, owner, tags, and SLA. The merge key is `(namespace, dataset_name)`. Datasets in Purview but not in the catalog table are shown with a "catalog pending" badge (they have been seen in lineage but the serving publish has not yet run). Datasets in the catalog table but not in Purview have no lineage context (typically tables created manually or imported without OpenLineage instrumentation).
 
 ### Schema Rendering
 
-Dataset schema is fetched from the Marquez dataset's most recent schema facet:
+Dataset schema is fetched from the Purview asset's most recent schema facet:
 
 ```json
 {
@@ -553,7 +553,7 @@ Dataset schema is fetched from the Marquez dataset's most recent schema facet:
 }
 ```
 
-The frontend renders this as a sortable table with column name, type, description, and a "non-nullable" indicator. If column-level lineage is available for this dataset (from the Marquez column-level lineage API), each column shows a "lineage" icon that opens the lineage graph filtered to that column.
+The frontend renders this as a sortable table with column name, type, description, and a "non-nullable" indicator. If column-level lineage is available for this dataset (from the Purview Data Map column-level lineage API), each column shows a "lineage" icon that opens the lineage graph filtered to that column.
 
 ### Partition List from Delta Log
 
@@ -595,9 +595,9 @@ SELECT num_rows FROM delta."{path}"."$properties"
 
 The lineage section is an interactive graph explorer for tracing data provenance and understanding downstream impact.
 
-### Fetching the Lineage Graph from Marquez
+### Fetching the Lineage Graph from Purview
 
-The lineage graph is fetched from the Marquez REST API. Marquez models lineage as a directed graph of dataset nodes and job nodes, connected by edges representing input/output relationships.
+The lineage graph is fetched from the Purview Data Map API. Purview models lineage as a directed graph of asset nodes and process nodes, connected by edges representing input/output relationships.
 
 For a given dataset, the backend calls:
 
@@ -607,7 +607,7 @@ GET /api/v1/lineage?nodeId=dataset:{namespace}:{name}&depth=3
 
 `depth=3` means: expand three hops in both directions (upstream and downstream). This is configurable per request via a query parameter (`?depth=N`, capped at 5 to prevent excessively large graphs).
 
-The Marquez response is a graph with:
+The Purview response is a graph with:
 - `nodes`: array of dataset and job nodes, each with `id`, `type`, `data` (name, namespace, schema facet, DQ facet)
 - `edges`: array of directed edges `{origin, destination}` representing input/output relationships
 
@@ -688,13 +688,13 @@ When the user activates the **"Column level"** toggle in the graph toolbar, the 
 GET /api/v1/lineage/datasets/{namespace}/{name}?level=column
 ```
 
-The backend calls the Marquez column lineage endpoint:
+The backend calls the Purview Data Map column lineage endpoint:
 
 ```
-GET /api/v1/column-lineage?nodeId=dataset:{namespace}:{name}:{column}
+GET https://purview-forge-{env}.purview.azure.com/dataMap/api/atlas/v2/lineage/{assetGuid}?direction=BOTH&depth=3
 ```
 
-Marquez returns column-level edges derived from the OpenLineage `columnLineage` facet emitted by the Spark OpenLineage plugin (which instruments the Spark logical plan) and from the `sqlLineage` facet emitted by the Trino OpenLineage plugin (which parses the SQL AST).
+Purview returns column-level edges derived from the OpenLineage `columnLineage` facet emitted by the Spark OpenLineage plugin (which instruments the Spark logical plan) and from the `sqlLineage` facet emitted by the Trino OpenLineage plugin (which parses the SQL AST).
 
 In column-level view, the ReactFlow graph expands each dataset node to show its individual columns, and edges connect specific columns across datasets:
 
@@ -716,7 +716,7 @@ The backend computes this by traversing the lineage graph downstream from the se
 GET /api/v1/lineage/impact/{namespace}/{name}
 
 Algorithm:
-  1. Call Marquez GET /api/v1/lineage?nodeId=dataset:{ns}:{name}&depth=10 (deep)
+  1. Call Purview Data Map GET /atlas/v2/lineage/<assetGuid>?direction=BOTH&depth=10 (deep)
   2. Filter to only downstream edges (source is the target dataset or any of its descendants)
   3. Collect all downstream dataset nodes
   4. For each downstream dataset: look up its DQ status, freshness, owner, zone
@@ -893,7 +893,7 @@ Pipelines with `z_score > 2.0` are flagged as anomalies. The anomaly list is ret
 
 Full-text search queries across datasets and jobs simultaneously. The backend queries two sources in parallel and merges results:
 
-1. **Marquez dataset search** — `GET /api/v1/namespaces/{ns}/datasets?search={q}` (Marquez supports basic name/description search)
+1. **Purview asset search** — Purview Data Map search API (`POST /dataMap/api/search/query` with keyword filter)
 2. **Catalog table search** — Trino query against the catalog table:
 
 ```sql
@@ -906,7 +906,7 @@ WHERE
 LIMIT 50
 ```
 
-Results are ranked by relevance: exact name match first, then name substring match, then description match, then tag match. Duplicate results (same dataset appearing in both Marquez and catalog) are deduplicated by `(namespace, dataset_name)`.
+Results are ranked by relevance: exact name match first, then name substring match, then description match, then tag match. Duplicate results (same dataset appearing in both Purview and catalog) are deduplicated by `(namespace, dataset_name)`.
 
 ### Tag Management
 
@@ -1033,7 +1033,8 @@ Deployment: portal-api
           initialDelaySeconds: 5, periodSeconds: 5
         env:
           - AIRFLOW_BASE_URL: http://airflow-webserver.airflow.svc.cluster.local:8080
-          - MARQUEZ_BASE_URL: http://marquez-api.lineage.svc.cluster.local:5000
+          - PURVIEW_ACCOUNT: purview-forge-{env}
+          - PURVIEW_ENDPOINT: https://purview-forge-{env}.purview.azure.com
           - TRINO_HOST: trino-coordinator.trino.svc.cluster.local
           - AZURE_AD_TENANT_ID (from Key Vault via CSI)
           - AZURE_SUBSCRIPTION_ID (from Key Vault via CSI)
@@ -1153,8 +1154,8 @@ To deploy a new portal version: update the image tag in the Helm values file and
                     ┌───────────────────────────────────────┤
                     │                                       │
           ┌─────────▼───────────┐              ┌───────────▼──────────┐
-          │  Airflow REST API   │              │  Marquez REST API    │
-          │  airflow-webserver  │              │  marquez-api         │
+          │  Airflow REST API   │              │  Purview Data Map    │
+          │  airflow-webserver  │              │  API                 │
           │  .airflow.svc       │              │  .lineage.svc        │
           │                     │              │                      │
           │  DAG list           │              │  Lineage graph       │

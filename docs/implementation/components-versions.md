@@ -56,8 +56,7 @@ No cluster node ever pulls from a public registry. This eliminates:
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
 | **Apache Airflow** | 3.1.0 | `apache/airflow:3.1.0-python3.12` | `forgeacr/airflow:3.1.0` | Custom image — see below |
-| **Marquez API** | 0.47.0 | `marquezproject/marquez:0.47.0` | `forgeacr/marquez-api:0.47.0` | Imported, not modified |
-| **Marquez Web** | 0.47.0 | `marquezproject/marquez-web:0.47.0` | `forgeacr/marquez-web:0.47.0` | Imported, not modified |
+| **Microsoft Purview** | Managed service | — | — | Org-wide license; no image to manage. Lineage backend via OpenLineage REST endpoint. |
 
 ### Observability Layer
 
@@ -196,7 +195,7 @@ All version changes go through Git — no image tag updates directly in producti
 | Trino | Apache 2.0 | Attribution |
 | Apache Airflow | Apache 2.0 | Attribution |
 | Delta Lake | Apache 2.0 | Attribution |
-| Marquez | Apache 2.0 | Attribution |
+| Microsoft Purview | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Monitor / Container Insights | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Managed Grafana | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Log Analytics Workspace | Microsoft Azure Terms | Covered by Azure enterprise agreement |

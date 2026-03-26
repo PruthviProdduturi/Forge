@@ -174,7 +174,8 @@ helm upgrade --install spark-connect \
   --set image.tag=4.1.0 \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-compute-{env} --query clientId -o tsv) \
   --set config.adlsAccount=forgeadls{env} \
-  --set config.openlineageUrl=http://marquez-api.lineage.svc.cluster.local:5000 \
+  --set config.openlineageUrl=https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events \
+  --set config.openlineageAuthType=azure_identity \
   --wait --timeout 5m
 ```
 

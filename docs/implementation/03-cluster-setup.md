@@ -951,11 +951,6 @@ kubectl label namespace airflow \
   environment="${ENV}" \
   workload=airflow
 
-kubectl label namespace lineage \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}" \
-  workload=marquez
-
 kubectl label namespace monitoring \
   app.kubernetes.io/part-of=forge \
   environment="${ENV}"
@@ -987,15 +982,6 @@ metadata:
     azure.workload.identity/tenant-id: "${TENANT_ID}"
   labels:
     azure.workload.identity/use: "true"
-EOF
-
-# Marquez (lineage namespace — no Azure identity needed; accesses its own PostgreSQL)
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: marquez-sa
-  namespace: lineage
 EOF
 
 # Portal
@@ -1063,35 +1049,6 @@ spec:
       key: webserverSecretKey
     - objectName: airflow-git-sync-ssh-key
       key: gitSyncSshKey
-EOF
-
-# Marquez SecretProviderClass
-cat <<EOF | kubectl apply -f -
-apiVersion: secrets-store.csi.x-k8s.io/v1
-kind: SecretProviderClass
-metadata:
-  name: marquez-secrets
-  namespace: lineage
-spec:
-  provider: azure
-  parameters:
-    usePodIdentity: "false"
-    useVMManagedIdentity: "false"
-    clientID: "${AIRFLOW_MI_CLIENT_ID}"
-    keyvaultName: "${KV_NAME}"
-    tenantId: "${TENANT_ID}"
-    objects: |
-      array:
-        - |
-          objectName: marquez-db-password
-          objectType: secret
-          objectVersion: ""
-  secretObjects:
-  - secretName: marquez-db-credentials
-    type: Opaque
-    data:
-    - objectName: marquez-db-password
-      key: password
 EOF
 
 # Portal SecretProviderClass
@@ -1184,7 +1141,7 @@ az aks enable-addons \
   --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
 ```
 
-Configure the AMA to scrape custom Prometheus-compatible `/metrics` endpoints (Spark, Trino, Airflow, Marquez, Portal) via a ConfigMap:
+Configure the AMA to scrape custom Prometheus-compatible `/metrics` endpoints (Spark, Trino, Airflow, Portal) via a ConfigMap:
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -1428,89 +1385,20 @@ kubectl get pods -n airflow
 # airflow-webserver-<hash>-<hash>             1/1     Running
 ```
 
-### 4.10 Install Marquez
+### 4.10 Verify Purview OpenLineage Connectivity
 
-Marquez runs in the `lineage` namespace on the orchestration cluster. It stores lineage metadata in its own PostgreSQL database (separate from Airflow's).
+Microsoft Purview is a managed service — there is no Helm chart or pod to install. The orchestration step for lineage is to verify that the `id-forge-read-{env}` managed identity has the **Purview Data Curator** role assigned on the Purview collection, and that the Purview OpenLineage endpoint is reachable from within the orchestration cluster.
 
-```bash
-helm repo add marquezproject \
-  https://marquezproject.github.io/marquez/charts
-helm repo update
-
-MARQUEZ_DB_PASS=$(az keyvault secret show \
-  --vault-name "${KV_NAME}" \
-  --name "marquez-db-password" \
-  --query value -o tsv)
-
-MARQUEZ_PG_HOST=$(az keyvault secret show \
-  --vault-name "${KV_NAME}" --name "postgres-host" --query value -o tsv)
-
-cat <<EOF > /tmp/marquez-values.yaml
-marquez:
-  image:
-    registry: "forgeacr-${ENV}.azurecr.io"
-    repository: marquez-api
-    tag: "0.47.0"
-  db:
-    host: "${MARQUEZ_PG_HOST}"
-    port: "5432"
-    name: "marquez"
-    user: "marquez"
-    password: ""  # injected from secret below
-  resources:
-    requests:
-      cpu: "250m"
-      memory: "512Mi"
-    limits:
-      cpu: "1"
-      memory: "2Gi"
-  nodeSelector:
-    agentpool: platform
-  serviceAccount:
-    create: false
-    name: marquez-sa
-
-web:
-  image:
-    registry: "forgeacr-${ENV}.azurecr.io"
-    repository: marquez-web
-    tag: "0.47.0"
-  nodeSelector:
-    agentpool: platform
-
-postgresql:
-  enabled: false  # We use the managed PostgreSQL, not the chart's bundled postgres
-EOF
-
-helm upgrade --install marquez \
-  marquezproject/marquez \
-  --namespace lineage \
-  --version 0.47.0 \
-  --values /tmp/marquez-values.yaml \
-  --set marquez.db.password="${MARQUEZ_DB_PASS}" \
-  --wait \
-  --timeout=5m
-```
-
-Verify:
+Verify connectivity from within the cluster:
 
 ```bash
-kubectl get pods -n lineage
-
-# Expected:
-# marquez-api-<hash>     1/1     Running
-# marquez-web-<hash>     1/1     Running
+# Test the Purview endpoint from within the airflow-scheduler pod
+kubectl --context forge-orchestration-${ENV} exec -n airflow deploy/airflow-scheduler -- \
+  curl -s -o /dev/null -w "%{http_code}" \
+  "https://purview-forge-${ENV}.purview.azure.com/dataMap/openlineage/namespaces/forge-${ENV}/events"
+# Expected: 200 or 405 (endpoint exists; 405 = GET not allowed, POST required)
+# 401 = Purview Data Curator role is missing — see docs/implementation/05-deploy-orchestration.md section 5.2
 ```
-
-Check the Marquez API responds:
-
-```bash
-kubectl port-forward svc/marquez -n lineage 5000:5000 &
-curl -s http://localhost:5000/api/v1/namespaces | python3 -m json.tool
-kill %1
-```
-
-Expected: JSON response listing namespaces (initially empty `[]`).
 
 ### 4.11 Verify Airflow Webserver is Accessible
 
@@ -1698,34 +1586,34 @@ submit_spark_pi -> success
 monitor_spark_pi -> success
 ```
 
-### 5.2 Test: Marquez Receives an OpenLineage Event
+### 5.2 Test: Purview Receives an OpenLineage Event
 
-When Airflow runs a task with the `openlineage-airflow` integration installed, it emits `START` and `COMPLETE` OpenLineage events to Marquez automatically. The test DAG above triggers this.
+When Airflow runs a task with the `openlineage-airflow` integration installed, it emits `START` and `COMPLETE` OpenLineage events to the Purview OpenLineage endpoint automatically. The test DAG above triggers this.
 
-Verify events arrived in Marquez:
+Verify events arrived in Purview by checking the Airflow scheduler log for successful transport:
 
 ```bash
-kubectl port-forward svc/marquez -n lineage 5000:5000 &
-
-# Check for lineage runs associated with the test DAG
-curl -s "http://localhost:5000/api/v1/namespaces/forge/jobs" \
-  | python3 -m json.tool \
-  | grep -A3 "cross_cluster_test"
-
-# Check datasets that appeared (the SparkPi example does not produce ADLS output,
-# but the Airflow DAG job itself will appear)
-curl -s "http://localhost:5000/api/v1/namespaces/forge/runs?limit=5" \
-  | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-for run in data['runs']:
-    print(run['id'], run['state'], run.get('jobVersion', {}).get('name', ''))
-"
-
-kill %1
+kubectl --context forge-orchestration-${ENV} \
+  logs -n airflow deploy/airflow-scheduler \
+  --tail=200 | grep -i openlineage
+# Expected: no ERROR lines; INFO lines confirming events were sent
 ```
 
-Expected: at least one run entry for the `forge_cross_cluster_test.submit_spark_pi` job with state `COMPLETE`.
+Then verify the asset appeared in the Purview Data Map:
+
+```bash
+ACCESS_TOKEN=$(az account get-access-token \
+  --resource "https://purview.azure.com" --query accessToken -o tsv)
+
+curl -s -X POST \
+  "https://purview-forge-${ENV}.purview.azure.com/catalog/api/search/query?api-version=2022-03-01-preview" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"keywords": "forge_cross_cluster_test", "limit": 5}' \
+  | python3 -m json.tool | grep -A3 "displayText"
+```
+
+Expected: at least one asset entry for the `forge_cross_cluster_test` job visible in the Purview Data Map.
 
 ### 5.3 Test: Metrics Appear in Azure Managed Grafana
 
@@ -1812,7 +1700,7 @@ Do not declare the platform ready for pipeline onboarding until every item below
 - [ ] All system node pool nodes are `Ready`
 - [ ] CSI Secrets Store Driver pods are Running
 - [ ] Workload identity webhook pods are Running
-- [ ] `airflow-sa`, `marquez-sa`, `portal-sa` ServiceAccounts exist with correct annotations
+- [ ] `airflow-sa`, `portal-sa` ServiceAccounts exist with correct annotations
 - [ ] All SecretProviderClasses resolve secrets without error
 - [ ] Compute cluster kubeconfig is stored in Key Vault as `compute-cluster-kubeconfig`
 - [ ] Container Insights add-on is enabled on both clusters
@@ -1822,13 +1710,12 @@ Do not declare the platform ready for pipeline onboarding until every item below
 - [ ] Airflow scheduler pods (2 replicas) show `2/2 Running`
 - [ ] Airflow webserver pods are Running and return HTTP 200 on `/health`
 - [ ] Airflow triggerer pod is Running
-- [ ] Marquez API pod is Running and returns 200 on `/api/v1/namespaces`
-- [ ] Marquez Web pod is Running
+- [ ] Purview OpenLineage endpoint returns 200/405 from within the orchestration cluster
 
 **Cross-Cluster Validation**
 - [ ] Airflow `forge_cross_cluster_test` DAG triggered and reached state `success`
 - [ ] SparkApplication `pi-test-*` reached state `SUCCEEDED` on the compute cluster
-- [ ] Marquez received OpenLineage events from the test DAG run
+- [ ] Purview received OpenLineage events from the test DAG run (asset visible in Purview Data Map)
 - [ ] Azure Managed Grafana shows metrics from both clusters
 - [ ] Azure Log Analytics shows logs from both clusters
 - [ ] No network policy violations logged by Calico during the test run

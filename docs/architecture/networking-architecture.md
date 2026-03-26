@@ -34,7 +34,7 @@ Forge's network design is built on three constraints:
 
 **Private endpoints for all PaaS services.** Every Azure managed service is accessed via a private endpoint with a private IP in the VNet. DNS resolution for those services returns the private IP, not the public Microsoft backbone IP. There is no exception to this rule.
 
-**Clusters are sovereign.** Each AKS cluster has no direct network path to the other. Cross-cluster coordination happens only through shared data stores (ADLS Gen2, Marquez API, Key Vault) accessed via private endpoints. The only intentional cross-cluster connection is Airflow reaching the compute cluster's Kubernetes API server — a specific, controlled path with explicit network policy approval.
+**Clusters are sovereign.** Each AKS cluster has no direct network path to the other. Cross-cluster coordination happens only through shared data stores (ADLS Gen2, Key Vault) accessed via private endpoints. The only intentional cross-cluster connection is Airflow reaching the compute cluster's Kubernetes API server — a specific, controlled path with explicit network policy approval.
 
 ---
 
@@ -78,7 +78,7 @@ Forge's network design is built on three constraints:
 │  │  ││                                                                           │  ││
 │  │  ││  Namespaces:                                                              │  ││
 │  │  ││    airflow        — scheduler, webserver, workers (KubernetesExecutor)    │  ││
-│  │  ││    lineage        — marquez-api, marquez-web                              │  ││
+│  │  ││    lineage        — (removed — lineage handled by Microsoft Purview managed service) │  ││
 │  │  ││    monitoring     — azure-monitor-agent, otel-collector                   │  ││
 │  │  ││    portal         — portal-api, portal-web                                │  ││
 │  │  └────────────────────────────────────────────────────────────────────────────┘  ││
@@ -92,7 +92,7 @@ Forge's network design is built on three constraints:
 │  │  10.3.0.6   — Key Vault                       privatelink.vaultcore.azure.net    ││
 │  │  10.3.0.7   — Azure Container Registry        privatelink.azurecr.io             ││
 │  │  10.3.0.8   — PostgreSQL (Airflow metadata)   privatelink.postgres.database...   ││
-│  │  10.3.0.9   — PostgreSQL (Marquez)            privatelink.postgres.database...   ││
+│  │  10.3.0.9   — Microsoft Purview               privatelink.purview.azure.com      ││
 │  │  10.3.0.10  — Azure Monitor (metrics)         privatelink.monitor.azure.com      ││
 │  │  10.3.0.11  — Compute AKS API server          (AKS private endpoint)             ││
 │  │  10.3.0.12  — Orchestration AKS API server    (AKS private endpoint)             ││
@@ -383,14 +383,14 @@ Azure DevOps Pipelines run on ADO-hosted agents that reach the AKS API server ov
 | Azure Key Vault | `kv-forge-{env}` | `pe-keyvault` | private-endpoints | 10.3.0.6 | `privatelink.vaultcore.azure.net` |
 | Azure Container Registry | `forgeacr<env>` | `pe-acr` | private-endpoints | 10.3.0.7 | `privatelink.azurecr.io` |
 | PostgreSQL (Airflow) | `psql-forge-airflow-<env>` | `pe-psql-airflow` | private-endpoints | 10.3.0.8 | `privatelink.postgres.database.azure.com` |
-| PostgreSQL (Marquez) | `psql-forge-marquez-<env>` | `pe-psql-marquez` | private-endpoints | 10.3.0.9 | `privatelink.postgres.database.azure.com` |
+| Microsoft Purview | `purview-forge-<env>` | `pe-purview` | private-endpoints | 10.3.0.9 | `privatelink.purview.azure.com` |
 | Azure Monitor | `azmon-forge-<env>` | `pe-azmon` | private-endpoints | 10.3.0.10 | `privatelink.monitor.azure.com` |
 | AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.northcentralus.azmk8s.io` |
 | AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.northcentralus.azmk8s.io` |
 
 **Why two ADLS private endpoints?** ADLS Gen2 has two sub-resources that each need their own private endpoint: `dfs` (Data Lake Storage — used by Spark and all Hadoop/ABFS clients) and `blob` (Blob Storage — used by ACR layer pulls and some Azure SDKs that fall back to blob). Both must be present for complete private access.
 
-**Why two PostgreSQL private endpoints?** The Airflow metadata database and the Marquez lineage database are separate PostgreSQL Flexible Server instances — they use separate managed identities and may be sized and patched independently. Each gets its own private endpoint.
+**Why is there a Purview private endpoint?** All lineage event POSTs and Data Map API calls from cluster pods route through the Purview private endpoint, ensuring no lineage data leaves the private network.
 
 ### 6.2 Private DNS Zone Linking
 
@@ -738,7 +738,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
-# Egress: allow Airflow to reach ADLS, Key Vault, Marquez
+# Egress: allow Airflow to reach ADLS, Key Vault, Purview
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -782,7 +782,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
-# Allow Spark executors: egress to ADLS and Marquez only
+# Allow Spark executors: egress to ADLS and Purview only
 # No egress to internet, no egress to orchestration cluster directly
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -803,16 +803,12 @@ spec:
       ports:
         - port: 443
           protocol: TCP
-    # Marquez API (lineage events)
+    # Microsoft Purview OpenLineage endpoint (via private endpoint 10.3.0.9)
     - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: lineage
-          podSelector:
-            matchLabels:
-              app: marquez
+        - ipBlock:
+            cidr: 10.3.0.9/32
       ports:
-        - port: 8080
+        - port: 443
           protocol: TCP
     # CoreDNS (DNS resolution)
     - to:

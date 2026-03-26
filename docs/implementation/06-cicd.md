@@ -172,7 +172,7 @@ Stage 5: Smoke Tests              (after Stage 4)
         Submit test SparkApplication → assert COMPLETED
         Trigger test Airflow DAG → assert SUCCESS
         Query gold.smoke_test table via Trino → assert row returned
-        Assert Marquez received lineage events
+        Assert Purview received lineage events (asset visible in Data Map)
         Assert DQ result written to silver/_platform/dq_results/
 ```
 
@@ -205,7 +205,7 @@ stages:
     dependsOn: Storage
   - stage: ComputeApps     # stage 4 — compute cluster apps (Spark, Trino)
     dependsOn: AKSBootstrap
-  - stage: OrchApps        # stage 5 — orchestration cluster apps (Airflow, Marquez)
+  - stage: OrchApps        # stage 5 — orchestration cluster apps (Airflow, Purview integration)
     dependsOn: AKSBootstrap
   - stage: Portal          # stage 6 — portal (last)
     dependsOn: OrchApps

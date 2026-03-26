@@ -173,8 +173,8 @@ ruleset_id: curated_orders                # Unique ID for this ruleset.
                                           # Used as the primary key in DQ results.
 
 dataset:
-  namespace: forge-prod                 # Marquez namespace. Injected into the DQ
-                                          # facet sent to OpenLineage.
+  namespace: forge-prod                 # OpenLineage namespace. Injected into the DQ
+                                          # facet sent to Microsoft Purview.
   name: curated.orders                    # Logical dataset name (Hive catalog form).
   path: "abfss://silver@${ADLS_ACCOUNT}.dfs.core.windows.net/orders/"
                                           # Actual Delta table path. ${ADLS_ACCOUNT}
@@ -546,7 +546,7 @@ Three severity levels define how a rule failure affects pipeline execution, aler
 3. All downstream tasks in the DAG are marked `UPSTREAM_FAILED` and do not execute. Specifically: the serving publication task does not run. The Gold layer is not updated. The stale (but previously-validated) serving data remains in place.
 4. `AlertReporter` fires the webhook immediately (before the Airflow task has even finished failing). The alert payload includes the rule IDs and observed values of all critical failures.
 5. The DQ results row is written to the Delta table with `passed = FALSE` and the full `rule_results` array.
-6. The `LineageReporter` emits a DQ facet to Marquez with `assertions` showing the critical failures.
+6. The `LineageReporter` emits a DQ facet to Purview with `assertions` showing the critical failures.
 
 **When to use CRITICAL:**
 
@@ -675,7 +675,7 @@ ruleset_id              STRING                  NOT NULL  PK-like: unique ID of 
                                                           ruleset that produced this run.
                                                           e.g. "curated_orders"
 
-dataset_namespace       STRING                  NOT NULL  Marquez namespace.
+dataset_namespace       STRING                  NOT NULL  OpenLineage namespace.
                                                           e.g. "forge-prod"
 
 dataset_name            STRING                  NOT NULL  Logical dataset name.
@@ -904,7 +904,7 @@ The webhook URL is stored in Key Vault as `airflow-variables--dq-alert-webhook-u
 
 ### LineageReporter
 
-**Responsibility:** Emits a DQ facet as part of an OpenLineage `COMPLETE` event to the Marquez API. This attaches the DQ run outcome to the dataset in the lineage graph, making it visible in the lineage explorer.
+**Responsibility:** Emits a DQ facet as part of an OpenLineage `COMPLETE` event to the Purview OpenLineage endpoint. This attaches the DQ run outcome to the dataset in the lineage graph, making it visible in the lineage explorer.
 
 **DQ facet structure (OpenLineage `DataQualityAssertionsDatasetFacet`):**
 
@@ -925,9 +925,9 @@ The webhook URL is stored in Key Vault as `airflow-variables--dq-alert-webhook-u
 }
 ```
 
-This facet is attached to the output dataset event for the `validate_dq` job. In Marquez, the dataset node for `curated.orders` shows the DQ assertion results for the latest run and historical pass/fail trend.
+This facet is attached to the output dataset event for the `validate_dq` job. In Purview, the asset node for `curated.orders` shows the DQ assertion results for the latest run and historical pass/fail trend.
 
-The `LineageReporter` uses the `marquez_api` Airflow connection (stored in Key Vault) to reach the Marquez API at `http://marquez-api.lineage.svc:5000` inside the cluster.
+The `LineageReporter` emits events via the `OPENLINEAGE_TRANSPORT` environment variable (configured with `azure_identity` auth), sending to the Purview OpenLineage endpoint. No explicit Airflow connection is needed — authentication uses workload identity.
 
 ---
 
@@ -1125,7 +1125,7 @@ Airflow Task Pod (validate_dq task)
 │  │  ┌──────────────────┐         ┌─────────────────┐   ┌─────────────┐  │   │
 │  │  │ Writes DQRunReport│         │ Sends webhook   │   │ Emits DQ    │  │  │
 │  │  │ to Delta table   │         │ to Teams/Slack  │   │ facet to    │  │   │
-│  │  │ (append mode)    │         │ (CRITICAL +     │   │ Marquez API │  │   │
+│  │  │ (append mode)    │         │ (CRITICAL +     │   │ Purview OL  │  │   │
 │  │  │                  │         │  WARNING only)  │   │             │  │   │
 │  │  └────────┬─────────┘         └────────┬────────┘   └──────┬──────┘  │   │
 │  │           │                            │                    │         │  │
@@ -1137,10 +1137,10 @@ Airflow Task Pod (validate_dq task)
 └─────────┼────────────────────────────────┼────────────────────┼──────────────┘
           │                                │                    │
           ▼                                ▼                    ▼
-  Airflow task FAILED           Teams/Slack webhook       Marquez API
-  downstream: UPSTREAM_FAILED   DQ alert message          DQ facet on
-  AlertReporter already fired   (if CRITICAL/WARNING)     curated.orders
-  serving not updated                                      dataset node
+  Airflow task FAILED           Teams/Slack webhook       Purview OL
+  downstream: UPSTREAM_FAILED   DQ alert message          endpoint
+  AlertReporter already fired   (if CRITICAL/WARNING)     DQ facet on
+  serving not updated                                      curated.orders
 
 
 DATA STORES WRITTEN BY DQ FRAMEWORK

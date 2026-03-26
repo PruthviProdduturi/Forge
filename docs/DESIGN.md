@@ -71,8 +71,8 @@ Infrastructure is Bicep. Platform configuration is Helm. Pipelines are Python DA
 │   Compute Cluster    │    │           Orchestration Cluster              │
 │   (AKS Private)      │    │           (AKS Private)                      │
 │                      │◄───│                                              │
-│  Spark Operator      │    │  Apache Airflow     Marquez (Lineage)        │
-│  Spark Connect*      │    │  DQ Framework       Developer Portal         │
+│  Spark Operator      │    │  Apache Airflow     Developer Portal         │
+│  Spark Connect*      │    │  DQ Framework                                │
 │  Trino               │    │  Azure Monitor Agent (AMA DaemonSet)         │
 │                      │    │                                              │
 │  *dev environment    │    │                                              │
@@ -114,7 +114,7 @@ Each environment (dev, prod) is an independent deployment of the same topology. 
 │  ┌──────────────────────┐       ┌──────────────────────────┐   │
 │  │  Spark Operator      │       │  Airflow                 │   │
 │  │  Spark Connect ◄─────┼───────┼── VS Code (interactive)  │   │
-│  │  Trino               │       │  Marquez / Portal        │   │
+│  │  Trino               │       │  Developer Portal        │   │
 │  └──────────────────────┘       └──────────────────────────┘   │
 │  adlsforgedev  (bronze/silver/gold/sandbox)                     │
 │  forgeacr-dev  kv-forge-dev                                     │
@@ -126,7 +126,7 @@ Each environment (dev, prod) is an independent deployment of the same topology. 
 │  aks-forge-compute-prod         aks-forge-orch-prod            │
 │  ┌──────────────────────┐       ┌──────────────────────────┐   │
 │  │  Spark Operator      │       │  Airflow                 │   │
-│  │  (no Spark Connect)  │       │  Marquez / Portal        │   │
+│  │  (no Spark Connect)  │       │  Developer Portal        │   │
 │  │  Trino               │       │                          │   │
 │  └──────────────────────┘       └──────────────────────────┘   │
 │  adlsforgeprod  (bronze/silver/gold — no sandbox)               │
@@ -150,7 +150,7 @@ The compute cluster provides elastic, scalable execution for batch processing an
 | **Batch (Spark Operator)** | Airflow `SparkKubernetesOperator` | dev + prod | `.builder.appName(...)` |
 
 - Workloads use **workload identity** (managed identity + OIDC) for ADLS and Key Vault access — no credentials in code or config
-- All jobs emit **OpenLineage** START/COMPLETE/FAIL events to Marquez automatically
+- All jobs emit **OpenLineage** START/COMPLETE/FAIL events to Microsoft Purview automatically
 - Spark UI is accessible via port-forward for debugging (not exposed publicly)
 - Node pools: `sparkpool` (memory-optimised, Standard_E8s_v5) autoscales 0→20 on demand
 
@@ -196,11 +196,13 @@ DQOperator
 
 Rules are managed as YAML in Git — the same PR review and CI validation process as code.
 
-### 6.3 Lineage (Marquez / OpenLineage)
+### 6.3 Lineage (OpenLineage / Microsoft Purview)
 
-- OpenLineage events are emitted automatically by Airflow tasks and Spark jobs — no manual instrumentation
-- Marquez stores the full lineage graph: datasets, jobs, runs, column-level flows
-- Impact analysis: "what breaks if I change this source table?" is answerable from the portal
+- OpenLineage events are emitted automatically by Airflow tasks, Spark jobs, and Trino queries — no manual instrumentation for standard pipeline operations
+- Microsoft Purview stores the full lineage graph: upstream source systems → bronze → silver → gold, with dataset versions, column-level flows, and custom facets (DQ summary, compute cost)
+- The full lineage chain from source system (SQL Server, PostgreSQL, REST API) to gold is captured when ingest jobs declare their upstream source as an OpenLineage input — see [Lineage Architecture](architecture/lineage-architecture.md) Section 4 for the upstream source naming convention
+- Impact analysis: "what breaks if I change this source table or column?" is answerable from Purview's lineage graph or the Developer Portal's Lineage Explorer
+- `id-forge-read-{env}` holds **Purview Data Curator** role on the Purview collection, enabling all emitters (Airflow, Spark, Trino pods) to POST lineage events via workload identity
 
 ### 6.4 Observability
 
@@ -321,7 +323,7 @@ SparkKubernetesOperator(
 | Identity | Used by | Permissions |
 |----------|---------|-------------|
 | `id-forge-compute-{env}` | Spark Operator pods | Storage Blob **Data Contributor** (bronze, silver, gold, code, checkpoints) · KV Secrets User |
-| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ, Marquez | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader |
+| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader · **Purview Data Curator** (Purview collection) |
 | `id-forge-build-{env}` | CI/CD pipeline | AcrPush + AcrPull **only** — zero data access |
 
 → Full detail: [Security (S360)](architecture/security-s360.md)
@@ -374,7 +376,7 @@ feature/my-pipeline
 | **0 — Design & Foundations** | Final architecture, naming, DNS, repo structure, standards | 1–2 weeks |
 | **1 — Networking & Clusters** | VNets, private endpoints, ACR, AKS clusters (both envs) | 2 weeks |
 | **2 — Compute Services** | Spark Operator, Spark Connect, Trino deployed to dev → prod | 3 weeks |
-| **3 — Orchestration Services** | Airflow, Marquez, Azure Monitor, Developer Portal to dev → prod | 3 weeks |
+| **3 — Orchestration Services** | Airflow, Purview OpenLineage integration, Azure Monitor, Developer Portal to dev → prod | 3 weeks |
 | **4 — Data Quality & Lineage** | DQ framework, OpenLineage integration, dashboards | 3–4 weeks |
 | **5 — Hardening & Rollout** | Security review, cost guardrails, runbooks, onboarding docs | 2 weeks |
 
@@ -391,7 +393,7 @@ feature/my-pipeline
 | Airflow executor, DAG patterns, operators | [Orchestration Architecture](architecture/orchestration-architecture.md) |
 | Bronze/silver/gold layers, partitioning, trackers | [Storage Architecture](architecture/storage-architecture.md) |
 | DQ rule types, YAML format, severity gating | [DQ Framework](architecture/dq-framework.md) |
-| OpenLineage, Marquez, column-level lineage | [Lineage Architecture](architecture/lineage-architecture.md) |
+| OpenLineage, Microsoft Purview, column-level lineage | [Lineage Architecture](architecture/lineage-architecture.md) |
 | Azure Monitor, Grafana, Log Analytics, SLOs | [Observability Architecture](architecture/observability-architecture.md) |
 | VNets, private endpoints, Calico, DNS | [Networking Architecture](architecture/networking-architecture.md) |
 | Workload identity, Key Vault, RBAC, S360 | [Security (S360)](architecture/security-s360.md) |

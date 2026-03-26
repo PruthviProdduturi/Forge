@@ -61,12 +61,12 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 │   (AKS Private)     │    │            (AKS Private)                    │
 │                     │    │                                             │
 │  ┌───────────────┐  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
-│  │ Spark Operator│  │    │  │ Airflow  │ │ Marquez  │ │  Azure     │   │
-│  │ Spark Connect │  │    │  │ (Sched.) │ │(Lineage) │ │  Monitor   │   │
+│  │ Spark Operator│  │    │  │ Airflow  │ │Developer │ │  Azure     │   │
+│  │ Spark Connect │  │    │  │ (Sched.) │ │  Portal  │ │  Monitor   │   │
 │  │ Trino         │  │    │  └──────────┘ └──────────┘ └────────────┘   │
 │  └───────────────┘  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
-└─────────────────────┘    │  │  DQ      │ │  Log     │ │  Portal    │  │
-          │                │  │ Framework│ │ Analytics│ │  Backend   │  │
+└─────────────────────┘    │  │  DQ      │ │  Log     │ │            │  │
+          │                │  │ Framework│ │ Analytics│ │            │  │
           │                │  └──────────┘ └──────────┘ └────────────┘  │
           │                └─────────────────────────────────────────────┘
           │                              │
@@ -83,10 +83,10 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
           │
           ▼
 ┌────────────────────────────────┐
-│    Shared Azure Resources      │
-│  Key Vault │ ACR │ Monitor     │
-│  Private DNS │ Log Analytics   │
-└────────────────────────────────┘
+│    Shared Azure Resources                        │
+│  Key Vault │ ACR │ Monitor                       │
+│  Private DNS │ Log Analytics │ Microsoft Purview  │
+└───────────────────────────────────────────────────┘
 ```
 
 ---
@@ -101,7 +101,7 @@ A single AKS cluster mixing compute and orchestration creates hidden coupling:
 - A Spark upgrade requiring node pool changes shouldn't require an Airflow maintenance window
 - Security posture differs: compute workers need broad storage access; orchestration workers need narrow API credentials
 
-Forge uses two dedicated private AKS clusters with separate node pools, separate managed identities, and no direct network path between them — all coordination happens through the shared lakehouse and shared Marquez API.
+Forge uses two dedicated private AKS clusters with separate node pools, separate managed identities, and no direct network path between them — all coordination happens through the shared lakehouse and shared Azure services.
 
 ### Cluster Specifications
 
@@ -127,7 +127,7 @@ Intentionally small — runs steady-state services only (no burst workloads).
 | Node Pool | VM SKU | Dev Min/Max | Prod Min/Max | Purpose |
 |-----------|--------|-------------|--------------|---------|
 | `systempool` | Standard_D4s_v5 | 1 / 2 | 2 / 4 | Kubernetes system components |
-| `workerpool` | Standard_D4s_v5 | 1 / 4 | 2 / 10 | Airflow, Marquez, Portal, statsd-exporter |
+| `workerpool` | Standard_D4s_v5 | 1 / 4 | 2 / 10 | Airflow, Portal, statsd-exporter |
 
 - Azure CNI Overlay networking
 - Workload identity (OIDC) enabled
@@ -144,8 +144,8 @@ Compute Cluster                     Orchestration Cluster
       │  writes results to ADLS gold/     │
       ├──────────────────────────────────────▶ ADLS Gen2
       │                                      │
-      │  emits OpenLineage events to Marquez │
-      ├──────────────────────────────────────▶ Marquez API (via private endpoint)
+      │  emits OpenLineage events to Purview  │
+      ├──────────────────────────────────────▶ Purview OpenLineage endpoint (via private endpoint)
       │                                      │
       │  Airflow submits SparkApplication CRD│
       ◀────────────────────────────────────── kubectl (via AKS private API)
@@ -368,7 +368,7 @@ Task Pod (ephemeral, per-task)
     └── EmptyOperator           → dependency gates
     │
     ▼
-Results written to ADLS / Marquez / DQ store
+Results written to ADLS / Purview (lineage) / DQ store
 ```
 
 #### DAG Structure
@@ -423,7 +423,7 @@ The DQ framework is a Python SDK (`forge.dq`) that runs inside Airflow task pods
 │                           │  Reporters                    │ │
 │                           │  • StoreReporter → ADLS Delta │ │
 │                           │  • AlertReporter → Webhook    │ │
-│                           │  • LineageReporter → Marquez  │ │
+│                           │  • LineageReporter → Purview  │ │
 │                           └───────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -472,7 +472,7 @@ Partitioned by `(dataset_namespace, run_ts_date)`.
 
 ### OpenLineage Integration
 
-Every pipeline component emits structured OpenLineage events to Marquez. Events capture:
+Every pipeline component emits structured OpenLineage events to Microsoft Purview. Events capture:
 
 - **Job**: which DAG task / Spark job produced the output
 - **Inputs**: which datasets were read (with schema facet)
@@ -481,21 +481,20 @@ Every pipeline component emits structured OpenLineage events to Marquez. Events 
 - **Custom facets**: DQ summary facet, compute cost facet
 
 ```
-Airflow Task / Spark Job
+Airflow Task / Spark Job / Trino
         │
-        │  OpenLineage events (HTTP/JSON)
+        │  OpenLineage events (HTTPS/JSON)
+        │  Bearer token via Azure Workload Identity
         ▼
-┌──────────────────────────┐
-│  Marquez API Server      │
-│  (orchestration cluster) │
-│                          │
-│  ┌────────────────────┐  │
-│  │  PostgreSQL        │  │
-│  │  (lineage store)   │  │
-│  └────────────────────┘  │
-└──────────────────────────┘
+┌──────────────────────────────────────┐
+│  Microsoft Purview                   │
+│  purview-forge-{env}.purview.azure.com│
+│  OpenLineage REST endpoint           │
+│  (managed service — no self-hosted   │
+│   infra; org-wide license)           │
+└──────────────────────────────────────┘
         │
-        │  GraphQL + REST API
+        │  Data Map API
         ▼
 ┌──────────────────────────┐
 │  Developer Portal        │
@@ -506,28 +505,23 @@ Airflow Task / Spark Job
 ### Lineage Graph Model
 
 ```
-Dataset Node          Job Node           Dataset Node
-(bronze/orders)  ──▶  (transform_orders) ──▶  (silver/orders)
-     │                     │                      │
-  schema facet         run facet              schema facet
-  storage facet        DQ facet               DQ facet
-                        cost facet
+Source System         Ingest Job        Bronze Dataset     Transform Job      Silver/Gold Dataset
+(mssql://crm-server) ──▶ (ingest_raw) ──▶ (bronze/orders) ──▶ (transform)   ──▶ (silver/orders)
+     │                        │                 │                   │                   │
+  upstream                 run facet         schema facet        run facet          schema facet
+  source node              nominalTime       storage facet       DQ facet           DQ facet
+                           parent facet                          cost facet
 ```
 
 ### Column-Level Lineage
 
 For Spark jobs, column-level lineage is extracted via the OpenLineage Spark integration which instruments the Spark logical plan. For SQL (Trino), lineage is extracted from the query AST.
 
-Column lineage is surfaced in the Developer Portal for impact analysis: "if I change this column, which downstream datasets and dashboards are affected?"
+Column lineage is surfaced in the Developer Portal and in Purview for impact analysis: "if I change this column, which downstream datasets and dashboards are affected?"
 
-### Marquez Deployment
+### Purview as Lineage Backend
 
-Marquez runs as two pods in the `lineage` namespace on the orchestration cluster:
-
-- `marquez-api` — REST + GraphQL API, stores events to PostgreSQL
-- `marquez-web` — React UI for lineage graph exploration (internal access only)
-
-PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpoint).
+Microsoft Purview stores the full lineage graph as a managed service — no self-hosted backend, no PostgreSQL to operate. OpenLineage events are emitted automatically by Airflow tasks and Spark jobs — no manual instrumentation. Purview stores the full lineage graph: upstream source systems → bronze → silver → gold, with column-level flows and custom facets (DQ summary, compute cost).
 
 ---
 
@@ -559,7 +553,7 @@ PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpo
 | Airflow | `airflow_dag_run_duration`, `airflow_task_instance_state`, `airflow_scheduler_heartbeat` |
 | Spark Operator | `spark_app_count`, `spark_app_duration`, executor counts, GC pause |
 | Trino | query count, query duration p50/p95/p99, failed queries, memory usage |
-| Marquez | event ingestion rate, API latency |
+| Microsoft Purview | OpenLineage event delivery success rate |
 | Azure Monitor Agent (AMA) | CPU, memory, disk IO per node pool |
 | Kubernetes | pod restarts, PVC usage, HPA scaling events |
 | Azure Monitor | AKS control plane logs, ADLS capacity, Key Vault operations |
@@ -572,7 +566,7 @@ PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpo
 | Spark Cluster | Job throughput, executor utilization, shuffle IO, GC |
 | Trino Cluster | Query volume, latency distribution, failed queries, cache hit rate |
 | Airflow Health | Task success/failure rate, scheduler lag, SLA misses |
-| Lineage Activity | OpenLineage event rate, Marquez API latency |
+| Lineage Activity | OpenLineage event delivery rate, Purview event ingestion |
 | Cost Tracking | Compute cost by pipeline, by cluster, projected vs actual |
 
 ### SLOs
@@ -612,7 +606,7 @@ Three identities per environment, each with a distinct blast radius:
 | Identity | Used by | Permissions |
 |----------|---------|-------------|
 | `id-forge-compute-{env}` | Spark Operator pods | Storage Blob **Data Contributor** (bronze, silver, gold, code, checkpoints) · KV Secrets User |
-| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ, Marquez | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader |
+| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader · **Purview Data Curator** (Purview collection) |
 | `id-forge-build-{env}` | CI/CD pipeline (image build + push) | AcrPush + AcrPull **only** — zero data access |
 
 A compromised Trino worker (read path) cannot overwrite data. A compromised build pipeline cannot read your data. Spark (write path) is isolated from the image registry.
@@ -674,6 +668,7 @@ Non-overlapping `/12` blocks allow both VNets to peer to a corporate hub (Expres
 | `privatelink.azurecr.io` | Container Registry |
 | `privatelink.postgres.database.azure.com` | PostgreSQL |
 | `privatelink.monitor.azure.com` | Azure Monitor |
+| `privatelink.purview.azure.com` | Microsoft Purview |
 
 All private DNS zones linked to the VNet — no public DNS for any data plane resource.
 
@@ -714,11 +709,11 @@ Next.js Frontend (portal-web pod)
   ▼
 FastAPI Backend (portal-api pod)
   │
-  ├── Airflow REST API        — pipeline status, run history, task logs
-  ├── Marquez REST API        — lineage graph, dataset versions
-  ├── DQ Delta Table (Trino)  — DQ results, trends, failing rules
-  ├── Azure Cost Management   — compute cost by pipeline
-  └── ADLS catalog (Delta)    — dataset list, schema, partitions
+  ├── Airflow REST API          — pipeline status, run history, task logs
+  ├── Purview Data Map API     — lineage graph, dataset versions, column lineage
+  ├── DQ Delta Table (Trino)   — DQ results, trends, failing rules
+  ├── Azure Cost Management    — compute cost by pipeline
+  └── ADLS catalog (Delta)     — dataset list, schema, partitions
 ```
 
 ### Pages
@@ -760,7 +755,7 @@ silver/ container (ADLS Gen2)
         │     • DQRunner loads YAML ruleset
         │     • Runs schema/content/volume/freshness checks
         │     • Writes DQRunReport to _platform/dq_results/
-        │     • Emits DQ facet to Marquez
+        │     • Emits DQ facet to Purview (via OpenLineage)
         │     • Blocks on CRITICAL failures
         ▼
 DQ gate (pass/fail)
@@ -829,10 +824,10 @@ gold/ container (ADLS Gen2)
 
 ---
 
-### ADR-005: OpenLineage + Marquez over proprietary lineage
+### ADR-005: OpenLineage + Microsoft Purview over self-hosted lineage backend
 
-**Decision:** OpenLineage protocol with Marquez as the lineage backend.
+**Decision:** OpenLineage emission protocol with Microsoft Purview as the lineage backend.
 
-**Context:** OpenLineage is the open standard for lineage metadata. It integrates natively with Airflow, Spark, and Trino. Marquez is the reference implementation of the OpenLineage API and is open source.
+**Context:** OpenLineage is the open standard for lineage metadata. It integrates natively with Airflow, Spark, and Trino. Microsoft Purview supports the OpenLineage REST endpoint directly. Purview is licensed org-wide and provides an enterprise catalog (lineage, data discovery, glossary, sensitivity labels) alongside the lineage graph — removing the need to self-host and operate a dedicated lineage backend.
 
-**Consequences:** Marquez has a smaller feature set than commercial lineage tools (no ML lineage, limited business glossary). Acceptable as a starting point; the OpenLineage standard allows migration to a different backend later without changing emitters.
+**Consequences:** Emitters (Airflow, Spark, Trino) are unchanged — they emit the same OpenLineage events. Only the transport destination changes from a self-hosted endpoint to the Purview managed service. The OpenLineage standard ensures the emitters remain backend-portable if the lineage backend changes in future.

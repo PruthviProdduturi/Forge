@@ -184,7 +184,7 @@ Version token: simple monotonic integer string — `v1`, `v2`, `v3` (no gaps, no
 | Storage path | `/<asset>/v<N>/delta/...` |
 | Asset name | `<asset_name>_v<N>` (e.g. `sales_orders_v1`) |
 | Data catalog | Version field on the asset registration |
-| Lineage | Marquez dataset name includes version |
+| Lineage | Purview asset name includes version |
 
 ### 3.2 When to Create a New Version
 

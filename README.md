@@ -41,7 +41,7 @@ Forge is the core data engineering platform that handles everything from raw ing
 │  │                  │   │                              │    │
 │  │  • Apache Spark  │   │  • Apache Airflow            │    │
 │  │  • Spark Connect │   │  • Data Quality Framework    │    │
-│  │  • Trino         │   │  • OpenLineage / Marquez     │    │
+│  │  • Trino         │   │  • OpenLineage / Purview      │    │
 │  └──────────────────┘   │  • Observability Stack       │    │
 │           │             │  • Developer Portal          │    │
 │           ▼             └──────────────────────────────┘    │
@@ -73,7 +73,7 @@ Forge separates **compute** from **orchestration** into two independent AKS clus
 | Cluster | Purpose | Key Components |
 |---------|---------|----------------|
 | `forge-compute` | Run Spark jobs and Trino queries | Spark Operator, Spark Connect, Trino |
-| `forge-orchestration` | Schedule, validate, observe | Airflow, Marquez, Azure Monitor Agent |
+| `forge-orchestration` | Schedule, validate, observe | Airflow, Microsoft Purview (OpenLineage), Azure Monitor Agent |
 
 ### Lakehouse Zones
 
@@ -121,7 +121,6 @@ helm upgrade --install trino infra/helm/compute/trino -n trino --create-namespac
 ```bash
 kubectl config use-context forge-orchestration-dev
 helm upgrade --install airflow infra/helm/orchestration/airflow -n airflow --create-namespace
-helm upgrade --install marquez infra/helm/orchestration/marquez -n lineage --create-namespace
 helm upgrade --install observability infra/helm/orchestration/observability -n monitoring --create-namespace
 ```
 
@@ -155,7 +154,7 @@ df.show()
 | Component | Version | Namespace |
 |-----------|---------|-----------|
 | Apache Airflow | 3.1.x | `airflow` |
-| Marquez (OpenLineage) | 0.47.x | `lineage` |
+| Microsoft Purview | Managed service (org-wide license) | Azure-hosted |
 | Azure Monitor / Container Insights | AKS add-on (managed) | `kube-system` (AMA DaemonSet) |
 | Azure Managed Grafana | Azure-native service | Azure-hosted |
 | Azure Log Analytics Workspace | Azure-native service | Azure-hosted |

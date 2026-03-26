@@ -38,7 +38,7 @@ Pod (annotated SA)  →  OIDC token  →  Azure AD  →  short-lived access toke
 | Workload Identity | Used by | Permissions |
 |-------------------|---------|-------------|
 | `id-forge-compute-{env}` | Spark Operator pods | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoints) · KV Secrets User |
-| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ, Marquez | Storage Blob Data Reader (silver/gold only) · KV Secrets User · Cost Management Reader |
+| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ | Storage Blob Data Reader (silver/gold only) · KV Secrets User · Cost Management Reader · **Purview Data Curator** (Purview collection — enables OpenLineage event emission) |
 | `id-forge-build-{env}` | CI/CD pipeline | AcrPush + AcrPull only — no storage or KV access |
 
 Each identity has a distinct blast radius. A compromised read-path workload cannot write data or push images. The build identity has zero access to data or secrets.
@@ -102,7 +102,7 @@ Calico network policies enforce pod-to-pod traffic rules within each cluster —
 
 | Secret | Consumer |
 |--------|----------|
-| PostgreSQL passwords (Airflow, Marquez metadata DBs) | Airflow, Marquez |
+| PostgreSQL password (Airflow metadata DB) | Airflow |
 | Compute cluster kubeconfig | Airflow (SparkKubernetesOperator) |
 | OIDC client secrets (Airflow webserver, Portal) | respective pods |
 | Alerting webhook URLs (Teams, PagerDuty) | Azure Monitor Action Groups, Airflow callbacks |
@@ -163,7 +163,7 @@ Calico network policies enforce pod-to-pod traffic rules within each cluster —
 | Key Vault operations | KV audit logs (every secret access) | Log Analytics | 1 year |
 | Airflow | DAG run / task instance audit log | ADLS + Log Analytics | 1 year |
 | DQ framework | DQ run reports (Delta table) | ADLS Silver layer | Unlimited |
-| OpenLineage events | Marquez event store (PostgreSQL) | PostgreSQL + ADLS | 1 year |
+| OpenLineage events | Microsoft Purview (managed service) | Purview + ADLS archive | 1 year active, 2 years archive |
 | Portal access | FastAPI structured access log | Log Analytics | 90 days |
 
 All logs in Log Analytics are **immutable** (append-only, cannot be modified or deleted by application credentials).

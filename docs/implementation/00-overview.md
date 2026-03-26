@@ -20,7 +20,7 @@ Step 03 — Cluster Setup (Bicep + bootstrap)
   ↓  (Clusters must be running before Helm deployments)
 Step 04 — Deploy Compute Cluster (Spark + Trino)
   ↓  (Compute cluster must accept SparkApplications before Airflow can submit jobs)
-Step 05 — Deploy Orchestration Cluster (Airflow + Marquez + Observability + Portal)
+Step 05 — Deploy Orchestration Cluster (Airflow + Purview OpenLineage Integration + Observability + Portal)
   ↓  (Full platform operational)
 Step 06 — CI/CD Pipeline
 ```
@@ -35,7 +35,7 @@ Step 06 — CI/CD Pipeline
 | 02 | [02-image-builds.md](./02-image-builds.md) | Build custom images (Spark, Trino, Airflow, Portal), import third-party images, push all to ACR |
 | 03 | [03-cluster-setup.md](./03-cluster-setup.md) | Bicep provisioning, AKS bootstrap (both clusters), workload identity, CSI secrets, namespaces |
 | 04 | [04-deploy-compute.md](./04-deploy-compute.md) | Helm deploy Spark Operator, Spark Connect, Trino, Hive Metastore |
-| 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, Marquez, verify Container Insights / Azure Managed Grafana, Portal |
+| 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, configure Purview OpenLineage integration, verify Container Insights / Azure Managed Grafana, Portal |
 | 06 | [06-cicd.md](./06-cicd.md) | Azure DevOps pipeline definitions for infrastructure and application deployments, with promotion gates |
 
 ---

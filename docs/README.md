@@ -34,7 +34,7 @@ Step-by-step guides for building and deploying the platform. Follow in order.
 | 2 | [`02-image-builds.md`](./implementation/02-image-builds.md) | Build all custom images (Spark 4.1, Trino, Airflow, Portal), import third-party images, push to ACR |
 | 3 | [`03-cluster-setup.md`](./implementation/03-cluster-setup.md) | Bicep provisioning + AKS bootstrap (both clusters), workload identity, CSI secrets, namespaces |
 | 4 | [`04-deploy-compute.md`](./implementation/04-deploy-compute.md) | Deploy Hive Metastore, Spark Operator, Spark Connect, Trino |
-| 5 | [`05-deploy-orchestration.md`](./implementation/05-deploy-orchestration.md) | Deploy Airflow, Marquez, verify Container Insights / Azure Managed Grafana, Developer Portal |
+| 5 | [`05-deploy-orchestration.md`](./implementation/05-deploy-orchestration.md) | Deploy Airflow, configure Purview OpenLineage integration, verify Container Insights / Azure Managed Grafana, Developer Portal |
 | — | [`components-versions.md`](./implementation/components-versions.md) | Full version matrix, ACR strategy, custom image contents, upgrade policy |
 
 ---

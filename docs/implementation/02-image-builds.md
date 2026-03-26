@@ -127,7 +127,7 @@ All images in ACR use the following tag scheme:
 forgeacr-prod.azurecr.io/spark:4.1.0-prod
 forgeacr-dev.azurecr.io/airflow:3.1.0-dev
 forgeacr-prod.azurecr.io/portal-api:a3f92c1-prod
-forgeacr-dev.azurecr.io/marquez-api:0.47.0-dev
+forgeacr-dev.azurecr.io/portal-api:a3f92c1-dev
 ```
 
 For first-party images (`portal-api`, `portal-web`) where there is no upstream version, the tag is the **short Git SHA** of the commit being built. The CI pipeline sets this from `$(Build.SourceVersion)` (Azure DevOps) or `${{ github.sha }}` (GitHub Actions).
@@ -283,13 +283,13 @@ Data source connections (Azure Monitor, Log Analytics, Application Insights) are
 
 ### 4.5 portal-api
 
-**Purpose:** FastAPI backend for the Forge Developer Portal. Aggregates data from Airflow, Marquez, Trino (DQ store), Azure Cost Management, and ADLS catalog. Runs on the `platform` node pool.
+**Purpose:** FastAPI backend for the Forge Developer Portal. Aggregates data from Airflow, Purview (lineage), Trino (DQ store), Azure Cost Management, and ADLS catalog. Runs on the `platform` node pool.
 
 **What is included:**
 - `mcr.microsoft.com/cbl-mariner/base/python:3.11` base (Azure-hosted, no public registry dependency)
 - FastAPI + uvicorn server
 - `azure-identity` for workload identity credential
-- Airflow REST API client, Marquez HTTP client, Trino Python driver
+- Airflow REST API client, Purview SDK (`azure-purview-catalog`), Trino Python driver
 - All source code from `portal/api/` copied in at build time
 
 **Tag scheme:** Uses Git SHA — no upstream version number applies.
@@ -374,8 +374,6 @@ docker push "${REGISTRY}/trino:438-${ENV}"
 | Image | Upstream Source | ACR Tag |
 |-------|----------------|---------|
 | `hive-metastore:3.1.3` | `apache/hive:3.1.3` | `forgeacr/hive-metastore:3.1.3-{env}` |
-| `marquez-api:0.47.0` | `marquezproject/marquez:0.47.0` | `forgeacr/marquez-api:0.47.0-{env}` |
-| `marquez-web:0.47.0` | `marquezproject/marquez-web:0.47.0` | `forgeacr/marquez-web:0.47.0-{env}` |
 | `statsd-exporter:0.26.1` | `prom/statsd-exporter:v0.26.1` | `forgeacr/statsd-exporter:0.26.1-{env}` |
 | `spark-operator:1.4.6` | `ghcr.io/kubeflow/spark-operator:v1.4.6` | `forgeacr/spark-operator:1.4.6-{env}` |
 | `gatekeeper:3.16.3` | `openpolicyagent/gatekeeper:v3.16.3` | `forgeacr/gatekeeper:3.16.3-{env}` |
@@ -402,16 +400,14 @@ az acr login --name forgeacr-dev
 helm pull spark-operator/spark-operator --version 1.4.6 --repo https://kubeflow.github.io/spark-operator
 helm pull trino/trino              --version 0.31.0 --repo https://trinodb.github.io/charts
 helm pull apache-airflow/airflow   --version 1.15.0 --repo https://airflow.apache.org
-helm pull marquez/marquez          --version 0.47.0 --repo https://marquezproject.github.io/marquez
 
 # 2. Push each chart to ACR as an OCI artifact
 helm push spark-operator-1.4.6.tgz  oci://${REGISTRY}/helm
 helm push trino-0.31.0.tgz          oci://${REGISTRY}/helm
 helm push airflow-1.15.0.tgz        oci://${REGISTRY}/helm
-helm push marquez-0.47.0.tgz        oci://${REGISTRY}/helm
 
 # 3. Clean up local tarballs
-rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz marquez-*.tgz
+rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
 ```
 
 ### Helm chart version matrix
@@ -421,9 +417,10 @@ rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz marquez-*.tgz
 | `spark-operator` | 1.4.6 | Spark Operator 1.4.6 | `oci://forgeacr-{env}.azurecr.io/helm/spark-operator:1.4.6` |
 | `trino` | 0.31.0 | Trino 438 | `oci://forgeacr-{env}.azurecr.io/helm/trino:0.31.0` |
 | `airflow` | 1.15.0 | Airflow 3.1.0 | `oci://forgeacr-{env}.azurecr.io/helm/airflow:1.15.0` |
-| `marquez` | 0.47.0 | Marquez 0.47.0 | `oci://forgeacr-{env}.azurecr.io/helm/marquez:0.47.0` |
 
-The `build-and-push-images.sh` script includes a `--charts-only` flag that runs the chart import loop for all four charts.
+Note: Microsoft Purview is a managed Azure service — no Helm chart is required.
+
+The `build-and-push-images.sh` script includes a `--charts-only` flag that runs the chart import loop for all three charts.
 
 ---
 

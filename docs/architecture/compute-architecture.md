@@ -515,9 +515,10 @@ spark.dynamicAllocation.shuffleTracking.enabled       false
 # ── OpenLineage ──────────────────────────────────────────────────────────────
 spark.extraListeners                                  io.openlineage.spark.agent.OpenLineageSparkListener
 spark.openlineage.transport.type                      http
-spark.openlineage.transport.url                       http://marquez-api.lineage.svc.cluster.local:5000
-spark.openlineage.transport.endpoint                  /api/v1/lineage
-spark.openlineage.namespace                           forge-prod
+spark.openlineage.transport.url                       https://purview-forge-${FORGE_ENV}.purview.azure.com/dataMap/openlineage/namespaces/forge-${FORGE_ENV}/events
+spark.openlineage.transport.auth.type                 azure_identity
+spark.openlineage.transport.timeoutInMillis           10000
+spark.openlineage.namespace                           forge-${FORGE_ENV}
 
 # ── History Server ───────────────────────────────────────────────────────────
 spark.eventLog.enabled                                true
@@ -1048,7 +1049,7 @@ Trino or Spark reads data directly from ADLS Gen2
 
 ### Overview
 
-Forge tracks the estimated cost of every compute job and attaches that estimate as a custom OpenLineage facet to the job's run event in Marquez. This enables per-pipeline cost trending in the Developer Portal without requiring Azure Cost Management API calls for individual job attribution.
+Forge tracks the estimated cost of every compute job and attaches that estimate as a custom OpenLineage facet to the job's run event in Microsoft Purview. This enables per-pipeline cost trending in the Developer Portal without requiring Azure Cost Management API calls for individual job attribution.
 
 ### Cost Calculation
 
@@ -1118,7 +1119,7 @@ The cost estimate is attached to the OpenLineage job run event as a custom facet
 }
 ```
 
-This facet is stored by Marquez alongside all other run facets in PostgreSQL. The Developer Portal's Cost page queries Marquez's REST API to retrieve `computeCost` facets, aggregates them by pipeline and time window, and displays cost trends.
+This facet is stored by Microsoft Purview alongside all other run facets in the lineage graph. The Developer Portal's Cost page queries the Purview Data Map API to retrieve `computeCost` facets, aggregates them by pipeline and time window, and displays cost trends.
 
 **For Trino queries**, cost is estimated differently — using query execution time × coordinator/worker count × VM SKU price, retrieved from the Trino query completion event in the OpenLineage Trino plugin. Trino cost facets are less precise than Spark (no per-query executor allocation tracking), but provide order-of-magnitude cost attribution.
 
@@ -1222,9 +1223,9 @@ Cross-cluster communication (Orchestration → Compute):
         ▼
   Driver + Executor pods (spark-jobs namespace)
                                                                                    │
-        │  OpenLineage events (HTTP POST)
+        │  OpenLineage events (HTTPS POST, azure_identity auth)
         ▼
-  Marquez API (orchestration cluster, via private endpoint)
+  Microsoft Purview OpenLineage endpoint (via private endpoint)
 ```
 
 **Key network paths:**
@@ -1236,6 +1237,6 @@ Cross-cluster communication (Orchestration → Compute):
 | Airflow → Compute API | HTTPS | Orchestration cluster | Compute AKS API server (private endpoint) |
 | Spark → ADLS | HTTPS (ABFS) | Compute cluster | ADLS private endpoint 10.3.x.x |
 | Trino → ADLS | HTTPS (ABFS) | Compute cluster | ADLS private endpoint 10.3.x.x |
-| Spark/Trino → Marquez | HTTP | Compute cluster | Orchestration cluster Marquez svc (cross-VNet, private) |
+| Spark/Trino → Purview | HTTPS | Compute cluster | Purview OpenLineage private endpoint (10.3.x.x) |
 | Spark → HMS | Thrift | spark-jobs namespace | hive-metastore.trino.svc:9083 (in-cluster) |
 | Trino → HMS | Thrift | trino namespace | hive-metastore.trino.svc:9083 (in-cluster) |

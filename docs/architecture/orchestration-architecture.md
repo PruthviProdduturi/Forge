@@ -254,7 +254,7 @@ rules:
 
 Calico network policies restrict traffic within the `airflow` namespace:
 
-- Task pods: egress allowed to the compute cluster AKS API server (for SparkKubernetesOperator), to the Marquez API, to PostgreSQL (metadata DB), and to ADLS (via private endpoint). No other egress.
+- Task pods: egress allowed to the compute cluster AKS API server (for SparkKubernetesOperator), to the Purview OpenLineage endpoint (via private endpoint), to PostgreSQL (metadata DB), and to ADLS (via private endpoint). No other egress.
 - Scheduler: egress to Kubernetes API server, PostgreSQL, and Key Vault only.
 - Webserver: ingress from the ingress controller; egress to PostgreSQL and the scheduler's internal port.
 
@@ -596,7 +596,7 @@ For long-running Trino queries, the Forge TrinoOperator uses the Triggerer (defe
 - Loading DQ rulesets and running the `DQRunner` (which may internally issue Trino queries for content checks or read Delta metadata for volume/freshness checks — all via lightweight HTTP/ADLS calls, not Spark)
 - Updating the metadata catalog table after a successful pipeline run (writing schema, row count, last-refreshed timestamp)
 - Computing the incremental watermark from the DQ results store and writing it to XCom for the downstream transform task to consume
-- Calling the Marquez API to register a new dataset or annotate a run with custom facets
+- Declaring upstream source datasets for ingest jobs using the `forge-lineage` SDK (see [Lineage Architecture](lineage-architecture.md) Section 4)
 
 ### EmailOperator
 
@@ -659,7 +659,7 @@ All connection secrets follow the pattern `airflow-connections--<conn_id>` where
 | `compute_cluster_k8s` | `airflow-connections--compute-cluster-k8s` | kubeconfig JSON for `forge-compute` AKS cluster |
 | `trino_default` | `airflow-connections--trino-default` | Trino HTTPS endpoint, JWT auth |
 | `smtp_default` | `airflow-connections--smtp-default` | SMTP relay host, port, credentials |
-| `marquez_api` | `airflow-connections--marquez-api` | Marquez API base URL, auth token |
+| `adls_default` (lineage via workload identity) | — | OpenLineage transport uses `azure_identity` auth; no explicit Airflow connection needed |
 | `adls_default` | `airflow-connections--adls-default` | ADLS account URL (workload identity; no key) |
 | `source_crm_db` | `airflow-connections--source-crm-db` | CRM database JDBC URL, credentials |
 
@@ -668,7 +668,7 @@ All connection secrets follow the pattern `airflow-connections--<conn_id>` where
 Airflow Variables (non-secret configuration values) are also stored in Key Vault under the `airflow-variables` prefix. Example:
 
 - `airflow-variables--adls-account-name` → `forgedevacc`
-- `airflow-variables--marquez-namespace` → `forge-prod`
+- `airflow-variables--openlineage-namespace` → `forge-prod`
 - `airflow-variables--dq-results-table` → `abfss://silver@forgedevacc.dfs.core.windows.net/_platform/dq_results/`
 
 ---
@@ -972,7 +972,7 @@ The Azure Managed Grafana "Airflow Health" dashboard includes a pre-built log pa
                     │                         │
     kubectl apply   │              ┌───────────┘
     SparkApp CRD    │              │  Trino SQL (HTTP)
-                    │              │  Marquez API (HTTP)
+                    │              │  Purview OpenLineage endpoint (HTTPS, workload identity)
                     │              │  ADLS (HTTPS, workload identity)
                     ▼              ▼
 ╔══════════════════════════════════════════════════════════════════════════════════╗
@@ -1014,9 +1014,9 @@ The Azure Managed Grafana "Airflow Health" dashboard includes a pre-built log pa
 ║  └──────────────────────────┘   ┌──────────────────────────┐                   ║
 ║                                  │  Azure Log Analytics      │                   ║
 ║  ┌──────────────────────────┐   │  pod log aggregation      │                   ║
-║  │  Marquez API             │   │  configurable retention   │                   ║
-║  │  (lineage ns)            │   └──────────────────────────┘                   ║
-║  │  OpenLineage events      │                                                   ║
+║  │  Microsoft Purview        │   │  configurable retention   │                   ║
+║  │  (managed service)        │   └──────────────────────────┘                   ║
+║  │  OpenLineage endpoint     │                                                   ║
 ║  └──────────────────────────┘                                                   ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 
@@ -1046,7 +1046,7 @@ Scheduler creates Task Pod via Kubernetes API
           │       │  SparkApp reaches Completed
           │       │  Triggerer re-queues task
           │       │  new task pod starts, marks task SUCCESS
-          │       │  OpenLineage COMPLETE event → Marquez
+          │       │  OpenLineage COMPLETE event → Purview
           │       ▼
           │   Task state: SUCCESS in PostgreSQL
           │
@@ -1054,7 +1054,7 @@ Scheduler creates Task Pod via Kubernetes API
           │       │  loads YAML ruleset from ADLS
           │       │  runs checks (Trino SQL + Delta metadata)
           │       │  writes DQRunReport to _platform/dq_results/ Delta table
-          │       │  emits DQ facet to Marquez
+          │       │  emits DQ facet to Purview (via OpenLineage)
           │       │  if CRITICAL failure → raises exception → task FAILED
           │       │  Airflow marks downstream tasks UPSTREAM_FAILED
           │       │  AlertReporter posts webhook to Teams
