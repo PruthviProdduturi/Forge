@@ -21,7 +21,7 @@ The compute cluster hosts Spark (Operator + Connect server) and Trino. This step
 Set your kubectl context before running any command in this step:
 ```bash
 az aks get-credentials \
-  --resource-group rg-forge-{env} \
+  --resource-group rg-forge-compute-{env} \
   --name aks-forge-compute-{env} \
   --overwrite-existing
 

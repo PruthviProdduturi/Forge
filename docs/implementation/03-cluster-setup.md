@@ -1128,17 +1128,17 @@ The Container Insights add-on installs the Azure Monitor Agent (AMA) as a Daemon
 ```bash
 # Enable Container Insights on the orchestration cluster
 az aks enable-addons \
-  --resource-group rg-forge-prod \
+  --resource-group rg-forge-compute-prod \
   --name aks-forge-orch-prod \
   --addons monitoring \
-  --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
+  --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
 
 # Enable Container Insights on the compute cluster
 az aks enable-addons \
-  --resource-group rg-forge-prod \
+  --resource-group rg-forge-compute-prod \
   --name aks-forge-compute-prod \
   --addons monitoring \
-  --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
+  --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
 ```
 
 Configure the AMA to scrape custom Prometheus-compatible `/metrics` endpoints (Spark, Trino, Airflow, Portal) via a ConfigMap:
@@ -1176,7 +1176,7 @@ kubectl get pods -n kube-system -l component=ama-metrics
 
 # Verify metrics are flowing to Azure Monitor
 az monitor metrics list \
-  --resource "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.ContainerService/managedClusters/aks-forge-orch-prod" \
+  --resource "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-compute-prod/providers/Microsoft.ContainerService/managedClusters/aks-forge-orch-prod" \
   --metric "node_cpu_usage_percentage" \
   --output table
 ```
@@ -1196,7 +1196,7 @@ echo "Grafana URL: ${GRAFANA_URL}"
 # Verify the Managed Grafana instance is active
 az grafana show \
   --name grafana-forge-prod \
-  --resource-group rg-forge-prod \
+  --resource-group rg-forge-platform-prod \
   --query "properties.provisioningState" -o tsv
 # Expected: Succeeded
 
@@ -1622,13 +1622,13 @@ Expected: at least one asset entry for the `forge_cross_cluster_test` job visibl
 ```bash
 # Check that Airflow metrics are arriving in Log Analytics
 az monitor log-analytics query \
-  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod" \
+  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod" \
   --analytics-query "InsightsMetrics | where Name startswith 'airflow' | take 5 | project TimeGenerated, Name, Val" \
   --output table
 
 # Check Spark Operator metrics
 az monitor log-analytics query \
-  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod" \
+  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod" \
   --analytics-query "InsightsMetrics | where Name startswith 'spark' | take 5 | project TimeGenerated, Name, Val" \
   --output table
 ```
@@ -1663,7 +1663,7 @@ ContainerLogV2
 
 Expected: recent log lines from the Airflow scheduler. If no logs appear, check:
 - AMA DaemonSet pods are Running on all nodes: `kubectl get pods -n kube-system -l component=ama-logs`
-- Container Insights add-on is enabled: `az aks show --name aks-forge-orch-prod --resource-group rg-forge-prod --query "addonProfiles.omsagent.enabled"`
+- Container Insights add-on is enabled: `az aks show --name aks-forge-orch-prod --resource-group rg-forge-compute-prod --query "addonProfiles.omsagent.enabled"`
 
 ### 5.4 Full Green-Light Checklist
 

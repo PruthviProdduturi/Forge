@@ -266,13 +266,13 @@ Forge uses **Azure Managed Grafana** — no custom container image is built or p
 # Provision dashboards to Azure Managed Grafana (run in CI/CD)
 GRAFANA_URL=$(az grafana show \
   --name grafana-forge-${ENV} \
-  --resource-group rg-forge-${ENV} \
+  --resource-group rg-forge-platform-${ENV} \
   --query "properties.endpoint" -o tsv)
 
 for dashboard_file in infra/grafana/dashboards/*.json; do
   az grafana dashboard create \
     --name grafana-forge-${ENV} \
-    --resource-group rg-forge-${ENV} \
+    --resource-group rg-forge-platform-${ENV} \
     --definition "@${dashboard_file}"
 done
 ```

@@ -23,7 +23,7 @@ The orchestration cluster hosts Airflow, the observability stack, and the Develo
 Set your kubectl context:
 ```bash
 az aks get-credentials \
-  --resource-group rg-forge-{env} \
+  --resource-group rg-forge-compute-{env} \
   --name aks-forge-orch-{env} \
   --overwrite-existing
 
@@ -84,10 +84,10 @@ PURVIEW_ACCOUNT="purview-forge-{env}"
 # Assign Data Curator role via Azure CLI (Purview collection role)
 az purview account add-root-collection-admin \
   --account-name "${PURVIEW_ACCOUNT}" \
-  --resource-group rg-forge-{env} \
+  --resource-group rg-forge-platform-{env} \
   --object-id "$(az identity show \
     --name id-forge-read-{env} \
-    --resource-group rg-forge-{env} \
+    --resource-group rg-forge-platform-{env} \
     --query principalId -o tsv)"
 ```
 
@@ -152,7 +152,7 @@ The Container Insights add-on and Azure Managed Grafana were provisioned in Step
 # Verify Container Insights add-on is enabled on the orchestration cluster
 az aks show \
   --name aks-forge-orch-{env} \
-  --resource-group rg-forge-{env} \
+  --resource-group rg-forge-compute-{env} \
   --query "addonProfiles.omsagent.enabled" -o tsv
 # Expected: true
 
@@ -162,7 +162,7 @@ kubectl get pods -n kube-system -l component=ama-metrics
 
 # Verify metrics are arriving in Log Analytics
 az monitor log-analytics query \
-  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-{env}/providers/Microsoft.OperationalInsights/workspaces/law-forge-{env}" \
+  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-{env}/providers/Microsoft.OperationalInsights/workspaces/law-forge-{env}" \
   --analytics-query "Perf | where ObjectName == 'K8SNode' | take 5" \
   --output table
 # Expected: rows with node performance data
@@ -210,7 +210,7 @@ Airflow needs access to the compute cluster kubeconfig (to submit SparkApplicati
 ```bash
 # Get compute cluster kubeconfig
 az aks get-credentials \
-  --resource-group rg-forge-{env} \
+  --resource-group rg-forge-compute-{env} \
   --name aks-forge-compute-{env} \
   --file /tmp/compute-kubeconfig
 
@@ -225,7 +225,7 @@ rm /tmp/compute-kubeconfig
 
 # Switch back to orchestration cluster context
 az aks get-credentials \
-  --resource-group rg-forge-{env} \
+  --resource-group rg-forge-compute-{env} \
   --name aks-forge-orch-{env} \
   --overwrite-existing
 ```

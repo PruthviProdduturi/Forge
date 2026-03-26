@@ -611,9 +611,9 @@ Planned maintenance windows are managed via Azure Monitor Alert Processing Rules
 # Create a suppression rule for a 2-hour maintenance window
 az monitor alert-processing-rule create \
   --name "suppress-spark-upgrade-2026-03-25" \
-  --resource-group rg-forge-prod \
+  --resource-group rg-forge-platform-prod \
   --rule-type Suppression \
-  --scopes "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod" \
+  --scopes "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod" \
   --filter-alert-context "contains" "Spark" \
   --schedule-start-datetime "2026-03-25T02:00:00" \
   --schedule-end-datetime  "2026-03-25T04:00:00"
