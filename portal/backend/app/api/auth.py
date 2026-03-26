@@ -34,11 +34,19 @@ class ProviderResponse(BaseModel):
 
 @router.get("/provider", response_model=ProviderResponse)
 async def get_provider() -> ProviderResponse:
-    """Return auth provider configuration for the frontend."""
+    """Return auth provider configuration for the frontend.
+
+    Checks platform overrides first (set via /api/platform/auth-config),
+    then falls back to env-var-backed Settings.
+    """
+    from app.api.platform import _overrides  # runtime overrides written by admin UI
+    provider = _overrides.get("auth_provider", settings.auth_provider)
+    client_id = _overrides.get("azure_client_id", settings.azure_client_id) or None
+    tenant_id = _overrides.get("azure_tenant_id", settings.azure_tenant_id) or None
     return ProviderResponse(
-        provider=settings.auth_provider,
-        azure_client_id=settings.azure_client_id or None,
-        azure_tenant_id=settings.azure_tenant_id if settings.auth_provider == "azure_ad" else None,
+        provider=provider,
+        azure_client_id=client_id,
+        azure_tenant_id=tenant_id if provider == "azure_ad" else None,
     )
 
 

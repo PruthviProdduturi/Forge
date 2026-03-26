@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../contexts/ThemeContext";
+import { useAuth } from "../auth/useAuth";
+import { apiFetch } from "../utils/api";
 
 interface PlatformInfo {
   env: string;
@@ -39,11 +41,50 @@ type Tab = "appearance" | "platform";
 
 export function SettingsModal({ onClose, platformInfo }: SettingsModalProps) {
   const { primaryColor, saveTheme } = useTheme();
+  const { getToken, role } = useAuth();
+  const isAdmin = role === "Admin";
   const [tab, setTab] = useState<Tab>("appearance");
   const [localColor, setLocalColor] = useState(primaryColor);
   const [hexInput, setHexInput] = useState(primaryColor);
   const [saving, setSaving] = useState(false);
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  // AAD config form state (Admin only)
+  const [aadProvider, setAadProvider] = useState<"local" | "azure_ad">("local");
+  const [aadClientId, setAadClientId] = useState("");
+  const [aadTenantId, setAadTenantId] = useState("");
+  const [aadSaving, setAadSaving] = useState(false);
+  const [aadMsg, setAadMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [aadLoaded, setAadLoaded] = useState(false);
+
+  // Load current AAD config when Admin opens Platform tab
+  useEffect(() => {
+    if (tab !== "platform" || !isAdmin || aadLoaded) return;
+    apiFetch<{ auth_provider: string; azure_client_id: string; azure_tenant_id: string }>(
+      "/api/platform/auth-config", getToken
+    ).then((d) => {
+      setAadProvider(d.auth_provider as "local" | "azure_ad");
+      setAadClientId(d.azure_client_id ?? "");
+      setAadTenantId(d.azure_tenant_id ?? "");
+      setAadLoaded(true);
+    }).catch(() => setAadLoaded(true));
+  }, [tab, isAdmin, aadLoaded, getToken]);
+
+  const handleSaveAad = useCallback(async () => {
+    setAadSaving(true);
+    setAadMsg(null);
+    try {
+      await apiFetch("/api/platform/auth-config", getToken, {
+        method: "POST",
+        body: JSON.stringify({ auth_provider: aadProvider, azure_client_id: aadClientId, azure_tenant_id: aadTenantId }),
+      });
+      setAadMsg({ ok: true, text: "Saved. Reload the page for users to see the new login flow." });
+    } catch (e: unknown) {
+      setAadMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setAadSaving(false);
+    }
+  }, [getToken, aadProvider, aadClientId, aadTenantId]);
 
   // Sync if theme changes externally
   useEffect(() => {
@@ -135,39 +176,142 @@ export function SettingsModal({ onClose, platformInfo }: SettingsModalProps) {
           ))}
         </div>
 
-        {tab === "appearance" && <><div className="modal-section-label">Theme color</div></>}
-        {tab === "appearance" && false && null}
         {tab === "platform" && (
-          <div>
-            {!platformInfo ? (
-              <div style={{ textAlign: "center", padding: "24px 0", color: "#94a3b8", fontSize: 13 }}>
-                <i className="fas fa-spinner fa-spin" style={{ marginRight: 8 }} />
-                Loading platform info…
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* Connection info — always visible */}
+            {platformInfo && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#94a3b8", marginBottom: 8 }}>
+                  Connection
+                </div>
+                <PlatformRow label="Environment" value={(platformInfo.env ?? "dev").toUpperCase()} highlight={platformInfo.env === "prod" ? "red" : "green"} />
+                <PlatformRow label="Auth Provider" value={platformInfo.auth_provider === "azure_ad" ? "Azure AD (SSO)" : "Local (admin/admin)"} />
+                <PlatformRow label="Airflow" value={platformInfo.platform?.airflow_host ?? "—"} mono />
+                <PlatformRow label="Trino" value={platformInfo.platform?.trino_host ?? "—"} mono />
+                <PlatformRow label="ADLS" value={platformInfo.platform?.adls_account ?? "—"} mono />
+                <PlatformRow label="Purview" value={(platformInfo.platform?.purview_endpoint ?? "").replace("https://", "") || "—"} mono />
+              </div>
+            )}
+
+            {/* AAD config — Admin only */}
+            {isAdmin ? (
+              <div style={{ borderTop: "1px solid #e2e8f0", paddingTop: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#94a3b8", marginBottom: 12 }}>
+                  <i className="fas fa-shield-halved" style={{ marginRight: 6 }} />
+                  Authentication Configuration
+                </div>
+
+                {!aadLoaded ? (
+                  <div style={{ color: "#94a3b8", fontSize: 13 }}>
+                    <i className="fas fa-spinner fa-spin" style={{ marginRight: 6 }} />Loading…
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {/* Provider toggle */}
+                    <div>
+                      <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 6 }}>
+                        Login method
+                      </label>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        {(["local", "azure_ad"] as const).map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setAadProvider(p)}
+                            type="button"
+                            style={{
+                              flex: 1, padding: "8px 12px", borderRadius: 8,
+                              border: `1.5px solid ${aadProvider === p ? "#0284c7" : "#e2e8f0"}`,
+                              background: aadProvider === p ? "#e0f2fe" : "#f8fafc",
+                              color: aadProvider === p ? "#0284c7" : "#64748b",
+                              fontSize: 12, fontWeight: 600, cursor: "pointer",
+                              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                            }}
+                          >
+                            <i className={`fas ${p === "azure_ad" ? "fa-microsoft" : "fa-user"}`} style={{ fontSize: 11 }} />
+                            {p === "azure_ad" ? "Azure AD (SSO)" : "Local (admin/admin)"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* AAD fields */}
+                    {aadProvider === "azure_ad" && (
+                      <>
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>
+                            Azure App Client ID <span style={{ color: "#dc2626" }}>*</span>
+                          </label>
+                          <input
+                            value={aadClientId}
+                            onChange={(e) => setAadClientId(e.target.value)}
+                            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                            style={{
+                              width: "100%", padding: "8px 10px", borderRadius: 8,
+                              border: "1.5px solid #e2e8f0", fontSize: 12, fontFamily: "monospace",
+                              outline: "none", boxSizing: "border-box", background: "#f8fafc",
+                            }}
+                          />
+                          <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 3 }}>
+                            From your Azure AD App Registration → Overview → Application (client) ID
+                          </div>
+                        </div>
+                        <div>
+                          <label style={{ fontSize: 12, fontWeight: 600, color: "#475569", display: "block", marginBottom: 4 }}>
+                            Tenant ID
+                          </label>
+                          <input
+                            value={aadTenantId}
+                            onChange={(e) => setAadTenantId(e.target.value)}
+                            placeholder="common  (or your tenant GUID)"
+                            style={{
+                              width: "100%", padding: "8px 10px", borderRadius: 8,
+                              border: "1.5px solid #e2e8f0", fontSize: 12, fontFamily: "monospace",
+                              outline: "none", boxSizing: "border-box", background: "#f8fafc",
+                            }}
+                          />
+                        </div>
+                      </>
+                    )}
+
+                    {aadMsg && (
+                      <div style={{
+                        padding: "8px 12px", borderRadius: 8, fontSize: 12,
+                        background: aadMsg.ok ? "#f0fdf4" : "#fef2f2",
+                        border: `1px solid ${aadMsg.ok ? "#86efac" : "#fca5a5"}`,
+                        color: aadMsg.ok ? "#15803d" : "#dc2626",
+                      }}>
+                        <i className={`fas ${aadMsg.ok ? "fa-circle-check" : "fa-circle-exclamation"}`} style={{ marginRight: 6 }} />
+                        {aadMsg.text}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleSaveAad}
+                      disabled={aadSaving || (aadProvider === "azure_ad" && !aadClientId.trim())}
+                      type="button"
+                      style={{
+                        padding: "9px 16px", borderRadius: 8, border: "none",
+                        background: aadSaving || (aadProvider === "azure_ad" && !aadClientId.trim()) ? "#e2e8f0" : "#0284c7",
+                        color: aadSaving || (aadProvider === "azure_ad" && !aadClientId.trim()) ? "#94a3b8" : "#fff",
+                        fontSize: 13, fontWeight: 700, cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 7,
+                      }}
+                    >
+                      {aadSaving
+                        ? <><i className="fas fa-spinner fa-spin" style={{ fontSize: 11 }} />Saving…</>
+                        : <><i className="fas fa-floppy-disk" style={{ fontSize: 11 }} />Save auth config</>
+                      }
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                <PlatformRow label="Environment" value={platformInfo.env.toUpperCase()} highlight={platformInfo.env === "prod" ? "red" : "green"} />
-                <PlatformRow label="Auth Provider" value={platformInfo.auth_provider === "azure_ad" ? "Azure AD (MSAL)" : "Local (username/password)"} />
-                <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: 12, marginTop: 4 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#94a3b8", marginBottom: 10 }}>
-                    Connected Services
-                  </div>
-                  <PlatformRow label="Airflow (Orchestration)" value={platformInfo.platform.airflow_host} mono />
-                  <PlatformRow label="Trino (Query Engine)" value={platformInfo.platform.trino_host} mono />
-                  <PlatformRow label="ADLS Account" value={`${platformInfo.platform.adls_account}.dfs.core.windows.net`} mono />
-                  <PlatformRow label="Microsoft Purview" value={platformInfo.platform.purview_endpoint.replace("https://", "")} mono />
-                  <PlatformRow label="Resource Group" value={platformInfo.platform.resource_group} mono />
-                </div>
-                <div style={{
-                  background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8,
-                  padding: "10px 12px", fontSize: 12, color: "#64748b", lineHeight: 1.5, marginTop: 4,
-                }}>
-                  <i className="fas fa-circle-info" style={{ marginRight: 6, color: "#0284c7" }} />
-                  To switch environments or change connection settings, update the backend environment variables and restart the portal pod.
-                  {platformInfo.auth_provider !== "azure_ad" && (
-                    <> To enable Azure AD SSO, set <code style={{ fontFamily: "monospace", background: "#e2e8f0", padding: "1px 4px", borderRadius: 3 }}>AUTH_PROVIDER=azure_ad</code> and <code style={{ fontFamily: "monospace", background: "#e2e8f0", padding: "1px 4px", borderRadius: 3 }}>AZURE_CLIENT_ID=&lt;app-id&gt;</code>.</>
-                  )}
-                </div>
+              <div style={{
+                background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8,
+                padding: "10px 12px", fontSize: 12, color: "#64748b",
+              }}>
+                <i className="fas fa-lock" style={{ marginRight: 6 }} />
+                Authentication settings are only available to Admins.
               </div>
             )}
           </div>

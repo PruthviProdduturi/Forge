@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     # Auth
     auth_provider: str = "local"  # "local" | "azure_ad"
     local_admin_user: str = "admin"
-    local_admin_password: str = "forge-dev-admin"  # override in prod via KV
+    local_admin_password: str = "admin"  # dev default; override in prod via KV secret LOCAL_ADMIN_PASSWORD
     jwt_secret: str = "forge-dev-secret-change-in-prod"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480
