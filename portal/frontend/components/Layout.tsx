@@ -105,7 +105,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {/* Right side */}
         <div className="header-right">
           {/* Env dropdown */}
-          {platformInfo && (
+          {platformInfo?.env && (
             <div className="header-dropdown header-dropdown-right">
               <button
                 className="header-icon-btn"
@@ -120,7 +120,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   color: platformInfo.env === "prod" ? "#dc2626" : "#16a34a",
                   border: `1px solid ${platformInfo.env === "prod" ? "#fca5a5" : "#86efac"}`,
                 }}>
-                  {platformInfo.env}
+                  {platformInfo.env ?? "dev"}
                 </span>
                 <i className="fas fa-chevron-down" style={{ fontSize: 9, opacity: 0.5 }} aria-hidden="true" />
               </button>
@@ -130,11 +130,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     Connected Platform
                   </div>
                   {[
-                    ["Environment", platformInfo.env.toUpperCase()],
+                    ["Environment", (platformInfo.env ?? "unknown").toUpperCase()],
                     ["Auth", platformInfo.auth_provider === "azure_ad" ? "Azure AD" : "Local"],
-                    ["Airflow", platformInfo.platform.airflow_host],
-                    ["Trino", platformInfo.platform.trino_host],
-                    ["ADLS", platformInfo.platform.adls_account],
+                    ["Airflow", platformInfo.platform?.airflow_host ?? "—"],
+                    ["Trino", platformInfo.platform?.trino_host ?? "—"],
+                    ["ADLS", platformInfo.platform?.adls_account ?? "—"],
                   ].map(([label, value]) => (
                     <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
                       <span style={{ fontSize: 11, color: "#64748b" }}>{label}</span>
