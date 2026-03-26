@@ -16,6 +16,18 @@
 
 ---
 
+## Documentation
+
+| Document | What it covers |
+|----------|----------------|
+| [**Platform Design Reference**](docs/DESIGN.md) | Principles, two-cluster model, all layers, developer workflow, delivery lifecycle — start here |
+| [**Architecture**](ARCHITECTURE.md) | Component diagrams, ADRs, data flow, security, networking deep-dive |
+| [**Implementation Guides**](docs/implementation/00-overview.md) | Step-by-step provisioning from zero |
+| [**Architecture Deep-Dives**](docs/README.md) | Per-component architecture docs (compute, orchestration, storage, DQ, lineage, observability) |
+| [**Developer Experience Guide**](docs/guides/developer-experience.md) | VS Code + Spark Connect setup, DAG authoring, DQ rules |
+
+---
+
 ## What is Forge?
 
 Forge is the core data engineering platform that handles everything from raw ingestion to governed, serving-ready data — giving downstream consumers clean, validated, and lineage-tracked data to work with.

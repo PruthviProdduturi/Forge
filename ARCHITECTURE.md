@@ -1,7 +1,7 @@
 # Forge — Platform Architecture
 
 > **Version:** 1.0
-> **Status:** Draft for Review
+> **Status:** Production
 > **Audience:** Platform engineers, data engineers, architects
 
 [![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-003366?style=flat-square&logo=delta&logoColor=white)](https://delta.io) [![ADLS Gen2](https://img.shields.io/badge/ADLS%20Gen2-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/storage/data-lake-storage)
@@ -397,7 +397,7 @@ DAGs live in Git (`orchestration/airflow/dags/`) and are synced to Airflow via `
 - PostgreSQL (Azure Database for PostgreSQL Flexible Server) as metadata DB
 - OIDC authentication (Azure AD) for Airflow webserver
 - DAG Git-sync from Azure DevOps / GitHub repo
-- SLA miss callbacks → alert webhook (Teams/Slack)
+- SLA miss callbacks → alert webhook (Teams)
 - Log retention: 30 days in ADLS, 7 days in pod logs
 
 ---
@@ -463,7 +463,7 @@ Partitioned by `(dataset_namespace, run_ts_date)`.
 ### Severity and Gating
 
 - `CRITICAL` failures **block** the pipeline — the Airflow task fails and downstream tasks are skipped
-- `WARNING` failures **allow** the pipeline to continue but emit a Slack/Teams alert
+- `WARNING` failures **allow** the pipeline to continue but emit a Teams alert
 - `INFO` failures are recorded only — no alert, no gate
 
 ---
@@ -560,7 +560,7 @@ PostgreSQL backend: Azure Database for PostgreSQL Flexible Server (private endpo
 | Spark Operator | `spark_app_count`, `spark_app_duration`, executor counts, GC pause |
 | Trino | query count, query duration p50/p95/p99, failed queries, memory usage |
 | Marquez | event ingestion rate, API latency |
-| Node Exporter | CPU, memory, disk IO per node pool |
+| Azure Monitor Agent (AMA) | CPU, memory, disk IO per node pool |
 | Kubernetes | pod restarts, PVC usage, HPA scaling events |
 | Azure Monitor | AKS control plane logs, ADLS capacity, Key Vault operations |
 

@@ -22,7 +22,7 @@ Step 04 — Deploy Compute Cluster (Spark + Trino)
   ↓  (Compute cluster must accept SparkApplications before Airflow can submit jobs)
 Step 05 — Deploy Orchestration Cluster (Airflow + Marquez + Observability + Portal)
   ↓  (Full platform operational)
-Step 06 — Post-Deploy Validation
+Step 06 — CI/CD Pipeline
 ```
 
 ---
@@ -36,7 +36,7 @@ Step 06 — Post-Deploy Validation
 | 03 | [03-cluster-setup.md](./03-cluster-setup.md) | Bicep provisioning, AKS bootstrap (both clusters), workload identity, CSI secrets, namespaces |
 | 04 | [04-deploy-compute.md](./04-deploy-compute.md) | Helm deploy Spark Operator, Spark Connect, Trino, Hive Metastore |
 | 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, Marquez, verify Container Insights / Azure Managed Grafana, Portal |
-| 06 | [06-validation.md](./06-validation.md) | End-to-end validation checklist: submit test Spark job, trigger test DAG, verify lineage, verify DQ, verify Portal |
+| 06 | [06-cicd.md](./06-cicd.md) | Azure DevOps pipeline definitions for infrastructure and application deployments, with promotion gates |
 
 ---
 
@@ -85,16 +85,15 @@ cd Forge
 
 ## Image Version Reference
 
-The canonical version list is in [`docs/architecture/components-versions.md`](../architecture/components-versions.md).
+The canonical version list is in [`components-versions.md`](./components-versions.md).
 
 Quick reference for custom images:
 
 | Image | Version | Dockerfile |
 |-------|---------|-----------|
-| `spark` | 4.0.0 | `infra/docker/spark/Dockerfile` |
+| `spark` | 4.1.0 | `infra/docker/spark/Dockerfile` |
 | `trino` | 438 | `infra/docker/trino/Dockerfile` |
 | `airflow` | 3.1.0 | `infra/docker/airflow/Dockerfile` |
-| `grafana` | 10.4.2 | `infra/docker/grafana/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |
 

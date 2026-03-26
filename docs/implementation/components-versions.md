@@ -1,6 +1,6 @@
 # Forge — Component Versions & Container Registry Strategy
 
-> **Status:** Draft for Review
+> **Status:** Production
 > **Last updated:** 2026-03-24
 
 [![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-003366?style=flat-square&logo=delta&logoColor=white)](https://delta.io) [![Azure Monitor](https://img.shields.io/badge/Azure%20Monitor-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/monitor) [![Azure Managed Grafana](https://img.shields.io/badge/Azure%20Managed%20Grafana-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/managed-grafana) [![OpenLineage](https://img.shields.io/badge/OpenLineage-7B2FBE?style=flat-square&logoColor=white)](https://openlineage.io) [![Azure Key Vault](https://img.shields.io/badge/Key%20Vault-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/key-vault) [![ADLS Gen2](https://img.shields.io/badge/ADLS%20Gen2-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/storage/data-lake-storage)
@@ -45,11 +45,11 @@ No cluster node ever pulls from a public registry. This eliminates:
 
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
-| **Apache Spark** | 4.0.0 | `eclipse-temurin:17-jre-jammy` | `forgeacr/spark:4.1.0` | Custom image — see below |
+| **Apache Spark** | 4.1.0 | `eclipse-temurin:17-jre-jammy` | `forgeacr/spark:4.1.0` | Custom image — see below |
 | **Spark Operator** | 1.4.6 | `gcr.io/kubeflow/spark-operator` | `forgeacr/spark-operator:1.4.6` | Imported, not modified |
 | **Trino** | 438 | `trinodb/trino:438` | `forgeacr/trino:438` | Imported + custom plugins |
 | **Hive Metastore** | 3.1.3 | `eclipse-temurin:11-jre` | `forgeacr/hive-metastore:3.1.3` | Custom image for Delta catalog |
-| **Delta Lake 4.0.0 | (Spark dependency) | — | Bundled in Spark image |
+| **Delta Lake** | 4.0.0 | — | — | Bundled in Spark image; no separate container |
 
 ### Orchestration Layer
 
