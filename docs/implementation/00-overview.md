@@ -12,6 +12,8 @@
 Follow these guides in sequence. Each step has hard dependencies on the previous.
 
 ```
+Step 00 — Networking (VNet, subnets, NSGs, private DNS zones)
+  ↓  (VNet and private-endpoints subnet must exist before any private endpoint can be created)
 Step 01 — ACR Setup
   ↓  (ACR must exist before images are built or clusters pull images)
 Step 02 — Image Builds & Push to ACR
@@ -31,6 +33,7 @@ Step 06 — CI/CD Pipeline
 
 | Step | Document | What it covers |
 |------|----------|---------------|
+| 00 | [00-networking.md](./00-networking.md) | VNet, subnets, NSGs, private DNS zones — must run first |
 | 01 | [01-acr-setup.md](./01-acr-setup.md) | Create ACR, private endpoint, Defender, assign pull/push roles |
 | 02 | [02-image-builds.md](./02-image-builds.md) | Build custom images (Spark, Trino, Airflow, Portal), import third-party images, push all to ACR |
 | 03 | [03-cluster-setup.md](./03-cluster-setup.md) | Bicep provisioning, AKS bootstrap (both clusters), workload identity, CSI secrets, namespaces |
