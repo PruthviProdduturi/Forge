@@ -52,7 +52,7 @@ RG_SECURITY="rg-forge-security${ALIAS_SUFFIX}-${ENV}"
 ACR_RG="${RG_PLATFORM}"
 ACR_NAME="forgeacr${OWNER_ALIAS}${ENV}"           # no hyphens, globally unique
 ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
-ACR_BUILD_MI="id-forge-acr-build${ALIAS_SUFFIX}-${ENV}"
+PLATFORM_MI="id-forge${ALIAS_SUFFIX}-${ENV}"
 
 VNET_NAME="vnet-forge${ALIAS_SUFFIX}-${ENV}"
 PE_SUBNET_NAME="snet-forge-private-endpoints${ALIAS_SUFFIX}-${ENV}"
@@ -274,31 +274,31 @@ if should_run 2; then
         fi
     fi
 
-    # Build managed identity for CI/CD use
-    if az identity show --name "${ACR_BUILD_MI}" --resource-group "${ACR_RG}" --query name -o tsv 2>/dev/null | grep -q "${ACR_BUILD_MI}"; then
-        log_ok "Build managed identity already exists: ${ACR_BUILD_MI}"
+    # Platform managed identity for CI/CD use
+    if az identity show --name "${PLATFORM_MI}" --resource-group "${ACR_RG}" --query name -o tsv 2>/dev/null | grep -q "${PLATFORM_MI}"; then
+        log_ok "Platform managed identity already exists: ${PLATFORM_MI}"
     else
-        log_info "Creating build managed identity: ${ACR_BUILD_MI}"
+        log_info "Creating platform managed identity: ${PLATFORM_MI}"
         run az identity create \
-            --name "${ACR_BUILD_MI}" \
+            --name "${PLATFORM_MI}" \
             --resource-group "${ACR_RG}" \
             --location "${LOCATION}" \
             --tags platform=forge environment="${ENV}" owner="${OWNER_ALIAS}"
     fi
 
     ACR_ID=$(az acr show --name "${ACR_NAME}" --resource-group "${ACR_RG}" --query id -o tsv)
-    BUILD_MI_PRINCIPAL=$(az identity show --name "${ACR_BUILD_MI}" --resource-group "${ACR_RG}" --query principalId -o tsv 2>/dev/null || echo "")
+    MI_PRINCIPAL=$(az identity show --name "${PLATFORM_MI}" --resource-group "${ACR_RG}" --query principalId -o tsv 2>/dev/null || echo "")
 
-    # Role assignments for build identity
-    if [[ -n "${BUILD_MI_PRINCIPAL}" ]]; then
+    # Role assignments for platform identity
+    if [[ -n "${MI_PRINCIPAL}" ]]; then
         for role in AcrPush AcrPull; do
             if az role assignment list --scope "${ACR_ID}" --role "${role}" \
-                --query "[?principalId=='${BUILD_MI_PRINCIPAL}']" -o tsv 2>/dev/null | grep -q .; then
-                log_ok "${role} already assigned to build identity"
+                --query "[?principalId=='${MI_PRINCIPAL}']" -o tsv 2>/dev/null | grep -q .; then
+                log_ok "${role} already assigned to platform identity"
             else
-                log_info "Assigning ${role} to build identity"
+                log_info "Assigning ${role} to platform identity"
                 run az role assignment create \
-                    --assignee "${BUILD_MI_PRINCIPAL}" \
+                    --assignee "${MI_PRINCIPAL}" \
                     --role "${role}" \
                     --scope "${ACR_ID}"
             fi

@@ -315,15 +315,12 @@ SparkKubernetesOperator(
 
 - **No long-lived credentials** — all service-to-service access via Azure Workload Identity (OIDC federation)
 - **No secrets in environment variables or config maps** — all secrets retrieved from Key Vault at runtime via CSI driver
-- **Least privilege** — each workload identity is scoped to the minimum ADLS containers, Key Vault secrets, and ACR repos it needs
-- **Managed identities per workload:**
+- **One identity per environment** — `id-forge-{env}` holds all platform permissions for that environment. Simple to manage for a single platform team; upgrade to per-workload identities if compliance requirements demand it.
+- **Managed identity:**
 
 | Identity | Used by | Scope |
 |----------|---------|-------|
-| `id-forge-spark` | Spark Operator pods | bronze/silver/gold ADLS read/write |
-| `id-forge-airflow` | Airflow scheduler/workers | Compute cluster API, Key Vault, ADLS code container |
-| `id-forge-portal` | Portal API | Airflow API, Marquez API, Trino, Azure Cost Management |
-| `id-forge-trino` | Trino coordinator | gold/silver ADLS read |
+| `id-forge-{env}` | All platform workloads (Spark, Trino, Airflow, Portal, DQ) | ADLS all containers, Key Vault Secrets User, AcrPush+AcrPull, Cost Management Reader |
 
 → Full detail: [Security (S360)](architecture/security-s360.md)
 

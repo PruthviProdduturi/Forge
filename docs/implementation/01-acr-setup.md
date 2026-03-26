@@ -22,7 +22,7 @@
 8. [Disable Public Network Access](#8-disable-public-network-access)
 9. [Enable Defender for Containers](#9-enable-defender-for-containers)
 10. [Enable Content Trust — Notation/Notary v2](#10-enable-content-trust--notationnotary-v2)
-11. [Create Managed Identity for ACR Tasks](#11-create-managed-identity-for-acr-tasks)
+11. [Create Platform Managed Identity](#11-create-platform-managed-identity)
 12. [Assign AcrPush to the Build Identity](#12-assign-acrpush-to-the-build-identity)
 13. [Assign AcrPull to AKS Node Pool Identities](#13-assign-acrpull-to-aks-node-pool-identities)
 14. [Test ACR Connectivity](#14-test-acr-connectivity)
@@ -72,7 +72,7 @@ ACR_RG="rg-forge-acr-${ENV}"
 ACR_NAME="forgeacr${ENV}"                  # must be globally unique, lowercase, no hyphens
 DNS_ZONE_NAME="privatelink.azurecr.io"
 DNS_ZONE_RG="rg-forge-dns-${ENV}"
-BUILD_MI_NAME="id-forge-acr-build-${ENV}"
+BUILD_MI_NAME="id-forge-${ENV}"
 ```
 
 ---
@@ -410,33 +410,33 @@ Image signature enforcement is done in the cluster using OPA Gatekeeper and the 
 
 ---
 
-## 11. Create Managed Identity for ACR Tasks
+## 11. Create Platform Managed Identity
 
-The build pipeline that imports upstream images and pushes custom images to ACR authenticates using a user-assigned managed identity. This avoids long-lived credentials and integrates with Azure AD audit logs.
+Forge uses a single user-assigned managed identity per environment — `id-forge-{env}` — shared by all platform workloads (Spark, Trino, Airflow, Portal, DQ) and the build pipeline. This eliminates identity sprawl while maintaining full auditability.
 
 ```bash
 az identity create \
   --name "${BUILD_MI_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-platform-${ENV}" \
   --location "${LOCATION}" \
   --tags \
     platform=forge \
     environment="${ENV}" \
-    component=acr-build-identity
+    component=platform-identity
 
 # Capture the identity's principal ID and client ID
-BUILD_MI_PRINCIPAL_ID=$(az identity show \
+MI_PRINCIPAL_ID=$(az identity show \
   --name "${BUILD_MI_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-platform-${ENV}" \
   --query principalId -o tsv)
 
-BUILD_MI_CLIENT_ID=$(az identity show \
+MI_CLIENT_ID=$(az identity show \
   --name "${BUILD_MI_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-platform-${ENV}" \
   --query clientId -o tsv)
 
-echo "Build MI Principal ID: ${BUILD_MI_PRINCIPAL_ID}"
-echo "Build MI Client ID:    ${BUILD_MI_CLIENT_ID}"
+echo "Platform MI Principal ID: ${MI_PRINCIPAL_ID}"
+echo "Platform MI Client ID:    ${MI_CLIENT_ID}"
 ```
 
 ---
@@ -448,13 +448,13 @@ The build managed identity needs AcrPush to push images and AcrPull to pull base
 ```bash
 # AcrPush — write images to the registry
 az role assignment create \
-  --assignee "${BUILD_MI_PRINCIPAL_ID}" \
+  --assignee "${MI_PRINCIPAL_ID}" \
   --role "AcrPush" \
   --scope "${ACR_ID}"
 
 # AcrPull — pull base images during build
 az role assignment create \
-  --assignee "${BUILD_MI_PRINCIPAL_ID}" \
+  --assignee "${MI_PRINCIPAL_ID}" \
   --role "AcrPull" \
   --scope "${ACR_ID}"
 ```
@@ -720,7 +720,7 @@ resource "azurerm_role_assignment" "acr_pull_orch" {
 
 ```hcl
 resource "azurerm_user_assigned_identity" "acr_build" {
-  name                = "id-forge-acr-build-${var.environment}"
+  name                = "id-forge-${var.environment}"
   resource_group_name = azurerm_resource_group.acr.name
   location            = var.location
   tags                = local.common_tags
@@ -843,7 +843,7 @@ Before proceeding to document `03-cluster-setup.md`, verify every item:
 - [ ] `nslookup forgeacr{env}.azurecr.io` from inside VNet returns a private IP
 - [ ] Public network access is `Disabled`
 - [ ] Defender for Containers is `Standard` tier at subscription level
-- [ ] Build managed identity `id-forge-acr-build-{env}` exists with AcrPush + AcrPull
+- [ ] Managed identity `id-forge-{env}` exists with AcrPush + AcrPull
 - [ ] `az acr login` succeeds from inside VNet
 - [ ] Test image push and delete completed successfully
 - [ ] ACR resources confirmed in `infra/bicep/modules/`

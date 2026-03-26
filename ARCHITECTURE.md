@@ -609,12 +609,15 @@ Azure Resource (ADLS, Key Vault, ACR, etc.)
 
 | Identity | Permissions |
 |----------|-------------|
-| `id-forge-spark` | Storage Blob Data Contributor on raw + curated + code containers |
-| `id-forge-trino` | Storage Blob Data Reader on curated + serving containers |
-| `id-forge-airflow` | Key Vault Secrets User; Storage Blob Data Contributor on checkpoints |
-| `id-forge-dq` | Storage Blob Data Contributor on curated (DQ results table) |
-| `id-forge-lineage` | No storage access; only Marquez API |
-| `id-forge-portal` | Storage Blob Data Reader on serving; Key Vault Secrets User |
+| `id-forge-{env}` | **Single identity per environment** used by all platform workloads (Spark, Trino, Airflow, Portal, DQ, Lineage) |
+
+| Permission | Scope |
+|------------|-------|
+| Storage Blob Data Contributor | bronze, silver, gold, code, checkpoint containers (ADLS) |
+| Storage Blob Data Reader | gold container (read-only for Trino and Portal) |
+| Key Vault Secrets User | `kv-forge-{env}` |
+| AcrPush + AcrPull | `forgeacr{env}.azurecr.io` |
+| Cost Management Reader | Forge resource group (Portal cost API) |
 
 ### Secret Management
 

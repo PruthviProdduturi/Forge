@@ -8,7 +8,7 @@
 # What this script does:
 #   1. Pre-flight  — check tools, subscription, Defender for Containers
 #   2. ACR         — Premium SKU, zone-redundant, temporarily public for image push
-#   3. Identity    — build managed identity (id-forge-acr-build-{env})
+#   3. Identity    — platform managed identity (id-forge-{env})
 #   4. Roles       — AcrPush + AcrPull for build identity and current user
 #   5. Validate    — verify everything is in the expected state
 #
@@ -73,7 +73,7 @@ ALIAS_SUFFIX="${OWNER_ALIAS:+-${OWNER_ALIAS}}"
 RG_NAME="rg-forge-platform${ALIAS_SUFFIX}-${ENV}"
 ACR_NAME="forgeacr${OWNER_ALIAS}${ENV}"           # globally unique, lowercase, no hyphens
 ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
-BUILD_MI_NAME="id-forge-acr-build${ALIAS_SUFFIX}-${ENV}"
+MI_NAME="id-forge${ALIAS_SUFFIX}-${ENV}"
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -280,14 +280,14 @@ log_info "ACR resource ID: ${ACR_ID}"
 # =============================================================================
 # 4. Build managed identity
 # =============================================================================
-log_step "4. Build managed identity: ${BUILD_MI_NAME}"
+log_step "4. Platform managed identity: ${MI_NAME}"
 
-if mi_exists "${BUILD_MI_NAME}" "${RG_NAME}"; then
+if mi_exists "${MI_NAME}" "${RG_NAME}"; then
     log_ok "Already exists — skipping"
 else
     log_info "Creating managed identity..."
     run az identity create \
-        --name "${BUILD_MI_NAME}" \
+        --name "${MI_NAME}" \
         --resource-group "${RG_NAME}" \
         --location "${LOCATION}" \
         --tags \
@@ -295,21 +295,21 @@ else
             environment="${ENV}" \
             component=acr-build-identity \
             owner="${OWNER_ALIAS}"
-    log_ok "Created: ${BUILD_MI_NAME}"
+    log_ok "Created: ${MI_NAME}"
 fi
 
-BUILD_MI_PRINCIPAL=$(az identity show \
-    --name "${BUILD_MI_NAME}" \
+MI_PRINCIPAL=$(az identity show \
+    --name "${MI_NAME}" \
     --resource-group "${RG_NAME}" \
     --query principalId -o tsv 2>/dev/null || echo "")
 
-BUILD_MI_CLIENT_ID=$(az identity show \
-    --name "${BUILD_MI_NAME}" \
+MI_CLIENT_ID=$(az identity show \
+    --name "${MI_NAME}" \
     --resource-group "${RG_NAME}" \
     --query clientId -o tsv 2>/dev/null || echo "")
 
-log_info "Build MI principal ID : ${BUILD_MI_PRINCIPAL}"
-log_info "Build MI client ID    : ${BUILD_MI_CLIENT_ID}"
+log_info "Platform MI principal ID : ${MI_PRINCIPAL}"
+log_info "Platform MI client ID    : ${MI_CLIENT_ID}"
 
 # =============================================================================
 # 5. Role assignments
@@ -317,10 +317,10 @@ log_info "Build MI client ID    : ${BUILD_MI_CLIENT_ID}"
 log_step "5. Role assignments"
 
 # Allow up to 30s for the managed identity to propagate to Azure AD before assigning
-if [[ "${DRY_RUN}" == false && -n "${BUILD_MI_PRINCIPAL}" ]]; then
+if [[ "${DRY_RUN}" == false && -n "${MI_PRINCIPAL}" ]]; then
     log_info "Waiting for managed identity to propagate..."
     for i in {1..6}; do
-        if az ad sp show --id "${BUILD_MI_PRINCIPAL}" &>/dev/null; then
+        if az ad sp show --id "${MI_PRINCIPAL}" &>/dev/null; then
             log_ok "Managed identity propagated"
             break
         fi
@@ -342,10 +342,10 @@ assign_role() {
     fi
 }
 
-# Build identity: AcrPush + AcrPull (for CI/CD image builds)
-if [[ -n "${BUILD_MI_PRINCIPAL}" ]]; then
-    assign_role "${BUILD_MI_PRINCIPAL}" "AcrPush" "${ACR_ID}" "build identity"
-    assign_role "${BUILD_MI_PRINCIPAL}" "AcrPull" "${ACR_ID}" "build identity"
+# Platform identity: AcrPush + AcrPull (for CI/CD image builds)
+if [[ -n "${MI_PRINCIPAL}" ]]; then
+    assign_role "${MI_PRINCIPAL}" "AcrPush" "${ACR_ID}" "platform identity"
+    assign_role "${MI_PRINCIPAL}" "AcrPull" "${ACR_ID}" "platform identity"
 fi
 
 # Current user: AcrPush (for the initial manual image push in Step 02)
@@ -381,17 +381,17 @@ check "ACR admin account disabled" \
     "az acr show --name '${ACR_NAME}' --resource-group '${RG_NAME}' \
         --query adminUserEnabled -o tsv | grep -q false"
 
-check "Build managed identity exists" \
-    "az identity show --name '${BUILD_MI_NAME}' --resource-group '${RG_NAME}' --query name -o tsv"
+check "Platform managed identity exists" \
+    "az identity show --name '${MI_NAME}' --resource-group '${RG_NAME}' --query name -o tsv"
 
 check "Defender for Containers is Standard" \
     "az security pricing show --name Containers --query pricingTier -o tsv | grep -q Standard"
 
-if [[ -n "${BUILD_MI_PRINCIPAL}" ]]; then
-    check "Build identity has AcrPush" \
-        "role_assigned '${BUILD_MI_PRINCIPAL}' 'AcrPush' '${ACR_ID}'"
-    check "Build identity has AcrPull" \
-        "role_assigned '${BUILD_MI_PRINCIPAL}' 'AcrPull' '${ACR_ID}'"
+if [[ -n "${MI_PRINCIPAL}" ]]; then
+    check "Platform identity has AcrPush" \
+        "role_assigned '${MI_PRINCIPAL}' 'AcrPush' '${ACR_ID}'"
+    check "Platform identity has AcrPull" \
+        "role_assigned '${MI_PRINCIPAL}' 'AcrPull' '${ACR_ID}'"
 fi
 
 check "Current user has AcrPush" \
@@ -416,8 +416,8 @@ echo ""
 echo -e "${BOLD}Resources created:${RESET}"
 echo -e "  Resource group  : ${CYAN}${RG_NAME}${RESET}"
 echo -e "  ACR             : ${CYAN}${ACR_LOGIN_SERVER}${RESET}"
-echo -e "  Build identity  : ${CYAN}${BUILD_MI_NAME}${RESET}"
-echo -e "  Build client ID : ${CYAN}${BUILD_MI_CLIENT_ID}${RESET}"
+echo -e "  Managed identity: ${CYAN}${MI_NAME}${RESET}"
+echo -e "  Identity client : ${CYAN}${MI_CLIENT_ID}${RESET}"
 echo ""
 echo -e "${BOLD}Next step:${RESET}"
 echo -e "  Build and push all images to ACR:"

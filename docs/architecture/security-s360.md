@@ -37,12 +37,7 @@ Pod (annotated SA)  →  OIDC token  →  Azure AD  →  short-lived access toke
 
 | Workload Identity | Scope | Role |
 |-------------------|-------|------|
-| `id-forge-spark` | bronze, silver, code containers | Storage Blob Data Contributor |
-| `id-forge-trino` | silver, gold containers | Storage Blob Data Reader |
-| `id-forge-airflow` | Key Vault, checkpoint container | KV Secrets User + Storage Blob Data Contributor |
-| `id-forge-dq` | silver container (DQ results only) | Storage Blob Data Contributor (path-scoped) |
-| `id-forge-portal` | gold container, Key Vault | Storage Blob Data Reader + KV Secrets User |
-| `id-forge-lineage` | None (Marquez API only) | — |
+| `id-forge-{env}` | All ADLS containers, Key Vault, ACR | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoint), Storage Blob Data Reader (gold), KV Secrets User, AcrPush+AcrPull, Cost Management Reader |
 
 ---
 
