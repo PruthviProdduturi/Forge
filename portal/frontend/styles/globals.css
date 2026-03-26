@@ -481,18 +481,6 @@ main {
   text-align: center;
 }
 
-.login-logo-mark {
-  font-size: 48px;
-  color: var(--forge-primary);
-  line-height: 1;
-}
-
-.login-logo-name {
-  font-size: 26px;
-  font-weight: 800;
-  color: var(--forge-primary);
-  letter-spacing: -0.02em;
-}
 
 .login-logo-tagline {
   font-size: 13px;

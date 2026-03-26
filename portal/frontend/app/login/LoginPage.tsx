@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
+import { ForgeLogo } from "../../components/ForgeLogo";
 
 export function LoginPage() {
   // Use the provider already resolved by AuthProvider on mount — no second fetch needed.
@@ -65,8 +66,7 @@ export function LoginPage() {
       <div className="login-card">
         {/* Logo */}
         <div className="login-logo">
-          <span className="login-logo-mark" aria-hidden="true">▲</span>
-          <span className="login-logo-name">Forge</span>
+          <ForgeLogo size={52} showName={true} />
           <span className="login-logo-tagline">
             The Core Data Engineering Platform
           </span>
