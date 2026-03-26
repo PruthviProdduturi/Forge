@@ -65,8 +65,8 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 │  │ Spark Connect │  │    │  │ (Sched.) │ │  Portal  │ │  Monitor   │   │
 │  │ Trino         │  │    │  └──────────┘ └──────────┘ └────────────┘   │
 │  └───────────────┘  │    │  ┌──────────┐ ┌──────────┐ ┌────────────┐   │
-└─────────────────────┘    │  │  DQ      │ │  Log     │ │            │  │
-          │                │  │ Framework│ │ Analytics│ │            │  │
+└─────────────────────┘    │  │  DQ      │ │  Log     │ │  Managed   │   │
+          │                │  │ Framework│ │ Analytics│ │  Grafana   │   │
           │                │  └──────────┘ └──────────┘ └────────────┘  │
           │                └─────────────────────────────────────────────┘
           │                              │
@@ -82,7 +82,7 @@ All Azure resources are Bicep-managed. All Kubernetes workloads are Helm-managed
 └──────────────────────────────────────────────────────────────────────────┘
           │
           ▼
-┌────────────────────────────────┐
+┌───────────────────────────────────────────────────┐
 │    Shared Azure Resources                        │
 │  Key Vault │ ACR │ Monitor                       │
 │  Private DNS │ Log Analytics │ Microsoft Purview  │

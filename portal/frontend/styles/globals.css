@@ -378,6 +378,10 @@ main {
   transform-origin: center;
 }
 
+.forge-crosshair-spin {
+  animation: logoRevolve 0.42s ease-out;
+}
+
 .forge-logo-mark {
   font-size: 22px;
   color: var(--forge-primary);

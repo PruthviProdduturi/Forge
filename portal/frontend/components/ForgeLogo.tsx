@@ -132,7 +132,7 @@ export function ForgeLogo({
             viewBox="0 0 22 22"
             fill="none"
             aria-hidden="true"
-            className="forge-crosshair"
+            className={`forge-crosshair${animating ? " forge-crosshair-spin" : ""}`}
           >
             <circle cx="11" cy="11" r="9.5"
                     stroke="currentColor" strokeWidth="1.9"/>

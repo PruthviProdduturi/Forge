@@ -6,8 +6,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRole } from "../hooks/useRole";
-import { SettingsModal } from "./SettingsModal";
 import { ForgeLogo } from "./ForgeLogo";
+import { ThemeModal } from "./ThemeModal";
 import { apiFetch } from "../utils/api";
 
 interface PlatformInfo {
@@ -42,8 +42,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, getToken } = useAuth();
   const { primaryColor } = useTheme();
   const { role } = useRole();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [logoAnimating, setLogoAnimating] = useState(false);
+  const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
 
   useEffect(() => {
@@ -142,14 +142,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     </div>
                   ))}
                 </div>
-                <button
-                  onClick={() => setSettingsOpen(true)}
+                <Link
+                  href="/settings"
                   role="menuitem"
-                  type="button"
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
                 >
                   <i className="fas fa-server" aria-hidden="true" />
                   Platform settings
-                </button>
+                </Link>
               </div>
             </div>
           )}
@@ -176,7 +176,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {/* Settings dropdown */}
           <div className="header-dropdown header-dropdown-right">
             <button
-              className="header-icon-btn"
+              className={`header-icon-btn${isActive("/settings") ? " header-btn-active" : ""}`}
               title="Settings"
               aria-label="Settings"
               type="button"
@@ -185,13 +185,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </button>
             <div className="header-dropdown-menu" role="menu">
               <button
-                onClick={() => setSettingsOpen(true)}
+                onClick={() => setThemeModalOpen(true)}
                 role="menuitem"
                 type="button"
               >
                 <i className="fas fa-palette" aria-hidden="true" />
                 Themes
               </button>
+              <Link
+                href="/settings"
+                role="menuitem"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
+              >
+                <i className="fas fa-server" aria-hidden="true" />
+                Platform settings
+              </Link>
             </div>
           </div>
 
@@ -223,6 +231,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <div className="header-dropdown-divider" />
+              <Link
+                href="/settings"
+                role="menuitem"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
+              >
+                <i className="fas fa-gear" aria-hidden="true" />
+                Settings
+              </Link>
               <button
                 onClick={handleSignOut}
                 role="menuitem"
@@ -238,8 +254,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       <main>{children}</main>
 
-      {settingsOpen && (
-        <SettingsModal onClose={() => setSettingsOpen(false)} platformInfo={platformInfo} />
+      {themeModalOpen && (
+        <ThemeModal onClose={() => setThemeModalOpen(false)} />
       )}
     </>
   );

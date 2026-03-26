@@ -70,7 +70,7 @@ const CATEGORIES = [
       {
         slug: "architecture/lineage-architecture",
         title: "Lineage Architecture",
-        description: "OpenLineage integration, Marquez deployment, and dataset-level lineage tracking.",
+        description: "OpenLineage integration, Microsoft Purview, and dataset-level lineage tracking.",
         icon: "fa-share-nodes",
       },
       {
@@ -138,7 +138,7 @@ const CATEGORIES = [
       {
         slug: "implementation/05-deploy-orchestration",
         title: "Deploy Orchestration",
-        description: "Deploying Airflow, Marquez, and the observability stack to the orchestration cluster.",
+        description: "Deploying Airflow, Microsoft Purview, and the observability stack to the orchestration cluster.",
         icon: "fa-gears",
       },
       {
@@ -150,7 +150,7 @@ const CATEGORIES = [
       {
         slug: "implementation/components-versions",
         title: "Components & Versions",
-        description: "Version matrix for all platform components — Spark, Trino, Airflow, Marquez, and more.",
+        description: "Version matrix for all platform components — Spark, Trino, Airflow, Purview, and more.",
         icon: "fa-table-list",
       },
     ],
