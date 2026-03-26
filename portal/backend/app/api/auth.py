@@ -1,0 +1,94 @@
+"""Authentication API routes."""
+from __future__ import annotations
+
+from typing import Annotated, Any
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+
+from app.core.auth import create_access_token, get_current_user
+from app.core.config import get_settings
+
+log = structlog.get_logger(__name__)
+settings = get_settings()
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    expires_in: int
+
+
+class ProviderResponse(BaseModel):
+    provider: str
+    azure_client_id: str | None
+    azure_tenant_id: str | None
+
+
+@router.get("/provider", response_model=ProviderResponse)
+async def get_provider() -> ProviderResponse:
+    """Return auth provider configuration for the frontend."""
+    return ProviderResponse(
+        provider=settings.auth_provider,
+        azure_client_id=settings.azure_client_id or None,
+        azure_tenant_id=settings.azure_tenant_id if settings.auth_provider == "azure_ad" else None,
+    )
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(body: LoginRequest) -> LoginResponse:
+    """Local username/password login. Returns a JWT."""
+    if settings.auth_provider != "local":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Local login is disabled; use Azure AD",
+        )
+
+    if body.username != settings.local_admin_user or body.password != settings.local_admin_password:
+        log.warning("login_failed", username=body.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+        )
+
+    token_data: dict[str, Any] = {
+        "sub": body.username,
+        "name": "Forge Admin",
+        "email": f"{body.username}@forge.local",
+        "roles": ["Admin"],
+    }
+    token = create_access_token(token_data)
+    log.info("login_success", username=body.username)
+
+    return LoginResponse(
+        token=token,
+        expires_in=settings.jwt_expire_minutes * 60,
+    )
+
+
+@router.get("/me")
+async def get_me(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
+    """Return current user info from the JWT claims."""
+    roles = current_user.get("roles", [])
+    if isinstance(roles, str):
+        roles = [roles]
+    role = "Viewer"
+    for r in ["Admin", "Editor", "Analyst"]:
+        if r.lower() in [x.lower() for x in roles]:
+            role = r
+            break
+
+    return {
+        "name": current_user.get("name", current_user.get("sub", "Unknown")),
+        "email": current_user.get("email", ""),
+        "role": role,
+    }

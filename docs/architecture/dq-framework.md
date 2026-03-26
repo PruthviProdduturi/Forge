@@ -2,1380 +2,1107 @@
 
 > **Version:** 1.0
 > **Status:** Production
-> **Last updated:** 2026-03-24
+> **Last updated:** 2026-03-26
 > **Audience:** Platform engineers, data engineers
 
-[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-003366?style=flat-square&logo=delta&logoColor=white)](https://delta.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
+[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-003366?style=flat-square&logo=delta&logoColor=white)](https://delta.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 
 ---
 
 ## Table of Contents
 
-1. [Framework Philosophy](#1-framework-philosophy)
-2. [Rule Taxonomy](#2-rule-taxonomy)
-3. [YAML Ruleset Format](#3-yaml-ruleset-format)
-4. [DQRunner Internals](#4-dqrunner-internals)
-5. [Severity Model](#5-severity-model)
-6. [Integration with Airflow](#6-integration-with-airflow)
-7. [DQ Results Store](#7-dq-results-store)
-8. [Reporters](#8-reporters)
-9. [Longitudinal Tracking and Regression Detection](#9-longitudinal-tracking-and-regression-detection)
-10. [DQ for Streaming](#10-dq-for-streaming)
-11. [Architecture Diagram](#11-architecture-diagram)
-12. [Adding a Custom Check Type](#12-adding-a-custom-check-type)
+1. [Overview](#1-overview)
+2. [Package Architecture](#2-package-architecture)
+3. [Layer 1: Automatic Profiling](#3-layer-1-automatic-profiling)
+4. [Layer 2: Rule-Based Gates](#4-layer-2-rule-based-gates)
+5. [Layer 3: Anomaly Detection](#5-layer-3-anomaly-detection)
+6. [Storage Layout](#6-storage-layout)
+7. [Querying Results](#7-querying-results)
+8. [Airflow Integration](#8-airflow-integration)
+9. [OpenLineage Integration](#9-openlineage-integration)
+10. [Writing Custom Metrics](#10-writing-custom-metrics)
+11. [Configuration Reference](#11-configuration-reference)
+12. [Adding DQ to a New Dataset](#12-adding-dq-to-a-new-dataset)
 
 ---
 
-## 1. Framework Philosophy
-
-### Code-Defined Rules, Not a GUI
-
-Every DQ rule in Forge is defined in a YAML file that lives in the Git repository at `orchestration/dq/rules/`. There is no web interface for creating, editing, or approving rules. There is no database of rules separate from the codebase. A rule exists if and only if it is present in a committed YAML file.
-
-This is a deliberate design choice with concrete consequences:
-
-**Rules are reviewable.** A new DQ rule for the `orders` dataset is proposed as a pull request diff on `orchestration/dq/rules/orders.yaml`. The review process is the same as for code: a second engineer reviews the rule logic, threshold values, and severity before it reaches any environment. Mistakes are caught before they gate production pipelines or cause false alerts.
-
-**Rules are versioned.** Git history shows exactly who added a rule, when, and why (via the commit message and PR description). If a threshold is changed from 1% to 5% null rate, the diff is visible, the change is attributed, and it can be reverted. No rule can be silently modified.
-
-**Rules travel with the code.** When a pipeline is deployed to a new environment (dev → staging → prod), the DQ rules for that pipeline deploy with it — same file, same thresholds. There is no risk of a "loose" GUI-defined rule existing in production but not in dev. Environment-specific overrides are explicit (an `environments:` block in the YAML) and therefore visible in code review.
-
-**Rules are testable.** The DQ SDK ships with a test harness that can run a ruleset against a synthetic DataFrame in a unit test, without Spark or Trino. Data engineers write unit tests for their DQ rules alongside their pipeline tests. A failing unit test blocks the CI pipeline.
-
-### What the Framework Is Not
-
-The DQ framework is not a data catalog. It does not manage schemas, owners, or descriptions — that is the metadata catalog's job. It does not replace data contracts or SLAs — it enforces preconditions on data that allow those contracts to be met. It is not a real-time anomaly detection system — it runs at pipeline boundaries on defined datasets, not continuously against all data.
-
----
-
-## 2. Rule Taxonomy
-
-Forge DQ rules are classified into four types. Each type targets a different dimension of data quality. The taxonomy is intentionally narrow — four types covers the vast majority of practical DQ requirements without introducing an unbounded check vocabulary.
-
-### Schema Rules
-
-**Definition:** Checks on the structure of the dataset — which columns exist, what their types are, and whether they permit null values.
-
-**When to use:** Every dataset must have schema rules. Schema is the foundation: if the schema is wrong, content checks are meaningless. Schema rules run first. If any schema rule fails at CRITICAL severity, the remaining checks are skipped.
-
-**What schema rules can check:**
-- Column presence: required column exists in the DataFrame
-- Column type: column is the expected Spark SQL type (e.g., `LongType`, `StringType`, `TimestampType`)
-- Column nullability: column is non-nullable (no null values permitted) or nullable
-- Column count: the DataFrame has at least N / exactly N columns (guard against schema collapse)
-
-**Examples:**
-
-| Rule | Check | Expected behavior |
-|------|-------|-------------------|
-| `order_id_present` | Column `order_id` exists | Fails if source dropped the column |
-| `order_id_type` | Column `order_id` is `StringType` | Fails if upstream cast it to integer |
-| `order_id_not_null` | Column `order_id` has zero nulls | Fails if primary key is nullable |
-| `order_ts_type` | Column `order_ts` is `TimestampType` | Fails if shipped as string ISO-8601 |
-
-Schema rules are cheap to run — they require only the DataFrame schema (no data scan) for type and presence checks, and a single `COUNT WHERE IS NULL` for nullability checks.
-
-### Content Rules
-
-**Definition:** Checks on the values within columns — distributions, ranges, formats, allowed values, and referential integrity.
-
-**When to use:** After schema checks pass. Content rules validate business logic: not just "is this a string?" but "is this string a valid ISO country code?" or "is this amount positive?"
-
-**What content rules can check:**
-- **Null rate:** fraction of rows where a column is null, compared against a maximum threshold
-- **Uniqueness:** fraction of rows that are distinct on one or more columns, compared against a minimum threshold
-- **Value range:** minimum/maximum numeric value, or minimum/maximum date value
-- **Allowed values:** column value is a member of a defined set (enum check)
-- **Regex match:** column value matches a regular expression (format validation)
-- **Referential integrity:** values in column A exist in column B of another dataset (foreign key check via Trino cross-table query)
-- **Custom expression:** arbitrary SQL expression evaluated as a boolean — percent of rows where the expression is true must exceed a threshold
-
-**Examples:**
-
-| Rule | Check | Threshold |
-|------|-------|-----------|
-| `status_allowed_values` | `status IN ('open', 'closed', 'cancelled', 'pending')` | 100% of rows |
-| `order_total_positive` | `order_total > 0` | 100% of rows |
-| `customer_id_not_null` | null rate on `customer_id` | ≤ 0.001 (0.1%) |
-| `order_id_unique` | uniqueness on `order_id` | ≥ 1.0 (100% distinct) |
-| `country_code_format` | `country_code REGEXP '^[A-Z]{2}$'` | ≥ 0.999 (99.9% valid) |
-| `customer_id_exists` | `customer_id IN (SELECT id FROM curated.customers)` | ≥ 0.999 |
-
-Content checks that require scanning full column data are executed via Trino against the Delta table (avoiding loading the full dataset into the task pod's memory). For checks that can be expressed as aggregation SQL, Trino's distributed execution is significantly more efficient.
-
-### Volume Rules
-
-**Definition:** Checks on the size of the dataset — how many rows exist and how the count compares to expectations.
-
-**When to use:** Volume checks catch silent data loss, extraction failures, and upstream truncations that content and schema checks cannot detect. A dataset that is structurally perfect but contains zero rows (or 90% fewer rows than yesterday) is a DQ failure.
-
-**What volume rules can check:**
-- **Absolute row count minimum:** the dataset must have at least N rows
-- **Absolute row count maximum:** the dataset must have at most N rows (guard against accidental fan-out)
-- **Row count delta:** the percentage change in row count compared to the most recent prior run must be within a range (e.g., -20% to +50%)
-- **Partition completeness:** for a given date partition, all expected sub-partitions are present and non-empty
-- **New rows minimum:** for an incremental load, at least N new rows must have been written (detects a silently failing ingestion that wrote zero rows)
-
-**Examples:**
-
-| Rule | Check | Threshold |
-|------|-------|-----------|
-| `min_row_count` | Row count ≥ N | 10,000 rows |
-| `row_count_delta` | ABS((current - prior) / prior) ≤ threshold | ≤ 30% change |
-| `new_rows_written` | Rows with `_ingestion_ts > last_watermark` ≥ N | ≥ 1 |
-| `no_empty_partition` | Every date partition in last 7 days has > 0 rows | 100% partitions populated |
-
-Volume checks use `COUNT(*)` SQL via Trino against the current Delta table and the DQ results store (for the prior-run row count comparison). They are inexpensive.
-
-### Freshness Rules
-
-**Definition:** Checks on how recently the data was updated — ensuring that the pipeline ran within its expected schedule and that the data reflects a recent state of the source system.
-
-**When to use:** Freshness checks are the time-dimension complement to volume checks. A dataset can have the right number of rows but all be from last week. Freshness rules enforce that the latest data is actually recent.
-
-**What freshness rules can check:**
-- **Max partition age hours:** the most recently written partition must be no older than N hours
-- **Max watermark lag hours:** `MAX(_updated_ts)` across all rows must be no older than N hours relative to the current wall clock
-- **Pipeline run recency:** the DQ results store shows a successful run within the last N hours (meta-check: has the pipeline itself run recently?)
-- **File modification time:** the most recently modified file in the Delta table path was written within N hours (for datasets where row timestamps are unreliable)
-
-**Examples:**
-
-| Rule | Check | Threshold |
-|------|-------|-----------|
-| `partition_freshness` | Max partition date ≥ today - 1 day | 1 day |
-| `watermark_lag` | `MAX(_updated_ts) > NOW() - INTERVAL 2 HOURS` | 2 hours |
-| `pipeline_recency` | Last successful DQ run for this dataset < 26 hours ago | 26 hours |
-
-Freshness checks are critical for SLA-governed Gold layer datasets. The `max_partition_age_hours` check is the most common: it verifies that the `SHOW PARTITIONS` output for the Delta table includes a partition dated within the expected window.
-
----
-
-## 3. YAML Ruleset Format
-
-Each dataset has one YAML ruleset file. The file name matches the dataset's logical name. Rules are executed in the order they are listed, but within each type the DQRunner may parallelize.
-
-### Complete Annotated Example
-
-```yaml
-# orchestration/dq/rules/orders.yaml
-#
-# DQ ruleset for the curated orders dataset.
-# Owner: data-eng-commerce@company.com
-# Dataset: silver/orders (abfss://silver@<account>.dfs.core.windows.net/orders/)
-# Reviewed-by: PR #142 (2026-02-15)
-
-# ---------------------------------------------------------------------------
-# Ruleset-level metadata
-# ---------------------------------------------------------------------------
-
-ruleset_id: curated_orders                # Unique ID for this ruleset.
-                                          # Used as the primary key in DQ results.
-
-dataset:
-  namespace: forge-prod                 # OpenLineage namespace. Injected into the DQ
-                                          # facet sent to Microsoft Purview.
-  name: curated.orders                    # Logical dataset name (Hive catalog form).
-  path: "abfss://silver@${ADLS_ACCOUNT}.dfs.core.windows.net/orders/"
-                                          # Actual Delta table path. ${ADLS_ACCOUNT}
-                                          # is resolved from Airflow Variables at
-                                          # runtime — never hardcoded.
-
-execution:
-  engine: trino                           # Default execution engine for this ruleset.
-                                          # Options: trino | spark | python
-                                          # Most content/volume/freshness checks use
-                                          # trino (SQL aggregations). Schema checks
-                                          # always use python (schema inspection).
-                                          # Individual rules can override this.
-  trino_catalog: lakehouse                # Trino catalog name (Delta connector).
-  trino_schema: curated                   # Hive schema within the catalog.
-  sample_fraction: 1.0                    # Fraction of rows to sample for content
-                                          # checks. 1.0 = full scan. Use 0.1 for
-                                          # very large tables where approximate
-                                          # null rate is acceptable.
-
-# ---------------------------------------------------------------------------
-# Schema rules
-# ---------------------------------------------------------------------------
-
-rules:
-
-  # --- Schema ---
-
-  - id: schema_order_id_present
-    type: schema
-    check: column_present                 # Verifies the column exists in the schema.
-    column: order_id
-    severity: CRITICAL                    # Schema failures are always CRITICAL.
-    description: "Primary key column must be present."
-
-  - id: schema_order_id_type
-    type: schema
-    check: column_type
-    column: order_id
-    expected_type: StringType             # Spark SQL type name.
-    severity: CRITICAL
-
-  - id: schema_order_ts_type
-    type: schema
-    check: column_type
-    column: order_ts
-    expected_type: TimestampType
-    severity: CRITICAL
-
-  - id: schema_order_total_type
-    type: schema
-    check: column_type
-    column: order_total_usd
-    expected_type: DecimalType(18,2)      # Parameterized types use the full name.
-    severity: CRITICAL
-
-  - id: schema_status_present
-    type: schema
-    check: column_present
-    column: status
-    severity: CRITICAL
-
-  - id: schema_customer_id_present
-    type: schema
-    check: column_present
-    column: customer_id
-    severity: CRITICAL
-
-  - id: schema_metadata_columns_present
-    type: schema
-    check: columns_present                # Plural variant: checks a list of columns.
-    columns:
-      - _ingestion_ts
-      - _source_system
-      - _record_hash
-    severity: CRITICAL
-    description: "Platform metadata columns must always be present."
-
-  # --- Content ---
-
-  - id: content_order_id_not_null
-    type: content
-    check: null_rate                      # Fraction of rows where column IS NULL.
-    column: order_id
-    max_null_rate: 0.0                    # Threshold: zero nulls permitted.
-    severity: CRITICAL
-    description: "Primary key must never be null."
-
-  - id: content_order_id_unique
-    type: content
-    check: uniqueness                     # Fraction of distinct values over total rows.
-    column: order_id
-    min_uniqueness: 1.0                   # 100% distinct required.
-    severity: CRITICAL
-    description: "Primary key must be unique."
-
-  - id: content_customer_id_not_null
-    type: content
-    check: null_rate
-    column: customer_id
-    max_null_rate: 0.001                  # Up to 0.1% nulls acceptable (orphaned orders).
-    severity: WARNING
-    description: "Customer ID should rarely be null."
-
-  - id: content_status_allowed_values
-    type: content
-    check: allowed_values                 # All values must be in the defined set.
-    column: status
-    values:
-      - open
-      - closed
-      - cancelled
-      - pending
-      - refunded
-    severity: CRITICAL
-    description: "Status must be one of the defined lifecycle values."
-
-  - id: content_order_total_positive
-    type: content
-    check: expression                     # Arbitrary SQL boolean expression.
-    expression: "order_total_usd >= 0"    # Applied as: COUNT(*) WHERE NOT (expression)
-    max_fail_rate: 0.0                    # Zero rows may violate the expression.
-    severity: CRITICAL
-    description: "Order totals must be non-negative."
-
-  - id: content_country_code_format
-    type: content
-    check: regex
-    column: country_code
-    pattern: "^[A-Z]{2}$"               # ISO 3166-1 alpha-2.
-    min_match_rate: 0.999                 # 99.9% of non-null values must match.
-    severity: WARNING
-    description: "Country code should be valid ISO-3166-1 alpha-2."
-
-  - id: content_customer_id_referential_integrity
-    type: content
-    check: referential_integrity
-    column: customer_id
-    reference_dataset: "curated.customers"
-    reference_column: customer_id
-    min_match_rate: 0.999               # 99.9% of customer_ids must exist in customers table.
-    severity: WARNING
-    engine: trino                       # Override: this check requires cross-table SQL.
-    description: "Customer IDs should exist in the customers master table."
-
-  # --- Volume ---
-
-  - id: volume_min_row_count
-    type: volume
-    check: row_count_min
-    min_rows: 50000                       # Absolute minimum. Chosen from historical lows.
-    severity: CRITICAL
-    description: "Less than 50k orders would indicate a partial load."
-
-  - id: volume_max_row_count
-    type: volume
-    check: row_count_max
-    max_rows: 100000000                   # 100M rows. Guard against accidental fan-out.
-    severity: WARNING
-    description: "More than 100M rows would be suspicious — possible join explosion."
-
-  - id: volume_row_count_delta
-    type: volume
-    check: row_count_delta               # Compares current run count to prior run count.
-    max_decrease_pct: 20                 # Row count may not drop by more than 20%.
-    max_increase_pct: 200                # Row count may not grow by more than 200%.
-    severity: WARNING
-    description: "Unusual row count delta vs previous run."
-
-  - id: volume_new_rows_written
-    type: volume
-    check: new_rows_min                  # Rows where _ingestion_ts > last_watermark.
-    min_new_rows: 1                      # At least one new row must have been written.
-    severity: WARNING
-    description: "An incremental run that writes zero new rows may indicate a broken ingestion."
-
-  # --- Freshness ---
-
-  - id: freshness_partition_age
-    type: freshness
-    check: max_partition_age_hours       # Age of the most recent Delta partition.
-    max_age_hours: 26                    # Pipeline is daily; allow 2 hours of slack.
-    severity: CRITICAL
-    description: "Data must be no more than 26 hours old."
-
-  - id: freshness_watermark_lag
-    type: freshness
-    check: watermark_lag_hours           # MAX(_ingestion_ts) vs NOW().
-    watermark_column: _ingestion_ts
-    max_lag_hours: 26
-    severity: WARNING
-    description: "Ingestion timestamp must be recent."
-
-# ---------------------------------------------------------------------------
-# Environment overrides
-# ---------------------------------------------------------------------------
-
-environments:
-  dev:
-    # In dev, use looser thresholds — dev data is a subset and may not meet
-    # production volume requirements.
-    rule_overrides:
-      - id: volume_min_row_count
-        min_rows: 100                    # Dev uses a small synthetic dataset.
-      - id: volume_row_count_delta
-        max_decrease_pct: 90             # Dev data is non-deterministic; skip delta check.
-        max_increase_pct: 10000
-      - id: freshness_partition_age
-        max_age_hours: 168               # Dev pipelines run on-demand, not on schedule.
-      - id: freshness_watermark_lag
-        max_age_hours: 168
-
-  staging:
-    # Staging uses production-like data but may have some lag.
-    rule_overrides:
-      - id: freshness_partition_age
-        max_age_hours: 48
+## 1. Overview
+
+### 3-Layer Design
+
+The Forge DQ framework operates at three independent levels of depth, each building on the layer beneath it.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Layer 3: Anomaly Detection                                      │
+│  Statistical process control (Z-score) against 30-day history.  │
+│  Flags sudden deviations in row count and null rates.            │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 2: Rule-Based Gates                                       │
+│  YAML-defined rules. Critical failures block the pipeline.       │
+│  Rules live in Git — reviewed, versioned, environment-promoted.  │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 1: Automatic Profiling                                    │
+│  Zero config. Every Spark write captures row count, schema,      │
+│  null rates, distinct counts, min/max/mean/stddev, and timing.   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### Required Fields per Rule
+Every layer writes its results to a dedicated Delta table stored alongside the dataset in ADLS Gen2. All three tables are registered in the Hive Metastore under the `dq` database and are queryable via Trino. The DQ portal dashboard reads from those same tables.
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | Yes | Unique within the ruleset. Used as the primary key in DQ results. Snake case. |
-| `type` | enum | Yes | `schema`, `content`, `volume`, or `freshness` |
-| `check` | string | Yes | The specific check within the type. See check catalog below. |
-| `severity` | enum | Yes | `CRITICAL`, `WARNING`, or `INFO` |
-| `description` | string | No | Human-readable explanation. Surfaced in portal and alerts. |
-| `engine` | enum | No | `trino`, `spark`, or `python`. Overrides ruleset-level `execution.engine`. |
+### Why This Design
+
+**Transparent, not a black box.** Every metric, Z-score, mean, and stddev used to reach a DQ verdict is stored in Delta and visible to any engineer with Trino access. There are no proprietary algorithms or vendor-managed scoring models.
+
+**Git-versioned rules.** DQ rules are YAML files committed to the repository at `orchestration/dq/rules/`. A rule exists only if it is in a committed file. Adding, modifying, or deleting a rule goes through a pull request — it is reviewed, attributed, and revertible. Rules travel through environments (dev → staging → prod) with the pipeline they guard.
+
+**Pipeline-native enforcement.** DQ is not a post-hoc report run outside the pipeline. Layer 2 rules are blocking gates: a critical failure causes the Airflow task to fail, which blocks all downstream tasks. DQ is a first-class citizen of the DAG, not an optional side-car.
+
+**In-VNet, no SaaS dependency.** All DQ computation runs inside the Forge AKS clusters. Results land in ADLS. No data leaves the virtual network to a third-party observability product. The `forge-dq` package (version 0.1.0) is installed directly into the Spark and Airflow images.
+
+**Zero config for basic observability.** Layer 1 profiling requires no YAML, no configuration, no operator action. Every dataset written through the `@track` decorator or `DQOperator` is automatically profiled on every run. Data engineers get a rolling history of row counts, null rates, and schema snapshots from day one.
 
 ---
 
-## 4. DQRunner Internals
+## 2. Package Architecture
+
+### Package Location
+
+The `forge-dq` Python package lives at `sdk/python/forge_dq/` in the repository. It is not published to PyPI. It is installed into the Spark executor image and the Airflow image at build time via `COPY` and `pip install -e .`.
+
+**Version:** 0.1.0
+
+### Package Structure
+
+```
+sdk/python/forge_dq/
+├── __init__.py               ← exports: track, DQRunner, DQResult
+├── track.py                  ← @track decorator
+├── runner.py                 ← DQRunner — orchestrates all 3 layers
+├── profiler.py               ← Layer 1: automatic profiling
+├── rules/
+│   ├── __init__.py
+│   ├── engine.py             ← rule evaluation loop
+│   ├── loader.py             ← YAML parser and validator
+│   └── types/
+│       ├── not_null.py
+│       ├── value_range.py
+│       ├── accepted_values.py
+│       ├── unique_key.py
+│       ├── row_count_delta.py
+│       └── custom_sql.py
+├── anomaly.py                ← Layer 3: Z-score SPC engine
+├── writers.py                ← Delta table writers for all 3 outputs
+├── lineage.py                ← OpenLineage DQ facet emitter
+├── operators/
+│   ├── __init__.py
+│   └── dq_operator.py        ← Airflow DQOperator
+└── config.py                 ← env var resolution
+```
+
+### Key Classes
+
+| Class | Module | Responsibility |
+|-------|--------|----------------|
+| `DQRunner` | `runner.py` | Top-level orchestrator. Calls profiler → rule engine → anomaly engine → writers → lineage emitter in order. |
+| `Profiler` | `profiler.py` | Computes Layer 1 metrics from a DataFrame. Returns a `ProfileResult`. |
+| `RuleEngine` | `rules/engine.py` | Loads a YAML ruleset, evaluates each rule against the DataFrame, returns a list of `RuleResult`. Raises `CriticalDQFailure` on critical failures when `fail_on_critical=True`. |
+| `AnomalyEngine` | `anomaly.py` | Reads 30-day metric history from the auto-profiling Delta table, computes Z-scores, returns a list of `AnomalyResult`. |
+| `DQWriter` | `writers.py` | Writes all three result sets to their respective Delta tables in ADLS. Uses the Spark session provided by the calling job. |
+| `DQOperator` | `operators/dq_operator.py` | Airflow operator that constructs a `DQRunner` and executes it as a standalone task. |
+
+---
+
+## 3. Layer 1: Automatic Profiling
+
+### What Gets Captured
+
+Layer 1 profiling fires automatically on every run that uses the `@track` decorator or `DQOperator`. It requires no YAML, no configuration, and no explicit invocation. The profiler receives the DataFrame that was written and computes the following metrics before returning control to the caller.
+
+**Dataset-level metrics:**
+
+| Metric | Description |
+|--------|-------------|
+| `rows_written` | Row count of the written DataFrame |
+| `schema_json` | Full schema serialized as JSON (column names, types, nullable flags) |
+| `write_duration_ms` | Wall-clock time to execute the write operation |
+| `run_id` | Airflow run ID passed in by the decorator or operator |
+| `pipeline_name` | Inferred from the calling DAG or passed explicitly |
+| `partition_info` | Partition columns and values if the write was partitioned |
+
+**Per-column metrics** (stored as a JSON array in `column_profiles`):
+
+| Metric | Applies to |
+|--------|------------|
+| Null count | All columns |
+| Null rate (null count / row count) | All columns |
+| Approximate distinct count | All columns |
+| Min value | All columns (lexicographic for strings) |
+| Max value | All columns |
+| Mean | Numeric columns |
+| Standard deviation | Numeric columns |
+
+### Output: Auto Metrics Delta Table
+
+**Path:** `_dq/auto/{safe_dataset_name}/metrics/`
+
+**Schema:**
+
+```
+run_id              STRING       NOT NULL
+pipeline_name       STRING
+dataset_path        STRING       NOT NULL
+environment         STRING
+run_timestamp       TIMESTAMP    NOT NULL
+rows_written        LONG
+schema_json         STRING       (full Spark schema as JSON)
+column_profiles     STRING       (JSON array, one entry per column)
+write_duration_ms   LONG
+```
+
+The table is append-only. Every run adds one row. The full history is retained, enabling row count trend analysis and providing the 30-day rolling window consumed by Layer 3.
+
+### Example column_profiles entry
+
+```json
+[
+  {
+    "column": "order_id",
+    "type": "StringType",
+    "null_count": 0,
+    "null_rate": 0.0,
+    "approx_distinct": 142350,
+    "min": "ORD-0000001",
+    "max": "ORD-9999999"
+  },
+  {
+    "column": "amount",
+    "type": "DoubleType",
+    "null_count": 0,
+    "null_rate": 0.0,
+    "approx_distinct": 38421,
+    "min": 0.01,
+    "max": 49999.99,
+    "mean": 184.72,
+    "stddev": 623.41
+  }
+]
+```
+
+---
+
+## 4. Layer 2: Rule-Based Gates
 
 ### Overview
 
-`DQRunner` is the Python class in `forge.dq.sdk` that orchestrates the execution of a ruleset. It takes a `DQRuleset` (loaded from YAML), connects to the configured execution engines, runs all checks, aggregates results into a `DQRunReport`, and returns it to the caller.
+Layer 2 evaluates engineer-defined rules against the written dataset. Rules are declared in YAML at `orchestration/dq/rules/{dataset}.yaml`. They run after the write completes, using the same Spark session. On a `critical` failure, the Airflow task fails immediately, blocking all downstream tasks.
 
-`DQRunner` is designed to run inside an Airflow task pod — it is a library, not a service. It has no persistent process, no daemon, no port. It is instantiated, run, and garbage-collected within a single task execution.
-
-### Loading a Ruleset
-
-```python
-from forge.dq.sdk import DQRunner, load_ruleset
-
-ruleset = load_ruleset("orchestration/dq/rules/orders.yaml")
-```
-
-`load_ruleset()` performs the following steps:
-
-1. Reads the YAML file from the path. The path is relative to the `FORGE_REPO_ROOT` environment variable, which is set to the git-sync volume mount path in the task pod.
-2. Validates the YAML structure against the `DQRuleset` Pydantic model. Invalid rulesets (unknown check types, missing required fields, invalid threshold values) raise a `DQRulesetValidationError` at load time, not at execution time.
-3. Resolves environment-specific overrides. The active environment is read from the `FORGE_ENV` environment variable (injected via Airflow's `airflow.cfg`). Override rules are merged on top of base rules, replacing any fields specified in the override.
-4. Resolves `${VARIABLE}` placeholders in the ruleset (e.g., `${ADLS_ACCOUNT}`) by reading Airflow Variables via the Key Vault Secrets Backend.
-5. Returns a `DQRuleset` object with all rules fully resolved and validated.
-
-### Execution Engines
-
-`DQRunner` supports three execution engines. The engine is selected per-rule (with a ruleset-level default).
-
-**Trino engine**
-
-Used for: content checks (null rate, uniqueness, allowed values, expression, referential integrity), volume checks (row count), freshness checks (watermark lag, partition age).
-
-The Trino engine constructs SQL aggregate queries and issues them to the Trino coordinator via the `trino-python-client`. Each check becomes one or more SQL statements. Multiple checks of the same type against the same table are batched into a single SQL query to minimize round-trips:
-
-```sql
--- Example: batched content checks for orders table
-SELECT
-  -- null_rate: order_id
-  CAST(SUM(CASE WHEN order_id IS NULL THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) AS order_id_null_rate,
-  -- null_rate: customer_id
-  CAST(SUM(CASE WHEN customer_id IS NULL THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) AS customer_id_null_rate,
-  -- uniqueness: order_id
-  CAST(COUNT(DISTINCT order_id) AS DOUBLE) / NULLIF(COUNT(*), 0) AS order_id_uniqueness,
-  -- expression: order_total_positive
-  CAST(SUM(CASE WHEN NOT (order_total_usd >= 0) THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) AS order_total_fail_rate,
-  -- volume: row count
-  COUNT(*) AS total_row_count
-FROM lakehouse.curated.orders
-```
-
-Referential integrity checks use a separate query with a LEFT JOIN or NOT IN subquery. These are never batched with other checks because they reference a second table.
-
-The Trino connection is obtained via `BaseHook.get_connection("trino_default")`, which reads from Key Vault.
-
-**Spark engine**
-
-Used for: checks that cannot be expressed in SQL (e.g., complex statistical checks), checks on DataFrames that have already been materialized in the calling Spark job and passed to DQRunner in-memory.
-
-The Spark engine is only used when `DQRunner` is instantiated with a Spark `DataFrame` argument:
-
-```python
-runner = DQRunner(ruleset=ruleset, dataframe=df, spark=spark)
-```
-
-In this mode, checks run as Spark DataFrame operations (`.agg()`, `.filter()`, `.groupBy()`) against the in-memory DataFrame. This is the preferred mode when DQ runs inside a Spark job rather than a standalone Airflow task pod.
-
-**Python engine**
-
-Used for: schema checks (which operate on the DataFrame schema or the Delta table schema metadata — no data scan required), and freshness checks that read Delta table metadata (partition list) rather than querying data values.
-
-The Python engine uses `delta-spark` or the Delta REST API to read table metadata without issuing SQL queries. For schema checks against a running Spark job, it inspects `df.schema` directly.
-
-### Parallelism Model
-
-Within a single `DQRunner.run()` call:
-
-1. **Schema rules run first, sequentially.** If any CRITICAL schema rule fails, execution halts and the report is returned immediately. There is no point running content checks if the schema is wrong.
-2. **Content, volume, and freshness rules run concurrently.** `DQRunner` uses a `ThreadPoolExecutor` with a configurable number of workers (default: 4) to issue Trino queries in parallel. This is safe because Trino queries are independent.
-3. **Batching:** Before dispatching, `DQRunner` groups Trino-engine checks by table. Checks against the same table are combined into one batched SQL query (as shown above), then a single thread handles the batch.
-
-The parallelism is thread-based (not process-based) because the bottleneck is network I/O (waiting for Trino query results), not CPU. Four concurrent Trino queries is the default; this can be tuned via the `FORGE_DQ_MAX_WORKERS` environment variable.
-
-### Building the DQRunReport
-
-After all checks complete, `DQRunner` assembles a `DQRunReport`:
-
-```python
-@dataclass
-class DQRunReport:
-    ruleset_id: str
-    dataset_namespace: str
-    dataset_name: str
-    run_id: str                     # UUID generated at runner instantiation
-    pipeline_run_id: str            # Airflow run_id, injected via AIRFLOW_RUN_ID env var
-    run_ts: datetime                # Timestamp when runner.run() was called
-    passed: bool                    # True iff zero CRITICAL failures
-    rule_results: List[RuleResult]
-    summary: DQRunSummary
-
-@dataclass
-class RuleResult:
-    rule_id: str
-    check_type: str                 # e.g. "null_rate", "row_count_min"
-    rule_type: str                  # "schema" | "content" | "volume" | "freshness"
-    passed: bool
-    severity: str                   # "CRITICAL" | "WARNING" | "INFO"
-    observed_value: Optional[float] # The measured value (null rate, row count, etc.)
-    threshold: Optional[float]      # The configured threshold
-    message: str                    # Human-readable result description
-    duration_ms: int                # How long this rule took to execute
-
-@dataclass
-class DQRunSummary:
-    total_rules: int
-    passed_rules: int
-    failed_rules: int
-    critical_failures: int
-    warning_failures: int
-    info_failures: int
-    total_duration_ms: int
-```
-
-`passed` is `True` if and only if `critical_failures == 0`. WARNING and INFO failures do not affect `passed`. This property drives the pipeline gate logic.
-
----
-
-## 5. Severity Model
-
-Three severity levels define how a rule failure affects pipeline execution, alerting, and reporting.
-
-### CRITICAL
-
-**Behavior:**
-
-1. The `DQRunReport.passed` field is `False`.
-2. The Airflow task that runs `DQRunner` raises an exception, causing the task to fail.
-3. All downstream tasks in the DAG are marked `UPSTREAM_FAILED` and do not execute. Specifically: the serving publication task does not run. The Gold layer is not updated. The stale (but previously-validated) serving data remains in place.
-4. `AlertReporter` fires the webhook immediately (before the Airflow task has even finished failing). The alert payload includes the rule IDs and observed values of all critical failures.
-5. The DQ results row is written to the Delta table with `passed = FALSE` and the full `rule_results` array.
-6. The `LineageReporter` emits a DQ facet to Purview with `assertions` showing the critical failures.
-
-**When to use CRITICAL:**
-
-Use CRITICAL when a failure means the data cannot be trusted for any consumer purpose — the Gold layer should not be updated. Examples:
-- Primary key is null or non-unique (structural corruption)
-- Row count is below the absolute minimum (partial load)
-- Required column is missing (schema regression)
-- Latest data is more than N hours old (SLA-critical freshness)
-
-### WARNING
-
-**Behavior:**
-
-1. The `DQRunReport.passed` field is `True` (WARNING failures do not affect it).
-2. The Airflow task succeeds. Downstream tasks proceed normally — the Gold layer is updated.
-3. `AlertReporter` fires the webhook with severity `WARNING`. The alert is informational: "pipeline continued but these rules failed."
-4. The DQ results row is written with `passed = TRUE` (because no critical failures) but the `rule_results` array contains the failing WARNING rules with `passed = FALSE`.
-5. `LineageReporter` includes the WARNING failures in the DQ facet.
-
-**When to use WARNING:**
-
-Use WARNING when a failure is notable and worth investigating but does not constitute a reason to block the pipeline. The data is usable but imperfect. Examples:
-- Customer ID null rate exceeds 0.1% (unusual but tolerable)
-- Row count delta exceeds 30% (could be organic growth; investigate)
-- Country code format mismatch rate exceeds 0.1% (data entry noise)
-
-### INFO
-
-**Behavior:**
-
-1. Does not affect `DQRunReport.passed`.
-2. The Airflow task succeeds.
-3. `AlertReporter` does NOT fire for INFO failures. They are silent outside of the DQ results store.
-4. The DQ results row is written with the INFO failure in `rule_results`.
-
-**When to use INFO:**
-
-Use INFO for exploratory or diagnostic checks that you want to track over time but do not yet want to alert on. This is the appropriate starting severity when introducing a new check whose baseline behavior is not yet understood. Once the baseline is established, promote the check to WARNING or CRITICAL.
-
----
-
-## 6. Integration with Airflow
-
-### Position in the DAG
-
-DQ runs as the third stage in the four-stage pipeline pattern, after the curated transform completes and before serving publication:
-
-```
-ingest_raw     →     transform_curated     →     validate_dq     →     publish_serving
-(SparkApp)           (SparkApp)                  (@task)               (SparkApp / Trino)
-```
-
-The `validate_dq` task is a `@task`-decorated Python function that:
-1. Instantiates `DQRunner` with the appropriate ruleset
-2. Calls `runner.run()`
-3. Passes the report to all configured reporters
-4. Raises an exception if `report.has_critical_failures()` — causing the task to fail
-
-### Task Failure Propagation
-
-When `validate_dq` raises an exception:
-
-- Airflow marks the `validate_dq` task instance as `FAILED`
-- Airflow evaluates the downstream task (`publish_serving`) which has the default `trigger_rule="all_success"`. Because its upstream (`validate_dq`) is FAILED, `publish_serving` is set to `UPSTREAM_FAILED` and does not execute
-- The DAG run ends in `FAILED` state
-- `on_failure_callback` on the DAG fires, sending a separate "DAG failed" alert to the webhook (in addition to the DQ-specific alert from `AlertReporter`)
-
-The previously-published serving data remains intact. Delta Lake's ACID properties ensure that no partial serving write has occurred — the serving table is exactly as it was after the last successful pipeline run.
-
-### How to Override — Skipping DQ for a Manual Backfill
-
-In some situations (backfilling historical data, running a one-time migration), an engineer may need to bypass DQ gating. This must be a deliberate, audited action.
-
-The `validate_dq` task accepts a DAG run configuration parameter `skip_dq_gate`:
-
-```python
-@task(executor_config=RESOURCE_PROFILES["medium"])
-def validate_dq(**context):
-    conf = context["dag_run"].conf or {}
-    if conf.get("skip_dq_gate", False):
-        # Explicitly bypassing DQ. Log and write an INFO-level DQ report.
-        logger.warning("DQ gate bypassed via dag_run.conf. Run ID: %s", context["run_id"])
-        StoreReporter().report_bypass(context["run_id"], ruleset_id=RULESET_ID)
-        return   # Task succeeds; serving publication proceeds
-    ...
-    # Normal DQ execution
-```
-
-Bypassing DQ:
-- Requires the `Op` or `Admin` Airflow RBAC role to trigger a DAG run with custom config
-- Is logged in the Airflow task log (visible in Azure Log Analytics and the Airflow UI)
-- Writes a bypass record to the DQ results store (so the portal shows "DQ bypassed" rather than an unexplained gap)
-- Is visible in the lineage graph (DQ facet marks the run as "bypassed")
-
-Bypasses cannot be done via a code change — they require a deliberate runtime action by an authorized user.
-
-### Retries
-
-When `validate_dq` fails due to a CRITICAL DQ failure, Airflow will retry the task (default: 2 retries with 5-minute delay) before marking it permanently failed. This is intentional: transient issues (a Trino query timeout, a momentary ADLS read error) should not permanently fail the DQ task.
-
-However, genuine DQ failures (actual bad data) will fail on every retry. After exhausting retries, the task is marked `FAILED` and the on-call alert fires. An engineer must investigate the data issue, either fix it and re-trigger the pipeline or explicitly bypass DQ for that run.
-
----
-
-## 7. DQ Results Store
-
-### Table Location
-
-All DQ run reports are persisted as a Delta table at:
-
-```
-abfss://silver@<account>.dfs.core.windows.net/_platform/dq_results/
-```
-
-The `_platform/` prefix places this table outside the normal `domain/entity/` directory structure. It is a platform-managed table, not a domain dataset.
-
-### Full Schema
-
-```
-dq_results Delta table
-─────────────────────────────────────────────────────────────────────
-
-Column                  Type                    Nullable  Notes
-─────────────────────────────────────────────────────────────────────
-ruleset_id              STRING                  NOT NULL  PK-like: unique ID of the
-                                                          ruleset that produced this run.
-                                                          e.g. "curated_orders"
-
-dataset_namespace       STRING                  NOT NULL  OpenLineage namespace.
-                                                          e.g. "forge-prod"
-
-dataset_name            STRING                  NOT NULL  Logical dataset name.
-                                                          e.g. "curated.orders"
-
-run_id                  STRING                  NOT NULL  UUID. Unique per DQRunner
-                                                          invocation.
-
-pipeline_run_id         STRING                  NOT NULL  Airflow DAG run ID that
-                                                          triggered this DQ run.
-                                                          e.g. "scheduled__2026-03-24T00:00:00+00:00"
-
-run_ts                  TIMESTAMP               NOT NULL  When runner.run() started (UTC).
-
-run_date                DATE                    NOT NULL  Partition column. Derived from
-                                                          run_ts. Used for partition pruning.
-
-passed                  BOOLEAN                 NOT NULL  TRUE iff zero CRITICAL failures.
-
-bypassed                BOOLEAN                 NOT NULL  TRUE if DQ gate was bypassed.
-
-environment             STRING                  NOT NULL  e.g. "prod", "staging", "dev"
-
-total_row_count         LONG                    NULLABLE  Row count of the dataset at
-                                                          time of DQ run. Populated by
-                                                          volume checks.
-
-rule_results            ARRAY<STRUCT<            NOT NULL  One element per rule.
-                          rule_id:      STRING,
-                          check_type:   STRING,
-                          rule_type:    STRING,
-                          severity:     STRING,
-                          passed:       BOOLEAN,
-                          observed_value: DOUBLE,         Numeric observed value (null rate,
-                          threshold:    DOUBLE,           row count, lag hours, etc.).
-                          message:      STRING,           Human-readable result.
-                          duration_ms:  LONG              Rule execution time.
-                        >>
-
-summary                 STRUCT<                 NOT NULL
-                          total_rules:       INT,
-                          passed_rules:      INT,
-                          failed_rules:      INT,
-                          critical_failures: INT,
-                          warning_failures:  INT,
-                          info_failures:     INT,
-                          total_duration_ms: LONG
-                        >
-
-─────────────────────────────────────────────────────────────────────
-Partitioned by: run_date
-Z-ORDERED by:   dataset_name, run_ts  (for portal time-series queries)
-```
-
-### Query Examples for Portal Use Cases
-
-**1. Latest DQ status for all datasets (portal home/DQ dashboard)**
-
-```sql
-WITH latest_run AS (
-  SELECT
-    dataset_name,
-    MAX(run_ts) AS latest_run_ts
-  FROM lakehouse.curated._platform_dq_results
-  WHERE run_date >= CURRENT_DATE - INTERVAL '7' DAY
-  GROUP BY dataset_name
-)
-SELECT
-  r.dataset_name,
-  r.run_ts,
-  r.passed,
-  r.bypassed,
-  r.summary.critical_failures,
-  r.summary.warning_failures,
-  r.summary.total_rules,
-  r.total_row_count
-FROM lakehouse.curated._platform_dq_results r
-JOIN latest_run lr
-  ON r.dataset_name = lr.dataset_name
-  AND r.run_ts = lr.latest_run_ts
-ORDER BY r.dataset_name
-```
-
-**2. DQ pass rate trend over 30 days for a specific dataset (portal dataset detail)**
-
-```sql
-SELECT
-  run_date,
-  COUNT(*) AS total_runs,
-  SUM(CASE WHEN passed THEN 1 ELSE 0 END) AS passed_runs,
-  CAST(SUM(CASE WHEN passed THEN 1 ELSE 0 END) AS DOUBLE) / COUNT(*) AS pass_rate
-FROM lakehouse.curated._platform_dq_results
-WHERE
-  dataset_name = 'curated.orders'
-  AND run_date >= CURRENT_DATE - INTERVAL '30' DAY
-GROUP BY run_date
-ORDER BY run_date
-```
-
-**3. All critical rule failures in the last 24 hours (portal DQ alert drill-down)**
-
-```sql
-SELECT
-  r.dataset_name,
-  r.run_ts,
-  r.pipeline_run_id,
-  rr.rule_id,
-  rr.check_type,
-  rr.observed_value,
-  rr.threshold,
-  rr.message
-FROM lakehouse.curated._platform_dq_results r
-CROSS JOIN UNNEST(r.rule_results) AS t(rr)
-WHERE
-  r.run_ts >= NOW() - INTERVAL '24' HOUR
-  AND rr.passed = FALSE
-  AND rr.severity = 'CRITICAL'
-ORDER BY r.run_ts DESC
-```
-
-**4. Row count history for a dataset (volume trend, anomaly detection)**
-
-```sql
-SELECT
-  run_date,
-  run_ts,
-  total_row_count,
-  LAG(total_row_count) OVER (PARTITION BY dataset_name ORDER BY run_ts) AS prior_row_count,
-  CAST(total_row_count - LAG(total_row_count) OVER (PARTITION BY dataset_name ORDER BY run_ts) AS DOUBLE)
-    / NULLIF(LAG(total_row_count) OVER (PARTITION BY dataset_name ORDER BY run_ts), 0) AS row_count_delta_pct
-FROM lakehouse.curated._platform_dq_results
-WHERE dataset_name = 'curated.orders'
-ORDER BY run_ts
-```
-
-**5. Specific rule pass/fail history (track a single rule over time)**
-
-```sql
-SELECT
-  r.run_date,
-  r.run_ts,
-  rr.rule_id,
-  rr.passed,
-  rr.observed_value,
-  rr.threshold
-FROM lakehouse.curated._platform_dq_results r
-CROSS JOIN UNNEST(r.rule_results) AS t(rr)
-WHERE
-  r.dataset_name = 'curated.orders'
-  AND rr.rule_id = 'content_order_id_not_null'
-  AND r.run_date >= CURRENT_DATE - INTERVAL '90' DAY
-ORDER BY r.run_ts
-```
-
----
-
-## 8. Reporters
-
-After `DQRunner.run()` produces a `DQRunReport`, the caller passes it to one or more reporters. Each reporter handles one output channel. Reporters are independent — one reporter failing does not prevent others from executing.
-
-In the standard `validate_dq` Airflow task, all three reporters are always used:
-
-```python
-from forge.dq.reporters import StoreReporter, AlertReporter, LineageReporter
-
-for reporter in [StoreReporter(), AlertReporter(), LineageReporter()]:
-    try:
-        reporter.report(report)
-    except Exception as e:
-        logger.error("Reporter %s failed: %s", reporter.__class__.__name__, e)
-        # Reporters are best-effort — their failure does not fail the DQ task.
-        # A failed reporter is monitored via Azure Monitor metric counter: dq_reporter_errors_total.
-```
-
-### StoreReporter
-
-**Responsibility:** Writes the `DQRunReport` as a row in the DQ results Delta table.
-
-**Implementation:**
-
-`StoreReporter` converts `DQRunReport` to a PySpark Row and appends it to the Delta table using `delta-spark`. The write uses `mode="append"` (never overwrite). The Delta table's schema is registered in the Hive Metastore on first write; subsequent writes validate schema compatibility.
-
-The reporter runs in the Airflow task pod using the `id-forge-read-{env}` workload identity, which has `Storage Blob Data Reader` on the `silver` and `gold` containers (DQ results are written by the Spark DQ job running under `id-forge-compute-{env}`).
-
-If the Delta table does not yet exist (first run in a new environment), `StoreReporter` creates it with the schema defined in `forge.dq.schema.DQ_RESULTS_SCHEMA`.
-
-### AlertReporter
-
-**Responsibility:** Posts a structured JSON payload to the configured webhook (Microsoft Teams or Slack) when rules fail at WARNING or CRITICAL severity.
-
-**Alert conditions:**
-
-| Condition | Alert sent? | Channel |
-|-----------|------------|---------|
-| One or more CRITICAL failures | Yes, immediately | `#data-platform-alerts` (Teams/Slack) |
-| One or more WARNING failures | Yes | `#data-platform-warnings` |
-| All rules passed | No | — |
-| DQ gate bypassed | Yes (informational) | `#data-platform-alerts` |
-
-**Alert payload (Teams Adaptive Card):**
-
-```json
-{
-  "type": "AdaptiveCard",
-  "body": [
-    {
-      "type": "TextBlock",
-      "text": "DQ CRITICAL: curated.orders",
-      "weight": "Bolder",
-      "color": "Attention"
-    },
-    {
-      "type": "FactSet",
-      "facts": [
-        { "title": "Run ID", "value": "a1b2c3d4-..." },
-        { "title": "Pipeline Run", "value": "scheduled__2026-03-24T00:00:00+00:00" },
-        { "title": "Failing rules", "value": "content_order_id_not_null, volume_min_row_count" },
-        { "title": "Portal link", "value": "https://portal.forge.internal/dq/curated.orders/runs/a1b2c3d4-..." }
-      ]
-    }
-  ]
-}
-```
-
-The webhook URL is stored in Key Vault as `airflow-variables--dq-alert-webhook-url`. It is not hardcoded in the reporter or the ruleset.
-
-### LineageReporter
-
-**Responsibility:** Emits a DQ facet as part of an OpenLineage `COMPLETE` event to the Purview OpenLineage endpoint. This attaches the DQ run outcome to the dataset in the lineage graph, making it visible in the lineage explorer.
-
-**DQ facet structure (OpenLineage `DataQualityAssertionsDatasetFacet`):**
-
-```json
-{
-  "assertions": [
-    {
-      "assertion": "content_order_id_not_null",
-      "passed": true,
-      "column": "order_id"
-    },
-    {
-      "assertion": "volume_min_row_count",
-      "passed": false,
-      "success": false
-    }
-  ]
-}
-```
-
-This facet is attached to the output dataset event for the `validate_dq` job. In Purview, the asset node for `curated.orders` shows the DQ assertion results for the latest run and historical pass/fail trend.
-
-The `LineageReporter` emits events via the `OPENLINEAGE_TRANSPORT` environment variable (configured with `azure_identity` auth), sending to the Purview OpenLineage endpoint. No explicit Airflow connection is needed — authentication uses workload identity.
-
----
-
-## 9. Longitudinal Tracking and Regression Detection
-
-### Pass Rate Trend
-
-The DQ results store enables time-series analysis of data quality across all datasets. The Developer Portal's DQ dashboard displays the rolling 30-day pass rate per dataset, computed from the query in section 7.
-
-A regression is defined as: the 7-day rolling pass rate for a dataset drops by more than 10 percentage points compared to the prior 7-day window.
-
-### Azure Monitor Metrics
-
-`DQRunner` exports counters and histograms via the `airflow_custom_metrics` statsd integration (scraped by the Azure Monitor Agent):
-
-| Metric | Type | Labels | Description |
-|--------|------|--------|-------------|
-| `dq_runs_total` | Counter | `dataset`, `passed`, `environment` | Total DQ run completions |
-| `dq_critical_failures_total` | Counter | `dataset`, `rule_id` | Total CRITICAL rule failures |
-| `dq_warning_failures_total` | Counter | `dataset`, `rule_id` | Total WARNING rule failures |
-| `dq_run_duration_ms` | Histogram | `dataset` | Total DQRunner.run() wall time |
-| `dq_rule_duration_ms` | Histogram | `dataset`, `rule_id` | Per-rule execution time |
-| `dq_reporter_errors_total` | Counter | `reporter` | Reporter invocation failures |
-
-These metrics feed the Azure Managed Grafana "Platform Overview" dashboard's DQ pass rate panel and the Azure Monitor Alert rule:
-
-```kql
-// Azure Monitor Scheduled Query Alert: DQ pass rate drops below 95% over 1-hour window
-InsightsMetrics
-| where Name == "dq_runs_total"
-| summarize
-    passed = sumif(Val, Tags contains "passed=true"),
-    total  = sum(Val)
-  by bin(TimeGenerated, 1h)
-| extend pass_rate = todouble(passed) / todouble(total)
-| where pass_rate < 0.95
-// Alert fires if any result row exists → severity 0 (Critical), action group: forge-platform-critical
-```
-
-### Detecting Regression in Specific Rules
-
-To identify which rules have been trending toward failure over time:
-
-```sql
--- Rules with increasing failure rates over last 14 days vs prior 14 days
-WITH recent AS (
-  SELECT
-    rr.rule_id,
-    AVG(CASE WHEN rr.passed THEN 0.0 ELSE 1.0 END) AS recent_fail_rate
-  FROM lakehouse.curated._platform_dq_results r
-  CROSS JOIN UNNEST(r.rule_results) AS t(rr)
-  WHERE r.run_date >= CURRENT_DATE - INTERVAL '14' DAY
-    AND r.dataset_name = 'curated.orders'
-  GROUP BY rr.rule_id
-),
-prior AS (
-  SELECT
-    rr.rule_id,
-    AVG(CASE WHEN rr.passed THEN 0.0 ELSE 1.0 END) AS prior_fail_rate
-  FROM lakehouse.curated._platform_dq_results r
-  CROSS JOIN UNNEST(r.rule_results) AS t(rr)
-  WHERE r.run_date >= CURRENT_DATE - INTERVAL '28' DAY
-    AND r.run_date < CURRENT_DATE - INTERVAL '14' DAY
-    AND r.dataset_name = 'curated.orders'
-  GROUP BY rr.rule_id
-)
-SELECT
-  r.rule_id,
-  p.prior_fail_rate,
-  r.recent_fail_rate,
-  r.recent_fail_rate - p.prior_fail_rate AS deterioration
-FROM recent r
-JOIN prior p ON r.rule_id = p.rule_id
-WHERE r.recent_fail_rate > p.prior_fail_rate
-ORDER BY deterioration DESC
-```
-
-This query surfaces rules whose failure rate has increased in the recent window compared to the prior window, indicating a potential data quality regression in the source system.
-
----
-
-## 10. DQ for Streaming
-
-### Context
-
-Streaming pipelines in Forge use Spark Structured Streaming with micro-batch mode (30-second trigger interval) writing via MERGE to a curated Delta table. The consuming Airflow DAG (serving publication) runs on a faster schedule (every 5 minutes) rather than daily.
-
-Running a full `DQRunner` execution against the entire streaming table every 5 minutes would be wasteful and would produce results that are difficult to interpret (is the failure from this micro-batch or an accumulated issue?). Streaming DQ uses an adapted approach.
-
-### Adaptations for Streaming
-
-**Freshness checks run on every micro-batch.** The streaming job itself checks freshness at the end of each micro-batch write: the event time of the latest committed record is compared against `NOW()`. If the lag exceeds the freshness threshold (e.g., 5 minutes), the streaming job emits a metric `spark_streaming_watermark_lag_seconds` which Azure Monitor Alerts monitors. This check is not done via `DQRunner` — it is embedded in the Spark streaming job's `foreachBatch` logic.
-
-**Volume checks use sliding windows, not absolute counts.** For streaming, "volume" means "rows per unit time", not total rows. A streaming DQ volume rule specifies a minimum throughput:
+### YAML Schema Reference
 
 ```yaml
-- id: volume_min_throughput
-  type: volume
-  check: rows_per_window               # Streaming-specific check type.
-  window_minutes: 5                    # Look at the last 5 minutes of data.
-  min_rows_in_window: 100              # At least 100 rows must have arrived.
-  severity: WARNING
-  description: "Order event stream must receive at least 100 events per 5 minutes."
-```
+version: "1"
+dataset: silver/orders_cleaned          # logical dataset path (used as safe_dataset_name base)
+description: "Quality rules for orders silver layer"
+owner: "data-engineering"
+primary_key: [order_id]                 # informational; used by unique_key rules by default
 
-This check reads `COUNT(*) WHERE event_time >= NOW() - INTERVAL 5 MINUTE` from the Delta table. It runs as a Trino query every 5 minutes from the serving publication DAG.
-
-**Content checks run on a sample of recent rows.** Rather than scanning the full table, content checks for streaming datasets operate on a sliding window of recent rows (e.g., last 1 hour). This is configured via `sample_strategy: recent_window` in the ruleset:
-
-```yaml
-execution:
-  sample_strategy: recent_window        # Options: full | fraction | recent_window
-  recent_window_hours: 1                # Scan only rows where event_time >= NOW() - 1h
-```
-
-The Trino queries add a `WHERE event_time >= NOW() - INTERVAL 1 HOUR` predicate. This limits scan cost and focuses quality checks on the most recently arrived data.
-
-**Schema checks are unchanged.** Schema is defined by the Delta table schema, which does not change between micro-batches. Schema checks run once per serving publication DAG run.
-
-### Streaming DQ Thresholds vs Batch
-
-| Check | Batch threshold | Streaming threshold | Rationale |
-|-------|----------------|---------------------|-----------|
-| Freshness | 26 hours | 5 minutes | Streaming SLA is fundamentally tighter |
-| Min row count | 50,000 (full table) | 100 rows/5 min window | Streaming volume is rate, not absolute count |
-| Partition age | 1 day | N/A (no partitions by date in streaming) | Replaced by watermark lag check |
-| Null rate (customer_id) | 0.001 (full scan) | 0.001 (1-hour window) | Same threshold; different scan scope |
-| Row count delta | 20% day-over-day | N/A | Not meaningful for streaming |
-
-### DQ Results for Streaming
-
-Streaming DQ results are written to the same `_platform/dq_results/` Delta table with `dataset_name = 'curated.orders_stream'` (a convention: append `_stream` to distinguish). The portal DQ dashboard treats streaming and batch datasets consistently — the pass rate trend and rule drill-down work identically for both.
-
----
-
-## 11. Architecture Diagram
-
-```
-╔══════════════════════════════════════════════════════════════════════════════════╗
-║                       DQ Framework — Component Overview                          ║
-╚══════════════════════════════════════════════════════════════════════════════════╝
-
-Git Repository
-orchestration/dq/rules/orders.yaml
-orchestration/dq/rules/customers.yaml
-orchestration/dq/rules/inventory.yaml
-          │
-          │  git-sync (60s cadence)
-          ▼
-Airflow Task Pod (validate_dq task)
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                                                                             │
-│  load_ruleset("orchestration/dq/rules/orders.yaml")                         │
-│    │                                                                        │
-│    │  1. Parse YAML                                                         │
-│    │  2. Validate against DQRuleset Pydantic model                          │
-│    │  3. Apply environment overrides (FORGE_ENV=prod)                       │
-│    │  4. Resolve ${ADLS_ACCOUNT} from Airflow Variables (Key Vault)         │
-│    ▼                                                                        │
-│  DQRuleset (validated, resolved)                                            │
-│    │                                                                        │
-│    ▼                                                                        │
-│  DQRunner.run()                                                             │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                                                                        │ │
-│  │  Phase 1: Schema checks (sequential, Python engine)                   │  │
-│  │  ┌─────────────────────────────────────────────────────────────────┐  │  │
-│  │  │  column_present, column_type, column_nullability                 │  │ │
-│  │  │  → reads Delta table schema (no data scan)                      │  │  │
-│  │  │  CRITICAL failure? → abort, return report                       │  │  │
-│  │  └─────────────────────────────────────────────────────────────────┘  │  │
-│  │                                                                        │ │
-│  │  Phase 2: Content + Volume + Freshness (parallel, Trino engine)        │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────┐  │   │
-│  │  │ Thread 1         │  │ Thread 2         │  │ Thread 3           │  │   │
-│  │  │ Batched content  │  │ Volume checks    │  │ Freshness checks   │  │   │
-│  │  │ SQL (null_rate,  │  │ (row_count,      │  │ (partition_age,    │  │   │
-│  │  │  uniqueness,     │  │  delta,          │  │  watermark_lag)    │  │   │
-│  │  │  expression)     │  │  new_rows)       │  │                    │  │   │
-│  │  └───────┬──────────┘  └───────┬──────────┘  └──────────┬─────────┘  │   │
-│  │          │                     │                          │            │ │
-│  │          └─────────────────────┴──────────────────────────┘            │ │
-│  │                                │                                        ││
-│  │                                ▼                                        ││
-│  │  Thread 4: Referential integrity checks (separate Trino cross-table     ││
-│  │            queries, run in parallel with Phase 2 threads)               ││
-│  │                                                                        │ │
-│  │  Aggregate RuleResult list → DQRunReport                               │ │
-│  └───────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-│  Reporters (sequential, each catches own exceptions)                        │
-│  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                                                                       │  │
-│  │  StoreReporter                 AlertReporter          LineageReporter │  │
-│  │  ┌──────────────────┐         ┌─────────────────┐   ┌─────────────┐  │   │
-│  │  │ Writes DQRunReport│         │ Sends webhook   │   │ Emits DQ    │  │  │
-│  │  │ to Delta table   │         │ to Teams/Slack  │   │ facet to    │  │   │
-│  │  │ (append mode)    │         │ (CRITICAL +     │   │ Purview OL  │  │   │
-│  │  │                  │         │  WARNING only)  │   │             │  │   │
-│  │  └────────┬─────────┘         └────────┬────────┘   └──────┬──────┘  │   │
-│  │           │                            │                    │         │  │
-│  └───────────┼────────────────────────────┼────────────────────┼─────────┘  │
-│              │                            │                    │            │
-│  if report.has_critical_failures():       │                    │            │
-│      raise DQCriticalFailureError         │                    │            │
-│         │                                │                    │             │
-└─────────┼────────────────────────────────┼────────────────────┼──────────────┘
-          │                                │                    │
-          ▼                                ▼                    ▼
-  Airflow task FAILED           Teams/Slack webhook       Purview OL
-  downstream: UPSTREAM_FAILED   DQ alert message          endpoint
-  AlertReporter already fired   (if CRITICAL/WARNING)     DQ facet on
-  serving not updated                                      curated.orders
-
-
-DATA STORES WRITTEN BY DQ FRAMEWORK
-────────────────────────────────────
-
-  abfss://silver@<account>.dfs.core.windows.net/_platform/dq_results/
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │  Delta table (append-only)                                          │
-  │  Partitioned by run_date                                            │
-  │  Z-ORDERED by dataset_name, run_ts                                  │
-  │  One row per DQRunner.run() call                                    │
-  │  Contains: run metadata + full rule_results array + summary         │
-  └─────────────────────────────────────────────────────────────────────┘
-          │
-          │  queried by
-          ├──► Developer Portal (DQ dashboard, dataset detail, trends)
-          ├──► Azure Managed Grafana dashboard (via Azure Monitor / Trino data source)
-          └──► dq_results_compact maintenance DAG (weekly OPTIMIZE + VACUUM)
-
-
-EXECUTION ENGINE ROUTING
-─────────────────────────
-
-Rule type               Engine              How it executes
-────────────────────────────────────────────────────────────────────
-schema.column_present   Python              df.schema inspection (no I/O)
-schema.column_type      Python              df.schema inspection (no I/O)
-schema.column_nullability Python            Trino: COUNT WHERE IS NULL
-content.*               Trino (default)     SQL aggregate query via trino-python-client
-content.* (in Spark)    Spark               DataFrame .agg() on in-memory df
-volume.row_count_*      Trino               COUNT(*) SQL
-volume.row_count_delta  Trino + DQ store    COUNT(*) + prior run from _platform/dq_results/
-freshness.partition_age Python              Delta SHOW PARTITIONS metadata
-freshness.watermark_lag Trino               MAX(ts_column) SQL aggregate
-referential_integrity   Trino               LEFT JOIN / NOT IN cross-table SQL
-custom (extension)      Configurable        See section 12
-```
-
----
-
-## 12. Adding a Custom Check Type
-
-### When to Use a Custom Check
-
-The four built-in check types (schema, content, volume, freshness) cover the overwhelming majority of DQ requirements. A custom check type is appropriate when:
-
-- The check logic cannot be expressed as a SQL aggregate or schema inspection
-- The check requires calling an external API (e.g., validating a value against a reference service)
-- The check involves a complex statistical computation (e.g., distribution drift detection)
-- The check requires reading from two datasets simultaneously in a non-SQL way
-
-Custom checks still follow the same YAML ruleset format, severity model, and reporter pipeline. The only difference is the implementation of the check logic.
-
-### Extension Point
-
-`DQRunner` discovers check implementations via a plugin registry. Each check type is a Python class that inherits from `BaseCheck` and is registered with the `@dq_check` decorator.
-
-**Step 1: Implement the check class**
-
-Create a new file in `orchestration/dq/sdk/checks/`:
-
-```python
-# orchestration/dq/sdk/checks/statistical_checks.py
-
-from typing import Any, Dict
-from forge.dq.sdk.base import BaseCheck, CheckResult, dq_check
-
-
-@dq_check(check_type="distribution_drift")
-class DistributionDriftCheck(BaseCheck):
-    """
-    Compares the distribution of a numeric column in the current run
-    against the distribution from the most recent prior run using the
-    Kolmogorov-Smirnov (KS) statistic.
-
-    Fails if the KS statistic exceeds the configured threshold.
-
-    Rule YAML:
-        - id: order_total_drift
-          type: content
-          check: distribution_drift
-          column: order_total_usd
-          max_ks_statistic: 0.1
-          severity: WARNING
-    """
-
-    def validate_params(self, rule: Dict[str, Any]) -> None:
-        """Called at load_ruleset() time. Raise ValueError for invalid params."""
-        if "column" not in rule:
-            raise ValueError("distribution_drift requires 'column' parameter")
-        if "max_ks_statistic" not in rule:
-            raise ValueError("distribution_drift requires 'max_ks_statistic' parameter")
-        if not 0.0 < rule["max_ks_statistic"] <= 1.0:
-            raise ValueError("max_ks_statistic must be between 0 and 1")
-
-    def execute(self, rule: Dict[str, Any], context: "DQRunContext") -> CheckResult:
-        """
-        Execute the check. context provides access to:
-          context.trino_client  — authenticated Trino client
-          context.spark         — SparkSession (if available)
-          context.dq_store      — read access to _platform/dq_results/ Delta table
-          context.dataset_path  — ADLS path of the current dataset
-          context.run_ts        — timestamp of the current run
-        """
-        column = rule["column"]
-        max_ks = rule["max_ks_statistic"]
-
-        # Fetch current run's column percentiles via Trino
-        current_percentiles = context.trino_client.query(f"""
-            SELECT
-              approx_percentile({column}, ARRAY[0.1, 0.2, 0.3, 0.4, 0.5,
-                                                0.6, 0.7, 0.8, 0.9, 0.99])
-            FROM {context.trino_table_ref}
-            WHERE {column} IS NOT NULL
-        """)
-
-        # Fetch prior run's percentiles from DQ results store
-        # (stored as a custom column when this check type ran previously)
-        prior_percentiles = self._get_prior_percentiles(context, column)
-
-        if prior_percentiles is None:
-            # No prior run to compare against — pass with INFO message
-            return CheckResult(
-                passed=True,
-                observed_value=None,
-                threshold=max_ks,
-                message=f"No prior run found for {column}; skipping drift check.",
-            )
-
-        # Compute KS statistic
-        ks_stat = self._ks_statistic(current_percentiles, prior_percentiles)
-
-        passed = ks_stat <= max_ks
-
-        return CheckResult(
-            passed=passed,
-            observed_value=ks_stat,
-            threshold=max_ks,
-            message=(
-                f"KS statistic for {column}: {ks_stat:.4f} "
-                f"({'OK' if passed else 'EXCEEDS'} threshold {max_ks})"
-            ),
-        )
-
-    def _ks_statistic(self, dist1, dist2) -> float:
-        """Compute max absolute difference between two CDF arrays."""
-        return max(abs(a - b) for a, b in zip(dist1, dist2))
-
-    def _get_prior_percentiles(self, context, column):
-        """Read prior run's percentile data from DQ results store."""
-        # Custom checks can store structured data in the rule_results.observed_value
-        # JSON field. This implementation reads the prior run's serialized percentiles.
-        # Implementation detail omitted for brevity.
-        ...
-```
-
-**Step 2: Register the check**
-
-The `@dq_check(check_type="distribution_drift")` decorator registers the class in the global check registry at import time. For `DQRunner` to discover it, the module must be imported. Add the import to `orchestration/dq/sdk/checks/__init__.py`:
-
-```python
-# orchestration/dq/sdk/checks/__init__.py
-from forge.dq.sdk.checks.schema_checks import *       # built-in
-from forge.dq.sdk.checks.content_checks import *      # built-in
-from forge.dq.sdk.checks.volume_checks import *       # built-in
-from forge.dq.sdk.checks.freshness_checks import *    # built-in
-from forge.dq.sdk.checks.statistical_checks import *  # custom extension
-```
-
-**Step 3: Write a unit test**
-
-```python
-# orchestration/dq/tests/test_distribution_drift.py
-
-import pytest
-from pyspark.sql import SparkSession
-from forge.dq.sdk import DQRunner, DQRuleset
-from forge.dq.sdk.checks.statistical_checks import DistributionDriftCheck
-
-def test_distribution_drift_passes_when_ks_below_threshold(spark):
-    ruleset = DQRuleset.from_dict({
-        "ruleset_id": "test_drift",
-        "dataset": {"namespace": "test", "name": "test.orders"},
-        "rules": [{
-            "id": "order_total_drift",
-            "type": "content",
-            "check": "distribution_drift",
-            "column": "order_total_usd",
-            "max_ks_statistic": 0.1,
-            "severity": "WARNING",
-        }]
-    })
-
-    # Create a DataFrame with a known distribution
-    df = spark.createDataFrame([
-        (float(i),) for i in range(1000)
-    ], ["order_total_usd"])
-
-    # First run: no prior run — should pass with INFO message
-    runner = DQRunner(ruleset=ruleset, dataframe=df, spark=spark)
-    report = runner.run()
-    assert report.passed
-    assert report.rule_results[0].message.startswith("No prior run found")
-
-def test_distribution_drift_fails_when_ks_exceeds_threshold(spark):
-    # Test with dramatically different distributions
-    ...
-```
-
-**Step 4: Use in a YAML ruleset**
-
-```yaml
 rules:
-  - id: order_total_drift
-    type: content
-    check: distribution_drift           # Matches the @dq_check(check_type=...) decorator value
-    column: order_total_usd
-    max_ks_statistic: 0.1
-    severity: WARNING
-    description: "Alert if order total distribution drifts significantly vs yesterday."
-    engine: python                      # Custom checks use the Python engine (not Trino)
+  - name: <rule_name>                   # unique within the file; appears in DQ result records
+    type: <rule_type>                   # one of: not_null, value_range, accepted_values,
+                                        #         unique_key, row_count_delta, custom_sql
+    # ... type-specific fields ...
+    severity: critical | warning        # critical → pipeline-blocking; warning → logged only
+
+anomaly_detection:
+  enabled: true | false
+  lookback_days: 30
+  z_score_threshold: 3.0
 ```
 
-### What BaseCheck Provides
+### Rule Types
 
-| Attribute / Method | Type | Description |
-|-------------------|------|-------------|
-| `validate_params(rule)` | Method | Override to validate rule-specific parameters at load time. Called by load_ruleset(). |
-| `execute(rule, context)` | Method | Override to implement the check. Must return a `CheckResult`. |
-| `context.trino_client` | `TrinoClient` | Authenticated Trino client for SQL queries |
-| `context.spark` | `SparkSession` | Available when runner is in Spark mode |
-| `context.dq_store` | `DQResultsReader` | Read access to `_platform/dq_results/` for historical comparisons |
-| `context.dataset_path` | `str` | ADLS path of the dataset being checked |
-| `context.trino_table_ref` | `str` | Fully qualified Trino table reference (e.g., `lakehouse.curated.orders`) |
-| `context.run_ts` | `datetime` | UTC timestamp of the current run |
-| `context.environment` | `str` | Active environment (`prod`, `staging`, `dev`) |
+#### `not_null`
 
-Custom checks are subject to the same severity model, reporter pipeline, and longitudinal tracking as built-in checks. There is no special handling for custom check types — they produce `RuleResult` objects and `CheckResult` returns just like any other check, and they appear in the DQ results store and portal alongside built-in checks.
+Asserts that one or more columns contain no null values.
+
+```yaml
+- name: order_id_not_null
+  type: not_null
+  columns: [order_id, customer_id, amount]
+  severity: critical
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `columns` | Yes | List of column names that must have zero nulls |
+| `severity` | Yes | `critical` or `warning` |
+
+**Pass condition:** `COUNT(*) WHERE col IS NULL = 0` for every listed column.
+
+#### `value_range`
+
+Asserts that a numeric column's values fall within a defined min/max bound.
+
+```yaml
+- name: amount_non_negative
+  type: value_range
+  column: amount
+  min: 0
+  severity: critical
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `column` | Yes | Single column name |
+| `min` | No | Inclusive lower bound (numeric or date string) |
+| `max` | No | Inclusive upper bound |
+| `severity` | Yes | `critical` or `warning` |
+
+**Pass condition:** `MIN(col) >= min AND MAX(col) <= max`. At least one of `min` or `max` must be specified.
+
+#### `accepted_values`
+
+Asserts that a column only contains values from a defined set.
+
+```yaml
+- name: status_accepted_values
+  type: accepted_values
+  column: status
+  values: [open, closed, pending, cancelled, refunded]
+  severity: critical
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `column` | Yes | Single column name |
+| `values` | Yes | List of permitted values (strings) |
+| `severity` | Yes | `critical` or `warning` |
+
+**Pass condition:** `COUNT(*) WHERE col NOT IN (values) = 0`.
+
+#### `unique_key`
+
+Asserts that the combination of one or more columns is unique across all rows (no duplicates).
+
+```yaml
+- name: no_duplicate_orders
+  type: unique_key
+  columns: [order_id]
+  severity: critical
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `columns` | Yes | One or more columns that form the unique key |
+| `severity` | Yes | `critical` or `warning` |
+
+**Pass condition:** `COUNT(*) = COUNT(DISTINCT col1, col2, ...)`.
+
+#### `row_count_delta`
+
+Asserts that the current row count has not dropped by more than a defined percentage compared to the average of recent prior runs.
+
+```yaml
+- name: row_count_not_collapsed
+  type: row_count_delta
+  max_drop_pct: 20
+  lookback_runs: 7
+  severity: critical
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `max_drop_pct` | Yes | Maximum acceptable percentage drop (0–100). A value of `20` means the row count may not drop more than 20% vs the lookback average. |
+| `lookback_runs` | No | Number of prior runs to average. Defaults to 7. |
+| `severity` | Yes | `critical` or `warning` |
+
+**Pass condition:** `current_rows >= avg_prior_rows * (1 - max_drop_pct / 100)`. The rule is skipped (status `SKIPPED`) if fewer prior runs exist than `lookback_runs`.
+
+#### `custom_sql`
+
+Evaluates an arbitrary SQL assertion against the dataset. The SQL must be a `SELECT` that returns a single scalar value, which is compared against an `expected` value.
+
+```yaml
+- name: order_date_not_future
+  type: custom_sql
+  sql: "SELECT COUNT(*) FROM {table} WHERE order_date > current_date()"
+  expected: 0
+  severity: warning
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `sql` | Yes | SQL query string. Use `{table}` as a placeholder for the dataset's fully qualified table name. Must return a single scalar. |
+| `expected` | Yes | The expected scalar result for the assertion to pass. |
+| `severity` | Yes | `critical` or `warning` |
+
+**Pass condition:** query result equals `expected` (exact equality after type coercion to string).
+
+### Full Example YAML
+
+```yaml
+version: "1"
+dataset: silver/orders_cleaned
+description: "Quality rules for orders silver layer"
+owner: "data-engineering"
+primary_key: [order_id]
+
+rules:
+  - name: order_id_not_null
+    type: not_null
+    columns: [order_id, customer_id, amount]
+    severity: critical
+
+  - name: amount_non_negative
+    type: value_range
+    column: amount
+    min: 0
+    severity: critical
+
+  - name: status_accepted_values
+    type: accepted_values
+    column: status
+    values: [open, closed, pending, cancelled, refunded]
+    severity: critical
+
+  - name: no_duplicate_orders
+    type: unique_key
+    columns: [order_id]
+    severity: critical
+
+  - name: row_count_not_collapsed
+    type: row_count_delta
+    max_drop_pct: 20
+    lookback_runs: 7
+    severity: critical
+
+  - name: order_date_not_future
+    type: custom_sql
+    sql: "SELECT COUNT(*) FROM {table} WHERE order_date > current_date()"
+    expected: 0
+    severity: warning
+
+anomaly_detection:
+  enabled: true
+  lookback_days: 30
+  z_score_threshold: 3.0
+```
+
+### Severity Model
+
+| Severity | On FAIL behavior | Written to results table | Alert fires |
+|----------|------------------|--------------------------|-------------|
+| `critical` | Airflow task fails immediately. All downstream tasks blocked. | Yes, status = `FAIL` | Yes |
+| `warning` | Pipeline continues. Warning logged. | Yes, status = `WARN` | No (visible in portal) |
+
+A run where all rules pass writes records with `status = PASS`. A rule that cannot be evaluated (e.g. `row_count_delta` with insufficient history) writes `status = SKIPPED`.
+
+### Output: Rule Results Delta Table
+
+**Path:** `_dq/rules/{safe_dataset_name}/results/`
+
+**Schema:**
+
+```
+run_id          STRING       NOT NULL
+pipeline_name   STRING
+dataset_path    STRING       NOT NULL
+run_timestamp   TIMESTAMP    NOT NULL
+rule_name       STRING       NOT NULL
+rule_type       STRING
+severity        STRING       (critical / warning)
+status          STRING       (PASS / FAIL / WARN / SKIPPED)
+message         STRING       (human-readable description of result)
+actual_value    STRING       (serialized actual metric value)
+expected_value  STRING       (serialized expected/threshold value)
+affected_rows   LONG         (rows violating the rule, where applicable)
+```
+
+---
+
+## 5. Layer 3: Anomaly Detection
+
+### Approach: Statistical Process Control
+
+Layer 3 uses Statistical Process Control (SPC) to detect anomalies in pipeline metrics over time. After each run, the engine computes a Z-score for each tracked metric by comparing the current value to the rolling distribution of the same metric over the prior 30 days.
+
+**Z-score formula:**
+
+```
+Z = (current_value - mean_30d) / stddev_30d
+```
+
+An anomaly is flagged when `|Z| > 3.0` (configurable via `z_score_threshold`). A Z-score of 3.0 corresponds to a value that falls outside 3 standard deviations from the 30-day mean — a statistically rare event that warrants investigation.
+
+### Tracked Metrics
+
+| Metric | What it detects |
+|--------|-----------------|
+| `rows_written` | Sudden data drops (upstream truncation, failed extraction) or explosions (fan-out bugs, duplicate ingestion) |
+| `null_rate_{column}` | Per-column null rate anomalies — detects upstream data degradation, source field going blank, or a broken join introducing unexpected nulls |
+
+### Why SPC Over ML
+
+An ML-based approach (ARIMA, Prophet, isolation forest) introduces opacity: the model makes a decision but does not easily explain why. Engineers cannot reason about a model's threshold or audit its history without specialized knowledge.
+
+SPC is transparent: every data point used in the decision is stored. The Z-score, the 30-day mean, and the 30-day standard deviation are written to the anomaly results Delta table alongside the `is_anomaly` flag. An engineer can open Trino, query the table, and understand exactly why a flag was raised. The algorithm is explainable in one sentence.
+
+### Minimum History Requirement
+
+The anomaly engine requires a minimum of **7 historical runs** before activating for a given dataset. If fewer than 7 prior runs exist in the auto-profiling metrics table, the engine writes no anomaly records for that run. This eliminates false positives during initial onboarding of a new dataset or after a schema migration resets history.
+
+### Configuration
+
+Anomaly detection is configured per-dataset in the YAML rules file:
+
+```yaml
+anomaly_detection:
+  enabled: true          # set to false to disable for this dataset
+  lookback_days: 30      # rolling window for mean/stddev calculation
+  z_score_threshold: 3.0 # anomaly threshold; lower = more sensitive
+```
+
+The `lookback_days` and `z_score_threshold` values can also be set globally via environment variables (see [Section 11](#11-configuration-reference)). Dataset-level YAML values take precedence over global env vars.
+
+### Output: Anomaly Results Delta Table
+
+**Path:** `_dq/anomaly/{safe_dataset_name}/results/`
+
+**Schema:**
+
+```
+run_id          STRING       NOT NULL
+dataset_path    STRING       NOT NULL
+run_timestamp   TIMESTAMP    NOT NULL
+metric_name     STRING       (e.g. "rows_written", "null_rate_customer_id")
+current_value   DOUBLE
+mean_30d        DOUBLE
+stddev_30d      DOUBLE
+z_score         DOUBLE
+is_anomaly      BOOLEAN
+severity        STRING       (warning for all anomaly flags)
+message         STRING
+```
+
+Every metric evaluated in a run produces one row, regardless of whether it is flagged as an anomaly. This means a clean run still populates the table with `is_anomaly = false` records, preserving the full Z-score history for trend analysis.
+
+---
+
+## 6. Storage Layout
+
+### ADLS Path Convention
+
+All DQ output tables are stored alongside their dataset in ADLS Gen2, under a `_dq/` prefix. The underscore prefix ensures DQ tables are not confused with the dataset itself and are excluded from standard `SHOW TABLES` output.
+
+```
+abfss://silver@forgeadlsdev.dfs.core.windows.net/
+  orders_cleaned/                          ← actual dataset (Delta table)
+  _dq/
+    auto/
+      silver_orders_cleaned/
+        metrics/                           ← Layer 1: auto profiling (Delta)
+    rules/
+      silver_orders_cleaned/
+        results/                           ← Layer 2: rule results (Delta)
+    anomaly/
+      silver_orders_cleaned/
+        results/                           ← Layer 3: anomaly results (Delta)
+```
+
+### safe_dataset_name Convention
+
+The `safe_dataset_name` is derived from the logical `dataset` field in the YAML (or passed to the `@track` decorator) by replacing all `/` characters with `_`.
+
+| dataset value | safe_dataset_name |
+|---------------|-------------------|
+| `silver/orders_cleaned` | `silver_orders_cleaned` |
+| `gold/analytics/kpi_daily` | `gold_analytics_kpi_daily` |
+| `bronze/events_raw` | `bronze_events_raw` |
+
+The `safe_dataset_name` is used as:
+- The subfolder name under `_dq/auto/`, `_dq/rules/`, and `_dq/anomaly/`
+- The Hive Metastore table name suffix under the `dq` database (see [Section 7](#7-querying-results))
+
+### Hive Metastore Registration
+
+All three `_dq/` Delta tables are registered in the Hive Metastore under the `dq` database using the pattern `{layer}__{safe_dataset_name}`. Registration happens automatically on first write.
+
+| Layer | Hive table name (example) |
+|-------|---------------------------|
+| Auto profiling | `dq.auto__silver_orders_cleaned` |
+| Rule results | `dq.rules__silver_orders_cleaned` |
+| Anomaly results | `dq.anomaly__silver_orders_cleaned` |
+
+### Permissions
+
+| Identity | Role | Scope |
+|----------|------|-------|
+| `id-forge-compute-{env}` | Storage Blob Data Contributor | Writes all `_dq/` Delta tables (Spark job identity) |
+| `id-forge-read-{env}` | Storage Blob Data Reader | Reads `_dq/` tables (Trino queries, portal DQ dashboard) |
+
+---
+
+## 7. Querying Results
+
+All DQ Delta tables are registered in the Hive Metastore and queryable via Trino using the `dq` database. The following examples use `silver_orders_cleaned` as the target dataset.
+
+### Pass Rate Trend (Last 30 Days)
+
+```sql
+SELECT
+    DATE(run_timestamp)                                                        AS run_date,
+    COUNT(*)                                                                   AS total_checks,
+    SUM(CASE WHEN status = 'PASS' THEN 1 ELSE 0 END)                          AS passed,
+    ROUND(
+        100.0 * SUM(CASE WHEN status = 'PASS' THEN 1 ELSE 0 END) / COUNT(*),
+        1
+    )                                                                          AS pass_rate_pct
+FROM dq.rules__silver_orders_cleaned
+WHERE run_timestamp >= NOW() - INTERVAL '30' DAY
+GROUP BY 1
+ORDER BY 1 DESC;
+```
+
+### Row Count Trend with Anomaly Flags
+
+```sql
+SELECT
+    m.run_timestamp,
+    m.rows_written,
+    a.z_score,
+    a.is_anomaly
+FROM dq.auto__silver_orders_cleaned m
+LEFT JOIN dq.anomaly__silver_orders_cleaned a
+    ON  m.run_id       = a.run_id
+    AND a.metric_name  = 'rows_written'
+ORDER BY m.run_timestamp DESC
+LIMIT 30;
+```
+
+### Anomaly History for a Dataset
+
+```sql
+SELECT
+    run_timestamp,
+    metric_name,
+    current_value,
+    mean_30d,
+    stddev_30d,
+    z_score,
+    message
+FROM dq.anomaly__silver_orders_cleaned
+WHERE is_anomaly = true
+ORDER BY run_timestamp DESC;
+```
+
+### Worst-Performing Datasets (Cross-Dataset Summary)
+
+This query requires a view or a UNION across all `rules__*` tables. A convenient approach is to create a unified view in the Hive Metastore that unions all rule result tables with a `dataset_path` discriminator column. Once that view exists:
+
+```sql
+SELECT
+    dataset_path,
+    COUNT(*)                                                                   AS total_checks,
+    SUM(CASE WHEN status IN ('FAIL', 'WARN') THEN 1 ELSE 0 END)               AS failures,
+    ROUND(
+        100.0 * SUM(CASE WHEN status IN ('FAIL', 'WARN') THEN 1 ELSE 0 END)
+                / NULLIF(COUNT(*), 0),
+        1
+    )                                                                          AS failure_rate_pct
+FROM dq.all_rule_results
+WHERE run_timestamp >= NOW() - INTERVAL '7' DAY
+GROUP BY dataset_path
+ORDER BY failure_rate_pct DESC
+LIMIT 20;
+```
+
+### Per-Rule Failure Count (Last 90 Days)
+
+```sql
+SELECT
+    rule_name,
+    rule_type,
+    severity,
+    COUNT(*) FILTER (WHERE status IN ('FAIL', 'WARN'))   AS failure_count,
+    COUNT(*)                                              AS total_evaluations,
+    MAX(run_timestamp)                                    AS last_evaluated
+FROM dq.rules__silver_orders_cleaned
+WHERE run_timestamp >= NOW() - INTERVAL '90' DAY
+GROUP BY rule_name, rule_type, severity
+ORDER BY failure_count DESC;
+```
+
+---
+
+## 8. Airflow Integration
+
+### Two Integration Patterns
+
+The `forge-dq` package provides two ways to integrate DQ into a pipeline:
+
+| Pattern | When to use |
+|---------|-------------|
+| `@track` decorator | The Spark job is a Python function. DQ runs inline as part of the job, in the same Spark session, immediately after the DataFrame write. |
+| `DQOperator` | DQ runs as a separate Airflow task, after an upstream write task has already completed. Useful when the write task is not a Python function (e.g. a `SparkKubernetesOperator` submitting a JAR). |
+
+### The `@track` Decorator
+
+The decorator wraps a function that returns a `DataFrame`. After the function executes and the DataFrame is written, the decorator automatically:
+
+1. Computes Layer 1 profile metrics
+2. Loads and evaluates Layer 2 rules (if `rules` path provided)
+3. Runs Layer 3 anomaly detection
+4. Writes all three result sets to Delta
+5. Emits the OpenLineage DQ facet to Purview
+
+```python
+from forge_dq import track
+from pyspark.sql import SparkSession, DataFrame
+
+@track(
+    dataset="silver/orders_cleaned",
+    rules="orchestration/dq/rules/orders_cleaned.yaml"
+)
+def transform(spark: SparkSession) -> DataFrame:
+    raw = spark.table("bronze.orders_raw")
+    # ... transformation logic ...
+    return cleaned_df
+```
+
+The decorator reads `FORGE_DQ_ENABLED` and `FORGE_DQ_FAIL_ON_CRITICAL` from the environment. If `FORGE_DQ_ENABLED=false`, the decorator is a no-op and the function behaves normally.
+
+### The `DQOperator`
+
+Use `DQOperator` as a standalone Airflow task that reads an already-written Delta table, runs all three DQ layers, and either passes or fails the task.
+
+```python
+from forge_dq.operators import DQOperator
+
+check_orders_silver = DQOperator(
+    task_id="dq_orders_silver",
+    dataset="silver/orders_cleaned",
+    rules_path="orchestration/dq/rules/orders_cleaned.yaml",
+    run_id="{{ run_id }}",
+    fail_on_critical=True,
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `task_id` | str | Airflow task ID |
+| `dataset` | str | Logical dataset path (used to derive `safe_dataset_name`) |
+| `rules_path` | str | Path to the YAML rules file, relative to the DAG repo root |
+| `run_id` | str | Airflow run ID; supports Jinja templating |
+| `fail_on_critical` | bool | If `True`, task fails on any critical rule failure. Defaults to `True`. |
+
+### DAG Example: Bronze → Silver → Gold with DQ Gates
+
+```python
+from airflow import DAG
+from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import (
+    SparkKubernetesOperator,
+)
+from forge_dq.operators import DQOperator
+from datetime import datetime, timedelta
+
+default_args = {
+    "owner": "data-engineering",
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+}
+
+with DAG(
+    dag_id="orders_pipeline",
+    default_args=default_args,
+    schedule_interval="0 6 * * *",
+    start_date=datetime(2026, 1, 1),
+    catchup=False,
+) as dag:
+
+    # --- Bronze ingestion ---
+    ingest_bronze = SparkKubernetesOperator(
+        task_id="ingest_orders_bronze",
+        application_file="jobs/ingest_orders_bronze.yaml",
+        namespace="spark-jobs",
+    )
+
+    # --- DQ gate: Bronze ---
+    dq_bronze = DQOperator(
+        task_id="dq_orders_bronze",
+        dataset="bronze/orders_raw",
+        rules_path="orchestration/dq/rules/orders_raw.yaml",
+        run_id="{{ run_id }}",
+        fail_on_critical=True,
+    )
+
+    # --- Silver transform ---
+    transform_silver = SparkKubernetesOperator(
+        task_id="transform_orders_silver",
+        application_file="jobs/transform_orders_silver.yaml",
+        namespace="spark-jobs",
+    )
+
+    # --- DQ gate: Silver ---
+    dq_silver = DQOperator(
+        task_id="dq_orders_silver",
+        dataset="silver/orders_cleaned",
+        rules_path="orchestration/dq/rules/orders_cleaned.yaml",
+        run_id="{{ run_id }}",
+        fail_on_critical=True,
+    )
+
+    # --- Gold aggregation ---
+    aggregate_gold = SparkKubernetesOperator(
+        task_id="aggregate_orders_gold",
+        application_file="jobs/aggregate_orders_gold.yaml",
+        namespace="spark-jobs",
+    )
+
+    # --- DQ gate: Gold ---
+    dq_gold = DQOperator(
+        task_id="dq_orders_gold",
+        dataset="gold/analytics/orders_daily",
+        rules_path="orchestration/dq/rules/orders_daily.yaml",
+        run_id="{{ run_id }}",
+        fail_on_critical=True,
+    )
+
+    (
+        ingest_bronze
+        >> dq_bronze
+        >> transform_silver
+        >> dq_silver
+        >> aggregate_gold
+        >> dq_gold
+    )
+```
+
+**Failure propagation:** If `dq_silver` fails (a critical rule fails), `aggregate_gold` and `dq_gold` are blocked with status `upstream_failed`. The Gold layer is never written with bad Silver input.
+
+---
+
+## 9. OpenLineage Integration
+
+### DQ Facet
+
+On every run (decorator or `DQOperator`), after all three DQ layers complete, the `forge-dq` package emits an OpenLineage event to the Purview OpenLineage endpoint. The event attaches a custom `forge_dq` facet to the dataset output node that represents the written dataset.
+
+**Example facet payload:**
+
+```json
+{
+  "forge_dq": {
+    "rows_written": 142350,
+    "rules_total": 6,
+    "rules_passed": 6,
+    "rules_failed": 0,
+    "rules_warned": 0,
+    "critical_failures": [],
+    "overall_status": "PASS"
+  }
+}
+```
+
+If a warning-severity rule fails, the facet reflects:
+
+```json
+{
+  "forge_dq": {
+    "rows_written": 142350,
+    "rules_total": 6,
+    "rules_passed": 5,
+    "rules_failed": 0,
+    "rules_warned": 1,
+    "critical_failures": [],
+    "overall_status": "WARN"
+  }
+}
+```
+
+If a critical-severity rule fails:
+
+```json
+{
+  "forge_dq": {
+    "rows_written": 142350,
+    "rules_total": 6,
+    "rules_passed": 4,
+    "rules_failed": 1,
+    "rules_warned": 0,
+    "critical_failures": ["no_duplicate_orders"],
+    "overall_status": "FAIL"
+  }
+}
+```
+
+### How It Appears in Purview
+
+In the Microsoft Purview lineage graph, each dataset node that has been written by a `@track`-decorated function or a `DQOperator` task will show the `forge_dq` facet when selected. The facet is visible in the asset details panel under **Custom Properties → forge_dq**.
+
+The `overall_status` field allows Purview users to see at a glance whether the last pipeline run for a given asset passed DQ. The `critical_failures` array identifies which rules failed by name, without requiring the viewer to open Trino or the DQ portal.
+
+### Emission Behavior
+
+The OpenLineage event is a fire-and-forget HTTP POST to the Purview endpoint. A failure to emit (e.g. network timeout, Purview API unavailability) does **not** cause the Airflow task to fail. The failure is logged at WARNING level and the pipeline continues. DQ results are always written to Delta regardless of lineage emission outcome.
+
+---
+
+## 10. Writing Custom Metrics
+
+### Option 1: `custom_sql` Rule
+
+The simplest way to add a custom metric is the `custom_sql` rule type. Any SQL expression that returns a single scalar value can be expressed as an assertion.
+
+```yaml
+- name: no_refunds_exceed_order_amount
+  type: custom_sql
+  sql: |
+    SELECT COUNT(*)
+    FROM {table}
+    WHERE refund_amount > original_amount
+  expected: 0
+  severity: critical
+
+- name: avg_order_amount_sanity
+  type: custom_sql
+  sql: "SELECT ROUND(AVG(amount), 2) FROM {table}"
+  expected: 200.0          # adjust threshold per environment
+  severity: warning
+```
+
+The `{table}` placeholder is replaced at runtime with the fully qualified Delta table name for the dataset. The query is executed via the Spark session's `spark.sql()` interface.
+
+For the `avg_order_amount_sanity` example above, the expected value is an exact equality check. For threshold-based checks that do not reduce to an exact value, prefer `value_range` over `custom_sql`. Use `custom_sql` when the assertion logic cannot be expressed with the built-in rule types.
+
+### Option 2: Direct `DQRunner` Usage with Custom Python Functions
+
+For metrics that cannot be expressed in SQL — for example, statistical distribution tests, cross-dataset comparisons that require joining large DataFrames in Spark, or checks against external APIs — use `DQRunner` directly with a custom metric function.
+
+```python
+from forge_dq import DQRunner
+from forge_dq.profiler import MetricResult
+from pyspark.sql import DataFrame, SparkSession
+
+def check_order_amount_distribution(df: DataFrame) -> MetricResult:
+    """
+    Custom metric: assert that P99 of order amount does not exceed $50,000.
+    Returns a MetricResult that will be written to the auto-profiling table
+    and evaluated against the provided threshold.
+    """
+    p99 = df.approxQuantile("amount", [0.99], 0.01)[0]
+    return MetricResult(
+        metric_name="p99_order_amount",
+        value=p99,
+        passed=p99 <= 50_000,
+        message=f"P99 order amount is {p99:.2f}; threshold is 50000",
+        severity="critical",
+    )
+
+def transform(spark: SparkSession) -> DataFrame:
+    df = spark.table("bronze.orders_raw")
+    # ... transformation logic ...
+    return cleaned_df
+
+runner = DQRunner(
+    dataset="silver/orders_cleaned",
+    rules_path="orchestration/dq/rules/orders_cleaned.yaml",
+    run_id=run_id,
+    spark=spark,
+)
+result_df = transform(spark)
+runner.run(
+    df=result_df,
+    custom_metrics=[check_order_amount_distribution],
+    fail_on_critical=True,
+)
+```
+
+Custom metric functions:
+- Receive the full `DataFrame` as their only argument
+- Return a `MetricResult` (imported from `forge_dq.profiler`)
+- Are executed after Layer 1 profiling completes
+- Their results are written to the auto-profiling `column_profiles` JSON alongside the standard per-column metrics
+- A `passed=False` result with `severity="critical"` causes the same failure behavior as a critical rule failure
+
+---
+
+## 11. Configuration Reference
+
+### Environment Variables
+
+All `forge-dq` configuration is resolved from environment variables. In Kubernetes deployments these are injected via Helm values into the Spark and Airflow pod specs.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `FORGE_ENV` | Yes | — | Environment name (`dev`, `staging`, `prod`). Written into all DQ result records as `environment`. |
+| `FORGE_ADLS_ACCOUNT` | Yes | — | ADLS Gen2 storage account name (e.g. `forgeadlsdev`). Used to construct `_dq/` output paths. |
+| `FORGE_DQ_ENABLED` | No | `true` | Set to `false` to disable all DQ processing globally (the `@track` decorator and `DQOperator` become no-ops). Useful for local development. |
+| `FORGE_DQ_FAIL_ON_CRITICAL` | No | `true` | Set to `false` to prevent critical rule failures from raising an exception. Results are still written. Useful for dry-run mode when onboarding a new dataset. |
+| `FORGE_DQ_ANOMALY_LOOKBACK_DAYS` | No | `30` | Global default for anomaly detection lookback window. Overridden by per-dataset YAML value. |
+| `FORGE_DQ_ANOMALY_Z_THRESHOLD` | No | `3.0` | Global default for anomaly Z-score threshold. Overridden by per-dataset YAML value. |
+| `FORGE_DQ_ANOMALY_MIN_RUNS` | No | `7` | Minimum number of prior runs before anomaly detection activates for a dataset. |
+
+### Helm Values (Spark)
+
+```yaml
+# infra/helm/compute/spark-operator/values-dev.yaml
+sparkJobDefaults:
+  env:
+    - name: FORGE_ENV
+      value: "dev"
+    - name: FORGE_ADLS_ACCOUNT
+      value: "forgeadlsdev"
+    - name: FORGE_DQ_ENABLED
+      value: "true"
+    - name: FORGE_DQ_FAIL_ON_CRITICAL
+      value: "true"
+```
+
+### Helm Values (Airflow)
+
+```yaml
+# infra/helm/orchestration/airflow/values-dev.yaml
+env:
+  - name: FORGE_ENV
+    value: "dev"
+  - name: FORGE_ADLS_ACCOUNT
+    value: "forgeadlsdev"
+  - name: FORGE_DQ_ENABLED
+    value: "true"
+  - name: FORGE_DQ_FAIL_ON_CRITICAL
+    value: "true"
+```
+
+---
+
+## 12. Adding DQ to a New Dataset
+
+Follow this checklist when adding DQ coverage to a new or existing pipeline for the first time.
+
+### Step 1: Identify the dataset
+
+Determine the logical dataset path. This is the value you will pass to `dataset=` in the decorator or operator. Use the convention `{layer}/{dataset_name}`, for example `silver/orders_cleaned`.
+
+Verify that the dataset is written as a Delta table in ADLS Gen2 and is registered in the Hive Metastore.
+
+### Step 2: Create the YAML rules file
+
+Create a new file at `orchestration/dq/rules/{dataset_name}.yaml`. Start with the minimum required structure:
+
+```yaml
+version: "1"
+dataset: silver/orders_cleaned
+description: "Quality rules for orders silver layer"
+owner: "data-engineering"
+primary_key: [order_id]
+
+rules:
+  - name: primary_key_not_null
+    type: not_null
+    columns: [order_id]
+    severity: critical
+
+  - name: row_count_not_collapsed
+    type: row_count_delta
+    max_drop_pct: 20
+    lookback_runs: 7
+    severity: critical
+
+anomaly_detection:
+  enabled: true
+  lookback_days: 30
+  z_score_threshold: 3.0
+```
+
+Add further rules incrementally after reviewing the Layer 1 auto-profiling output from the first few runs (see Step 5).
+
+### Step 3: Add the `@track` decorator or `DQOperator`
+
+**If the pipeline is a Python Spark job:**
+
+```python
+from forge_dq import track
+
+@track(
+    dataset="silver/orders_cleaned",
+    rules="orchestration/dq/rules/orders_cleaned.yaml"
+)
+def transform(spark: SparkSession) -> DataFrame:
+    # existing transformation logic — no changes required
+    return result_df
+```
+
+**If the pipeline is a `SparkKubernetesOperator` task in an Airflow DAG:**
+
+```python
+from forge_dq.operators import DQOperator
+
+dq_check = DQOperator(
+    task_id="dq_orders_silver",
+    dataset="silver/orders_cleaned",
+    rules_path="orchestration/dq/rules/orders_cleaned.yaml",
+    run_id="{{ run_id }}",
+    fail_on_critical=True,
+)
+
+# Wire it into the DAG after the write task:
+write_task >> dq_check >> next_task
+```
+
+### Step 4: Deploy to dev and run once with `FORGE_DQ_FAIL_ON_CRITICAL=false`
+
+On the first deployment, set `FORGE_DQ_FAIL_ON_CRITICAL=false` (or pass `fail_on_critical=False` to `DQOperator`) to allow the pipeline to complete even if rules fail. This lets you observe the baseline DQ state of the dataset before making rules blocking.
+
+After the first run completes, query the rule results table to see which rules passed and which failed:
+
+```sql
+SELECT rule_name, status, message, actual_value, expected_value
+FROM dq.rules__silver_orders_cleaned
+WHERE run_timestamp = (SELECT MAX(run_timestamp) FROM dq.rules__silver_orders_cleaned)
+ORDER BY status DESC;
+```
+
+### Step 5: Review auto-profiling output and tune rules
+
+Query the Layer 1 metrics to understand the dataset's actual distribution before finalizing thresholds:
+
+```sql
+SELECT
+    run_timestamp,
+    rows_written,
+    column_profiles
+FROM dq.auto__silver_orders_cleaned
+ORDER BY run_timestamp DESC
+LIMIT 10;
+```
+
+Use these baseline values to set realistic thresholds in the YAML. For `row_count_delta`, 3–5 initial runs are enough to set a representative baseline. For `value_range`, use the observed min/max with appropriate margins.
+
+### Step 6: Re-enable critical failures and open a PR
+
+Once all rules are passing in dev:
+
+1. Set `FORGE_DQ_FAIL_ON_CRITICAL=true` (or remove the override — `true` is the default)
+2. Open a pull request with the new YAML rules file
+3. The PR description should explain the rationale for each rule and its threshold
+4. Request review from a second data engineer before merging
+
+### Step 7: Verify in staging before promoting to production
+
+Run the pipeline in staging with DQ enabled and critical failures active. Confirm that all rules pass and that the anomaly detection engine has enough history (≥ 7 runs) before promoting to production.
+
+### Quick Reference Checklist
+
+```
+[ ] Logical dataset path chosen (e.g. silver/orders_cleaned)
+[ ] Delta table exists and is registered in Hive Metastore
+[ ] orchestration/dq/rules/{dataset_name}.yaml created
+[ ] YAML has at least: not_null on primary key, row_count_delta
+[ ] @track decorator or DQOperator wired into the pipeline
+[ ] First run executed with fail_on_critical=false
+[ ] Auto-profiling output reviewed; rule thresholds tuned
+[ ] All rules passing in dev
+[ ] Pull request opened and reviewed
+[ ] Pipeline run verified in staging with fail_on_critical=true
+[ ] Promoted to production
+```

@@ -1,61 +1,295 @@
 "use client";
 
-export default function PipelinesPage() {
+import { useEffect, useState, useMemo } from "react";
+import { useAuth } from "../../auth/useAuth";
+import { apiFetch } from "../../utils/api";
+
+const ACCENT = "#0284c7";
+
+interface Pipeline {
+  dag_id: string;
+  description: string;
+  is_active: boolean;
+  is_paused: boolean;
+  last_run_state: string | null;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  schedule: string | null;
+  tags: string[];
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "—";
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function StateBadge({ state }: { state: string | null }) {
+  const map: Record<string, { bg: string; color: string; label: string }> = {
+    success: { bg: "#dcfce7", color: "#16a34a", label: "Success" },
+    failed: { bg: "#fee2e2", color: "#dc2626", label: "Failed" },
+    running: { bg: "#fef9c3", color: "#ca8a04", label: "Running" },
+    queued: { bg: "#e0f2fe", color: "#0284c7", label: "Queued" },
+  };
+  const style = state ? map[state] ?? { bg: "#f1f5f9", color: "#64748b", label: state } : { bg: "#f1f5f9", color: "#94a3b8", label: "No runs" };
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "60vh",
-        gap: 24,
-        padding: "2rem",
-      }}
-    >
-      <div style={{ fontSize: 64, opacity: 0.15 }}>
-        <i className="fas fa-sitemap" aria-hidden="true" />
+    <span style={{
+      padding: "2px 10px", borderRadius: 12, fontSize: 12, fontWeight: 600,
+      background: style.bg, color: style.color,
+    }}>
+      {style.label}
+    </span>
+  );
+}
+
+export default function PipelinesPage() {
+  const { getToken, role } = useAuth();
+  const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [triggering, setTriggering] = useState<string | null>(null);
+  const [triggerMsg, setTriggerMsg] = useState<{ dag_id: string; ok: boolean; msg: string } | null>(null);
+
+  useEffect(() => {
+    apiFetch<Pipeline[]>("/api/pipelines", getToken)
+      .then(setPipelines)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [getToken]);
+
+  const canTrigger = role === "Admin" || role === "Editor";
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return pipelines;
+    const q = search.toLowerCase();
+    return pipelines.filter(
+      p => p.dag_id.toLowerCase().includes(q) ||
+        p.description.toLowerCase().includes(q) ||
+        p.tags.some(t => t.toLowerCase().includes(q))
+    );
+  }, [pipelines, search]);
+
+  // Group by first tag
+  const grouped = useMemo(() => {
+    const groups: Record<string, Pipeline[]> = {};
+    for (const p of filtered) {
+      const key = p.tags[0] ?? "Untagged";
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(p);
+    }
+    return groups;
+  }, [filtered]);
+
+  async function handleTrigger(dag_id: string) {
+    setTriggering(dag_id);
+    try {
+      await apiFetch(`/api/pipelines/${dag_id}/trigger`, getToken, {
+        method: "POST",
+        body: JSON.stringify({ conf: {} }),
+      });
+      setTriggerMsg({ dag_id, ok: true, msg: "Triggered successfully" });
+    } catch (e: unknown) {
+      setTriggerMsg({ dag_id, ok: false, msg: e instanceof Error ? e.message : "Trigger failed" });
+    } finally {
+      setTriggering(null);
+      setTimeout(() => setTriggerMsg(null), 4000);
+    }
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)" }}>
+      {/* Hero */}
+      <div style={{
+        background: `linear-gradient(135deg, ${ACCENT} 0%, #0f172a 100%)`,
+        padding: "48px 1.5rem 40px",
+      }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: 11, background: "rgba(255,255,255,0.15)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <i className="fas fa-sitemap" style={{ color: "#fff", fontSize: 18 }} />
+            </div>
+            <h1 style={{ fontSize: "clamp(1.6rem,3.5vw,2.2rem)", fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
+              Pipeline Explorer
+            </h1>
+          </div>
+          <p style={{ color: "rgba(255,255,255,0.7)", margin: 0, fontSize: 15 }}>
+            Browse, monitor and trigger your Forge data pipelines
+          </p>
+          {!loading && !error && (
+            <div style={{ display: "flex", gap: 16, marginTop: 20, flexWrap: "wrap" }}>
+              {[
+                { label: "Total", value: pipelines.length, icon: "fa-layer-group" },
+                { label: "Active", value: pipelines.filter(p => p.is_active).length, icon: "fa-circle-play" },
+                { label: "Paused", value: pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle" },
+                { label: "Failed", value: pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark" },
+              ].map(s => (
+                <div key={s.label} style={{
+                  background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: 10, padding: "8px 18px", display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <i className={`fas ${s.icon}`} style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }} />
+                  <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{s.value}</span>
+                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>{s.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-      <div>
-        <h1
-          style={{
-            fontSize: "2rem",
-            fontWeight: 800,
-            color: "#0f172a",
-            textAlign: "center",
-            marginBottom: 12,
-          }}
-        >
-          Pipeline Explorer
-        </h1>
-        <p
-          style={{
-            color: "#64748b",
-            textAlign: "center",
-            maxWidth: 480,
-            lineHeight: 1.7,
-          }}
-        >
-          Browse, monitor and trigger your Forge data pipelines. View run
-          history, dependencies, and SLO status.
-        </p>
-      </div>
-      <div
-        style={{
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "8px 20px",
-          borderRadius: 20,
-          background: "var(--forge-primary, #1e3a5f)14",
-          border: "1px solid var(--forge-primary, #1e3a5f)30",
-          fontSize: 13,
-          fontWeight: 600,
-          color: "var(--forge-primary, #1e3a5f)",
-        }}
-      >
-        <i className="fas fa-clock" style={{ fontSize: 12 }} aria-hidden="true" />
-        Coming Soon
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
+        {/* Search */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ position: "relative", maxWidth: 480 }}>
+            <i className="fas fa-magnifying-glass" style={{
+              position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+              color: "#94a3b8", fontSize: 14,
+            }} />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search pipelines by name, tag…"
+              style={{
+                width: "100%", padding: "10px 14px 10px 40px", borderRadius: 10,
+                border: "1px solid #e2e8f0", fontSize: 14, background: "#fff",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.04)", outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+        </div>
+
+        {loading && (
+          <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+            <i className="fas fa-spinner fa-spin" style={{ fontSize: 28, marginBottom: 12, display: "block" }} />
+            Loading pipelines…
+          </div>
+        )}
+
+        {error && (
+          <div style={{
+            background: "#fff", border: "1px solid #fca5a5", borderTop: `3px solid #ef4444`,
+            borderRadius: 12, padding: "20px 24px", color: "#dc2626",
+          }}>
+            <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
+            {error}
+          </div>
+        )}
+
+        {triggerMsg && (
+          <div style={{
+            background: triggerMsg.ok ? "#f0fdf4" : "#fff1f2",
+            border: `1px solid ${triggerMsg.ok ? "#86efac" : "#fca5a5"}`,
+            borderRadius: 10, padding: "12px 18px", marginBottom: 16,
+            color: triggerMsg.ok ? "#16a34a" : "#dc2626", fontSize: 14,
+          }}>
+            <i className={`fas ${triggerMsg.ok ? "fa-check-circle" : "fa-circle-exclamation"}`} style={{ marginRight: 8 }} />
+            <strong>{triggerMsg.dag_id}</strong>: {triggerMsg.msg}
+          </div>
+        )}
+
+        {!loading && !error && Object.keys(grouped).length === 0 && (
+          <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+            <i className="fas fa-inbox" style={{ fontSize: 32, marginBottom: 12, display: "block" }} />
+            No pipelines found
+          </div>
+        )}
+
+        {!loading && !error && Object.entries(grouped).map(([group, items]) => (
+          <div key={group} style={{ marginBottom: 32 }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.09em",
+              textTransform: "uppercase", color: "#94a3b8", marginBottom: 12,
+            }}>
+              {group} <span style={{ fontWeight: 400 }}>({items.length})</span>
+            </div>
+            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                    {["Pipeline", "Schedule", "Last Run", "Status", ""].map(h => (
+                      <th key={h} style={{
+                        padding: "10px 16px", textAlign: "left",
+                        fontSize: 11, fontWeight: 700, color: "#94a3b8",
+                        textTransform: "uppercase", letterSpacing: "0.07em",
+                        whiteSpace: "nowrap",
+                      }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((p, idx) => (
+                    <tr
+                      key={p.dag_id}
+                      style={{
+                        borderBottom: idx < items.length - 1 ? "1px solid #f8fafc" : "none",
+                        background: idx % 2 === 0 ? "#fff" : "#fafbfc",
+                      }}
+                    >
+                      <td style={{ padding: "12px 16px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{
+                            width: 7, height: 7, borderRadius: "50%",
+                            background: p.is_paused ? "#94a3b8" : "#22c55e",
+                            flexShrink: 0,
+                          }} />
+                          <div>
+                            <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 14 }}>{p.dag_id}</div>
+                            {p.description && (
+                              <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 1 }}>{p.description}</div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: "#64748b", whiteSpace: "nowrap" }}>
+                        {p.schedule ? (
+                          <span style={{ background: "#f1f5f9", padding: "2px 8px", borderRadius: 6, fontFamily: "monospace", fontSize: 12 }}>
+                            {p.schedule}
+                          </span>
+                        ) : "—"}
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: "#64748b", whiteSpace: "nowrap" }}>
+                        {timeAgo(p.last_run_at)}
+                      </td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <StateBadge state={p.last_run_state} />
+                        {p.is_paused && (
+                          <span style={{ marginLeft: 6, fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>PAUSED</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "12px 16px" }}>
+                        {canTrigger && (
+                          <button
+                            onClick={() => handleTrigger(p.dag_id)}
+                            disabled={triggering === p.dag_id}
+                            style={{
+                              padding: "5px 12px", borderRadius: 7, border: `1px solid ${ACCENT}`,
+                              background: triggering === p.dag_id ? "#e0f2fe" : "transparent",
+                              color: ACCENT, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                              display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                            }}
+                          >
+                            <i className={`fas ${triggering === p.dag_id ? "fa-spinner fa-spin" : "fa-play"}`} style={{ fontSize: 10 }} />
+                            Trigger
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

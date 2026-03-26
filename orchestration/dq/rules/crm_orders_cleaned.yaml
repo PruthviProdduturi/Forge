@@ -1,0 +1,124 @@
+# =============================================================================
+# Forge DQ Rules — silver/crm/orders_cleaned
+#
+# Dataset:  silver/crm/orders_cleaned
+# Job:      CrmOrdersSilver  (sdk/python/forge_sdk/job/example_job.py)
+# DAG:      crm_orders_silver
+# Owner:    data-engineering
+#
+# These rules are evaluated by forge_dq via the @track decorator inside the
+# Spark job.  Critical failures block the pipeline; warnings are recorded for
+# observability without blocking.
+# =============================================================================
+
+version: "1"
+dataset: silver/crm/orders_cleaned
+description: "Quality rules for the CRM orders silver layer"
+owner: "data-engineering"
+primary_key: [order_id]
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Completeness: core business columns must not be NULL
+  # After dropna() these should be zero — any non-zero count is a bug.
+  # ---------------------------------------------------------------------------
+  - name: core_columns_not_null
+    type: not_null
+    columns: [order_id, customer_id, amount]
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Uniqueness: order_id must be globally unique after dedup
+  # dropDuplicates(["order_id"]) in the job makes this a post-condition check.
+  # ---------------------------------------------------------------------------
+  - name: no_duplicate_order_ids
+    type: unique_key
+    columns: [order_id]
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Validity: amount must be >= 0 after cast to double
+  # Negative amounts indicate a data entry error upstream.
+  # ---------------------------------------------------------------------------
+  - name: amount_non_negative
+    type: value_range
+    column: amount
+    min: 0
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Validity: status must belong to the known CRM status vocabulary
+  # ---------------------------------------------------------------------------
+  - name: status_accepted_values
+    type: accepted_values
+    column: status
+    values:
+      - open
+      - closed
+      - pending
+      - cancelled
+      - refunded
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Audit column: _ingested_at must not be NULL
+  # Added by the job — a NULL here means the transform was not applied.
+  # ---------------------------------------------------------------------------
+  - name: ingested_at_not_null
+    type: not_null
+    columns: [_ingested_at]
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Timeliness: order_date must not be in the future
+  # Mild clock skew in source systems is possible — warning only.
+  # ---------------------------------------------------------------------------
+  - name: order_date_not_future
+    type: custom_sql
+    sql: "SELECT COUNT(*) FROM {table} WHERE order_date > current_date()"
+    expected: 0
+    severity: warning
+
+  # ---------------------------------------------------------------------------
+  # Volume guard: row count must not collapse vs recent history
+  # A >30% drop vs the 7-run rolling average triggers a critical failure.
+  # On the first run (no history) this rule always passes.
+  # ---------------------------------------------------------------------------
+  - name: row_count_not_collapsed
+    type: row_count_delta
+    max_drop_pct: 30
+    lookback_runs: 7
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Completeness rate: allow at most 5% NULL in order_date
+  # order_date is parsed from a string — some upstream records may be
+  # malformed; 5% tolerance avoids spurious failures while catching regressions.
+  # ---------------------------------------------------------------------------
+  - name: order_date_null_rate
+    type: custom_sql
+    sql: >
+      SELECT CAST(
+        SUM(CASE WHEN order_date IS NULL THEN 1 ELSE 0 END) AS DOUBLE
+      ) / COUNT(*) AS null_rate
+      FROM {table}
+    expected: 0.05
+    comparison: lte
+    severity: warning
+
+# =============================================================================
+# Anomaly detection
+#
+# Uses Z-score (Statistical Process Control) to flag unusual metric values.
+# Requires at least 7 historical runs before producing results.
+# =============================================================================
+
+anomaly_detection:
+  enabled: true
+  lookback_days: 30
+  z_score_threshold: 3.0
+  # Metrics monitored automatically by forge_dq:
+  #   rows_written     — total row count per run
+  #   null_rate        — per-column null fraction per run
+  #   amount_mean      — mean order amount per run (drift detection)

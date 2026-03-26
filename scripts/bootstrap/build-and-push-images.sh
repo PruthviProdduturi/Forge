@@ -304,11 +304,24 @@ if [[ "${IMPORT_ONLY}" == false ]]; then
 
     # -------------------------------------------------------------------------
     # Spark 4.1.0
+    # Build context is repo root so that COPY sdk/python resolves correctly.
+    # The forge-dq SDK lives at sdk/python/ and is installed into the image.
     # -------------------------------------------------------------------------
-    build_and_push \
-        "spark" \
-        "4.1.0" \
-        "${DOCKER_DIR}/spark"
+    _spark_tag="${REGISTRY}/spark:4.1.0-${ENV}"
+    _spark_start=$(date +%s)
+    log_step "Building ${_spark_tag}"
+    log_info "Context: ${REPO_ROOT} (repo root)"
+    log_info "Dockerfile: ${DOCKER_DIR}/spark/Dockerfile"
+    run docker build \
+        --tag "${_spark_tag}" \
+        --file "${DOCKER_DIR}/spark/Dockerfile" \
+        "${REPO_ROOT}"
+    log_info "Pushing ${_spark_tag}"
+    run docker push "${_spark_tag}"
+    _spark_end=$(date +%s)
+    _spark_duration=$((_spark_end - _spark_start))
+    log_success "Pushed ${_spark_tag} (${_spark_duration}s)"
+    PUSH_SUMMARY+=("${_spark_tag}|custom|${_spark_duration}s")
 
     # -------------------------------------------------------------------------
     # Trino 438

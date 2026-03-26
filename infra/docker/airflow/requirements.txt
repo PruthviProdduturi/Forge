@@ -99,3 +99,14 @@ croniter==2.0.5
 
 # PyYAML — YAML config loading used by DQ rulesets and lineage configs
 PyYAML==6.0.2
+
+# =============================================================================
+# Forge DQ SDK
+# =============================================================================
+
+# forge-dq — installed from local source in Dockerfile, listed here for reference
+# forge-dq==0.1.0  (installed via COPY + pip install in Dockerfile, not from PyPI)
+
+# Purview SDK — lineage catalog integration
+azure-purview-catalog==1.0.0b7
+azure-purview-scanning==1.0.0b2

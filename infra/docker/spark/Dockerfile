@@ -10,7 +10,10 @@
 #   - openlineage-spark 1.18.0
 #   - Python 3.11 + PySpark + delta-spark + pandas + pyarrow + azure-identity
 #   - spark-defaults.conf baked in (ADLS + workload identity + OpenLineage)
+#   - forge-dq 0.1.0 (Forge Data Quality framework)
 #   - Non-root spark user (UID 185)
+#
+# Build context: repo root (required so COPY sdk/python resolves correctly)
 # =============================================================================
 
 FROM eclipse-temurin:17-jre-jammy
@@ -159,19 +162,31 @@ RUN pip3 install --upgrade pip && \
         "pyarrow==16.1.0" \
         "azure-identity==1.17.1" \
         "azure-storage-file-datalake==12.18.0" \
-        "openlineage-python==1.18.0"
+        "openlineage-python==1.18.0" \
+        "pydantic==2.7.4" \
+        "pyyaml==6.0.2"
+
+# ----------------------------------------------------------------------------
+# forge-dq SDK — installed from local source (no PyPI dependency at runtime)
+#
+# The build context must be the repo root so that sdk/python is accessible.
+# The build-and-push-images.sh script uses build_and_push_spark() which sets
+# REPO_ROOT as the build context and passes -f infra/docker/spark/Dockerfile.
+# ----------------------------------------------------------------------------
+COPY sdk/python /tmp/forge_dq_src
+RUN pip3 install /tmp/forge_dq_src && rm -rf /tmp/forge_dq_src
 
 # ----------------------------------------------------------------------------
 # spark-defaults.conf — baked-in defaults for ADLS, workload identity,
 # Delta Lake, and OpenLineage. Runtime values can override via SparkConf
 # in the job submission or Helm chart configmap.
 # ----------------------------------------------------------------------------
-COPY spark-defaults.conf "${SPARK_HOME}/conf/spark-defaults.conf"
+COPY infra/docker/spark/spark-defaults.conf "${SPARK_HOME}/conf/spark-defaults.conf"
 
 # ----------------------------------------------------------------------------
 # Logging configuration — reduce verbosity for Azure/Hadoop noise
 # ----------------------------------------------------------------------------
-COPY log4j2.properties "${SPARK_HOME}/conf/log4j2.properties"
+COPY infra/docker/spark/log4j2.properties "${SPARK_HOME}/conf/log4j2.properties"
 
 # ----------------------------------------------------------------------------
 # Directory layout and permissions
