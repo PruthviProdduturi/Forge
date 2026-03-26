@@ -47,9 +47,20 @@ async def health_check() -> dict[str, Any]:
         status="ok" if all_ok else "degraded",
     )
 
+    from urllib.parse import urlparse
+    airflow_host = urlparse(settings.airflow_url).hostname or settings.airflow_url
+
     return {
         "status": "ok" if all_ok else "degraded",
         "env": settings.forge_env,
+        "auth_provider": settings.auth_provider,
+        "platform": {
+            "airflow_host": airflow_host,
+            "trino_host": settings.trino_host,
+            "adls_account": settings.adls_account,
+            "purview_endpoint": settings.purview_endpoint,
+            "resource_group": settings.resource_group,
+        },
         "checks": {
             "airflow": airflow_ok,
             "trino": trino_ok,

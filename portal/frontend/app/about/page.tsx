@@ -668,7 +668,7 @@ export default function AboutPage() {
             icon="fa-share-nodes"
             color="#7c3aed"
             title="Lineage Tracking"
-            body="OpenLineage events captured for every job. Column-level lineage and upstream/downstream impact analysis via Marquez."
+            body="OpenLineage events captured for every job. Column-level lineage and upstream/downstream impact analysis via Microsoft Purview."
           />
           <FeatureCard
             icon="fa-chart-line"
@@ -742,7 +742,7 @@ export default function AboutPage() {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <ChartPill icon="fa-share-nodes" label="OpenLineage" color="#f97316" />
-            <ChartPill icon="fa-diagram-project" label="Marquez" color="#7c3aed" />
+            <ChartPill icon="fa-diagram-project" label="Microsoft Purview" color="#0078d4" />
             <ChartPill icon="fa-chart-line" label="Azure Monitor" color="#e6522c" />
             <ChartPill icon="fa-chart-bar" label="Azure Managed Grafana" color="#f46800" />
             <ChartPill icon="fa-file-lines" label="Log Analytics" color="#0078d4" />
@@ -874,7 +874,7 @@ export default function AboutPage() {
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
                 {[
                   { label: "Airflow 2.9 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check" },
-                  { label: "Marquez (OpenLineage)", color: "#7c3aed", icon: "fa-share-nodes" },
+                  { label: "Microsoft Purview (OpenLineage)", color: "#0078d4", icon: "fa-share-nodes" },
                   { label: "Azure Monitor + Managed Grafana", color: "#e6522c", icon: "fa-chart-line" },
                   { label: "Developer Portal", color: "#059669", icon: "fa-window-maximize" },
                 ].map(c => (
@@ -1011,7 +1011,7 @@ export default function AboutPage() {
             <i className="fas fa-share-nodes" style={{ color: "#7c3aed", fontSize: 13, flexShrink: 0 }} />
             <div style={{ fontSize: 12, color: "#334155" }}>
               <strong>OpenLineage</strong> events emitted at every Spark job and Airflow task execution →
-              captured by <strong>Marquez</strong> → column-level lineage and upstream/downstream impact analysis available in the Lineage Explorer
+              captured by <strong>Microsoft Purview</strong> → column-level lineage and upstream/downstream impact analysis available in the Lineage Explorer
             </div>
           </div>
           {/* Airflow orchestration strip */}
@@ -1171,7 +1171,7 @@ export default function AboutPage() {
             >
               {[
                 "Airflow 2.9 (KubernetesExecutor)",
-                "Marquez lineage server",
+                "Microsoft Purview (lineage)",
                 "Azure Monitor + Managed Grafana",
                 "Forge Developer Portal",
               ].map((item) => (

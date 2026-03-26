@@ -2,12 +2,25 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRole } from "../hooks/useRole";
 import { SettingsModal } from "./SettingsModal";
 import { ForgeLogo } from "./ForgeLogo";
+import { apiFetch } from "../utils/api";
+
+interface PlatformInfo {
+  env: string;
+  auth_provider: string;
+  platform: {
+    airflow_host: string;
+    trino_host: string;
+    adls_account: string;
+    purview_endpoint: string;
+    resource_group: string;
+  };
+}
 
 interface NavItem {
   href: string;
@@ -26,11 +39,18 @@ const NAV_ITEMS: NavItem[] = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, getToken } = useAuth();
   const { primaryColor } = useTheme();
   const { role } = useRole();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logoAnimating, setLogoAnimating] = useState(false);
+  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
+
+  useEffect(() => {
+    apiFetch<PlatformInfo>("/api/health", getToken)
+      .then(setPlatformInfo)
+      .catch(() => {/* non-critical */});
+  }, [getToken]);
 
   const handleLogoClick = useCallback(() => {
     setLogoAnimating(true);
@@ -64,6 +84,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
             onClick={handleLogoClick}
           />
           {logoAnimating && <span style={{ display: "none" }} />}
+
+          {platformInfo && (
+            <span style={{
+              padding: "2px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+              background: platformInfo.env === "prod" ? "#fee2e2" : "#dcfce7",
+              color: platformInfo.env === "prod" ? "#dc2626" : "#16a34a",
+              border: `1px solid ${platformInfo.env === "prod" ? "#fca5a5" : "#86efac"}`,
+              userSelect: "none",
+            }}>
+              {platformInfo.env}
+            </span>
+          )}
 
           <div className="header-divider" aria-hidden="true" />
 
@@ -169,7 +202,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <main>{children}</main>
 
       {settingsOpen && (
-        <SettingsModal onClose={() => setSettingsOpen(false)} />
+        <SettingsModal onClose={() => setSettingsOpen(false)} platformInfo={platformInfo} />
       )}
     </>
   );
