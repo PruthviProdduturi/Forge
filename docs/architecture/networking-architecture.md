@@ -44,7 +44,7 @@ Forge's network design is built on three constraints:
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │  Azure Region: East US                                                               │
 │                                                                                      │
-│  forge-vnet  (10.0.0.0/8)                                                            │
+│  vnet-forge-{env}  (dev: 10.0.0.0/12  |  prod: 10.16.0.0/12)                        │
 │                                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │  10.1.0.0/16  —  compute-cluster-subnet                                         │ │
@@ -85,7 +85,7 @@ Forge's network design is built on three constraints:
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
-│  │  10.3.0.0/24  —  private-endpoints-subnet  (NSG: inbound from 10.0.0.0/8 only) │  │
+│  │  10.3.0.0/24  —  private-endpoints-subnet  (NSG: inbound from VNet CIDR only)   │  │
 │  │                                                                                  ││
 │  │  10.3.0.4   — ADLS Gen2 (dfs endpoint)       privatelink.dfs.core.windows.net   │ │
 │  │  10.3.0.5   — ADLS Gen2 (blob endpoint)      privatelink.blob.core.windows.net  │ │
@@ -122,7 +122,7 @@ Forge's network design is built on three constraints:
 │  │                                                                                  ││
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                      │
-│  Private DNS Zones (linked to forge-vnet):                                           │
+│  Private DNS Zones (linked to vnet-forge-{env}):                                           │
 │    privatelink.dfs.core.windows.net       → 10.3.0.4                                 │
 │    privatelink.blob.core.windows.net      → 10.3.0.5                                 │
 │    privatelink.vaultcore.azure.net        → 10.3.0.6                                 │
@@ -145,44 +145,54 @@ Traffic flows:
 
 ## 3. VNet Design and Subnet Sizing
 
-### 3.1 Address Space
+### 3.1 One VNet Per Environment
 
-The Forge VNet uses `10.0.0.0/8` as its address space. This is a deliberate choice:
+Each environment (dev, prod) has its own dedicated VNet. Dev and prod VNets are **completely independent** — they share no subnets, no peering, no private DNS zone links. This enforces environment isolation at the network layer: a misconfigured dev workload cannot reach prod data under any circumstances.
 
-- Provides 16.7 million IP addresses — effectively unlimited growth headroom
-- The `/8` block does not consume a scarce enterprise address range; it is subdivided into `/16` cluster subnets and `/24` infrastructure subnets
-- Azure CNI Overlay mode means pod IPs are **not** allocated from the VNet address space (see Section 4) — the large VNet is primarily for node IPs and private endpoints
+| Environment | VNet name | Address space |
+|-------------|-----------|--------------|
+| dev | `vnet-forge-dev` | `10.0.0.0/12` (10.0.0.0 – 10.15.255.255) |
+| prod | `vnet-forge-prod` | `10.16.0.0/12` (10.16.0.0 – 10.31.255.255) |
 
-If Forge is deployed into an enterprise network connected via ExpressRoute, the VNet CIDR must not conflict with the corporate address space. In that case, the address space can be changed to a non-overlapping range (e.g., `172.16.0.0/12`) with no change to the overlay pod CIDRs.
+Using non-overlapping `/12` blocks means both VNets can be peered to a corporate hub VNet (ExpressRoute / VPN gateway) without address conflicts if that becomes a requirement. Each `/12` still provides over 1 million IP addresses — far more than needed.
 
-### 3.2 Subnet Sizing Rationale
+### 3.2 Subnet Allocation Per Environment
 
-#### Compute Cluster Subnet — `10.1.0.0/16` (/16 = 65,534 usable IPs)
+Subnets use the same relative offsets in each environment. Only the first octet block differs:
 
-The compute cluster subnet uses a `/16` because AKS with Azure CNI Overlay allocates **one IP per node** from the VNet subnet (not one per pod). However:
+| Subnet | dev CIDR | prod CIDR | Purpose |
+|--------|----------|-----------|---------|
+| `snet-forge-compute` | `10.1.0.0/16` | `10.17.0.0/16` | AKS compute cluster nodes |
+| `snet-forge-orch` | `10.2.0.0/16` | `10.18.0.0/16` | AKS orchestration cluster nodes |
+| `snet-forge-private-endpoints` | `10.3.0.0/24` | `10.19.0.0/24` | All PaaS private endpoint NICs |
+| `snet-forge-appgw` | `10.4.0.0/24` | `10.20.0.0/24` | Application Gateway WAF |
+| `AzureBastionSubnet` | `10.5.0.0/24` | `10.21.0.0/24` | Azure Bastion (name is fixed by Azure) |
 
-- The `spark` node pool scales to 20 nodes × Standard_E8s_v5. Each Spark job creates a driver pod and up to 50 executor pods. In a burst scenario, 10 concurrent jobs = 10 drivers + 500 executors = 510 pods, all on at most 20 nodes.
-- The `/16` provides 256 `/24` sub-ranges. Sub-ranges are allocated per node pool for clarity (`10.1.1.0/24` for system, `10.1.2.0/22` for spark giving 1022 node IPs — far more than needed today, but we are accounting for multi-region expansion or much larger spot pools in the future).
-- Private endpoint NICs, load balancer frontend IPs, and AKS internal load balancer IPs also consume IPs from this subnet.
-- Rule of thumb: provision 3× the expected peak node count in IPs per subnet. For 20 compute nodes, that's 60 IPs. A `/26` (62 IPs) would be tight. The `/16` provides room to scale compute to 1000+ nodes with zero subnet reconfiguration.
+### 3.3 Subnet Sizing Rationale
 
-#### Orchestration Cluster Subnet — `10.2.0.0/16` (/16 = 65,534 usable IPs)
+#### Compute and Orchestration Cluster Subnets — `/16`
 
-Same rationale as compute. Orchestration scales more conservatively (max ~17 nodes), but the platform node pool may be expanded to host additional platform services over time. The `/16` eliminates the need for a subnet resize operation (which requires cluster reprovisioning in AKS).
+AKS with Azure CNI Overlay allocates **one IP per node** from the VNet subnet (not one per pod — see Section 4). The `/16` provides 65,534 node IPs, which is far more than needed today but eliminates any future subnet resize operation (which would require reprovisioning the AKS cluster).
 
-#### Private Endpoints Subnet — `10.3.0.0/24` (/24 = 254 usable IPs)
+- Spark node pool: 0–20 nodes × Standard_E8s_v5 (spot)
+- Orchestration node pool: 2–10 nodes × Standard_D8s_v5
+- System and platform node pools: 1–4 nodes each
 
-Each private endpoint consumes one NIC with one private IP. Forge has 11 private endpoints today (see Section 6). A `/24` provides 254 IPs — room for ~240 additional private endpoints as the platform grows. Azure recommends a dedicated private endpoints subnet to simplify NSG management.
+Rule of thumb: provision 3× peak node count. For 20 Spark nodes, that is 60 IPs. A `/26` would be tight; `/16` provides headroom for large burst pools with zero reconfiguration.
 
-Network policies must be **disabled** on the private endpoints subnet (`privateEndpointNetworkPolicies: Disabled` in Bicep) because private endpoint NICs do not support NSG rules applied to the NIC directly — NSG is applied at the subnet level for ingress control.
+#### Private Endpoints Subnet — `/24`
 
-#### Application Gateway Subnet — `10.4.0.0/24` (/24 = 254 usable IPs)
+Each private endpoint consumes one NIC with one private IP. Forge has 11 private endpoints today. A `/24` (254 IPs) provides room for ~240 more as the platform grows. Azure recommends a dedicated private endpoints subnet to simplify NSG management.
 
-Azure Application Gateway v2 requires a dedicated subnet. The minimum size is `/26` (64 IPs) for autoscaling. Forge uses `/24` for safety margin. The WAFv2 policy can scale to multiple instances during DDoS events; each instance needs an IP from this subnet.
+Network policies must be **disabled** on this subnet (`privateEndpointNetworkPolicies: Disabled` in Bicep) — private endpoint NICs do not support NIC-level NSG rules.
 
-#### Bastion Subnet — `10.5.0.0/24` (/24 = 254 usable IPs)
+#### Application Gateway Subnet — `/24`
 
-Azure Bastion **requires** its subnet to be named exactly `AzureBastionSubnet`. The minimum required size is `/26`. Forge uses `/24` for alignment with the other infrastructure subnets.
+Azure Application Gateway v2 requires a dedicated subnet. Minimum is `/26` (64 IPs) for autoscaling. Forge uses `/24` for safety margin.
+
+#### Bastion Subnet — `/24`
+
+Azure Bastion **requires** its subnet to be named exactly `AzureBastionSubnet`. Minimum size is `/26`. Forge uses `/24` for alignment.
 
 ---
 
@@ -384,14 +394,14 @@ Azure DevOps Pipelines run on ADO-hosted agents that reach the AKS API server ov
 
 ### 6.2 Private DNS Zone Linking
 
-All private DNS zones are linked to `forge-vnet` with auto-registration disabled (auto-registration is only for VM A records, not private endpoints). The link ensures that any resource in the VNet — pods on either AKS cluster, Bastion sessions, VPN-connected developer laptops (via DNS forwarding) — can resolve the private endpoint hostnames.
+All private DNS zones are linked to `vnet-forge-{env}` with auto-registration disabled (auto-registration is only for VM A records, not private endpoints). The link ensures that any resource in the VNet — pods on either AKS cluster, Bastion sessions, VPN-connected developer laptops (via DNS forwarding) — can resolve the private endpoint hostnames.
 
 ```
 Private DNS Zone: privatelink.dfs.core.windows.net
   A record: forge-prod-adls.dfs.core.windows.net → 10.3.0.4
   (created automatically when the private endpoint is created)
 
-VNet link: forge-vnet
+VNet link: vnet-forge-{env}
   Registration enabled: false  (no auto-registration of VM names)
   Resolution enabled: true     (all DNS queries from VNet resolved here)
 ```
@@ -470,7 +480,7 @@ Azure DNS receives: forge-prod-adls.dfs.core.windows.net A
 
 It checks:
   1. Is there a private DNS zone linked to this VNet for *.dfs.core.windows.net?
-  2. Yes: privatelink.dfs.core.windows.net is linked to forge-vnet
+  2. Yes: privatelink.dfs.core.windows.net is linked to vnet-forge-{env}
   3. Does the zone have an A record for forge-prod-adls.dfs.core.windows.net?
   4. Yes: A record → 10.3.0.4 (private endpoint NIC IP)
 
@@ -514,7 +524,7 @@ When the Airflow pod on the orchestration cluster reaches the compute cluster's 
 Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.northcentralus.azmk8s.io
   → CoreDNS (172.21.0.10)
   → 168.63.129.16 (Azure DNS)
-  → privatelink.northcentralus.azmk8s.io zone linked to forge-vnet
+  → privatelink.northcentralus.azmk8s.io zone linked to vnet-forge-{env}
   → A record: 10.3.0.11
   → Airflow connects to 10.3.0.11:443 (compute AKS API private endpoint)
   → kubectl auth via ServiceAccount token in the kubeconfig (fetched from Key Vault)

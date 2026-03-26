@@ -654,14 +654,18 @@ All roles backed by Azure AD groups — no local user accounts in any platform c
 
 ### VNet Layout
 
+One VNet per environment — dev and prod are completely isolated, no peering between them.
+
 ```
-forge-vnet (10.0.0.0/8)
-├── 10.1.0.0/16  —  compute-cluster-subnet     (AKS compute nodes)
-├── 10.2.0.0/16  —  orchestration-cluster-subnet (AKS orch nodes)
-├── 10.3.0.0/24  —  private-endpoints-subnet    (all PaaS private endpoints)
-├── 10.4.0.0/24  —  appgw-subnet               (Application Gateway)
-└── 10.5.0.0/24  —  bastion-subnet             (Azure Bastion, ops access)
+vnet-forge-dev  (10.0.0.0/12)               vnet-forge-prod  (10.16.0.0/12)
+├── 10.1.0.0/16  compute-cluster-subnet      ├── 10.17.0.0/16  compute-cluster-subnet
+├── 10.2.0.0/16  orch-cluster-subnet         ├── 10.18.0.0/16  orch-cluster-subnet
+├── 10.3.0.0/24  private-endpoints-subnet    ├── 10.19.0.0/24  private-endpoints-subnet
+├── 10.4.0.0/24  appgw-subnet               ├── 10.20.0.0/24  appgw-subnet
+└── 10.5.0.0/24  bastion-subnet             └── 10.21.0.0/24  bastion-subnet
 ```
+
+Non-overlapping `/12` blocks allow both VNets to peer to a corporate hub (ExpressRoute/VPN) without address conflicts.
 
 ### Private DNS Zones
 
