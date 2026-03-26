@@ -205,13 +205,12 @@ az aks get-credentials \
 ### Deploy Airflow
 
 ```bash
-helm repo add apache-airflow https://airflow.apache.org
-helm repo update
-
 kubectl create namespace airflow --dry-run=client -o yaml | kubectl apply -f -
 
+# Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install airflow \
-  apache-airflow/airflow \
+  oci://forgeacr-{env}.azurecr.io/helm/airflow \
+  --version 1.15.0 \
   --namespace airflow \
   --values infra/helm/orchestration/airflow/values.yaml \
   --set images.airflow.repository=forgeacr-{env}.azurecr.io/airflow \
@@ -401,4 +400,4 @@ EOF
 [ ] Portal accessible via Application Gateway
 ```
 
-All green → proceed to Step 06 validation.
+All green → proceed to Step 06 (CI/CD pipeline configuration).

@@ -22,9 +22,10 @@
    - [portal-api](#45-portal-api)
    - [portal-web](#46-portal-web)
 5. [Imported Images](#5-imported-images)
-6. [Full Build Script](#6-full-build-script)
-7. [Verification](#7-verification)
-8. [CI Pipeline Integration](#8-ci-pipeline-integration)
+6. [Helm Chart Import](#6-helm-chart-import)
+7. [Full Build Script](#7-full-build-script)
+8. [Verification](#8-verification)
+9. [CI Pipeline Integration](#9-ci-pipeline-integration)
 
 ---
 
@@ -117,7 +118,7 @@ All images in ACR use the following tag scheme:
 |---------|---------|-------|
 | `registry` | `forgeacr-prod.azurecr.io` | Full FQDN always |
 | `image` | `spark` | Lowercase, hyphenated |
-| `version` | `4.0.0` | Upstream version or `git-sha` for first-party code |
+| `version` | `4.1.0` | Upstream version or `git-sha` for first-party code |
 | `env` | `prod` | `dev`, `staging`, or `prod` |
 
 **Examples:**
@@ -126,7 +127,7 @@ All images in ACR use the following tag scheme:
 forgeacr-prod.azurecr.io/spark:4.1.0-prod
 forgeacr-dev.azurecr.io/airflow:3.1.0-dev
 forgeacr-prod.azurecr.io/portal-api:a3f92c1-prod
-forgeacr-prod.azurecr.io/prometheus:2.51.0-prod
+forgeacr-dev.azurecr.io/marquez-api:0.47.0-dev
 ```
 
 For first-party images (`portal-api`, `portal-web`) where there is no upstream version, the tag is the **short Git SHA** of the commit being built. The CI pipeline sets this from `$(Build.SourceVersion)` (Azure DevOps) or `${{ github.sha }}` (GitHub Actions).
@@ -381,9 +382,54 @@ docker push "${REGISTRY}/trino:438-${ENV}"
 
 ---
 
-## 6. Full Build Script
+## 6. Helm Chart Import
 
-The canonical entry point for all image operations is `scripts/bootstrap/build-and-push-images.sh`. It handles both custom builds and imports, and accepts `--env` and `--registry` arguments.
+All Helm charts must be stored in ACR as OCI artifacts before deployment. No cluster pulls from public Helm repositories — all `helm upgrade --install` commands in Steps 04 and 05 reference `oci://forgeacr-{env}.azurecr.io/helm/...`.
+
+### Why OCI Helm charts in ACR
+
+- **S360 compliance** — AKS nodes and CI agents must not egress to public Helm repos (`kubeflow.github.io`, `trinodb.github.io`, `airflow.apache.org`)
+- **Supply chain control** — chart tarballs are scanned and pinned before entering the environment
+- **Consistency** — same ACR is the single source of truth for both images and charts
+
+### Import procedure (manual / first-time)
+
+```bash
+REGISTRY="forgeacr-dev.azurecr.io"
+az acr login --name forgeacr-dev
+
+# 1. Pull the chart from the public Helm repo (run from a machine with internet access)
+helm pull spark-operator/spark-operator --version 1.4.6 --repo https://kubeflow.github.io/spark-operator
+helm pull trino/trino              --version 0.31.0 --repo https://trinodb.github.io/charts
+helm pull apache-airflow/airflow   --version 1.15.0 --repo https://airflow.apache.org
+helm pull marquez/marquez          --version 0.47.0 --repo https://marquezproject.github.io/marquez
+
+# 2. Push each chart to ACR as an OCI artifact
+helm push spark-operator-1.4.6.tgz  oci://${REGISTRY}/helm
+helm push trino-0.31.0.tgz          oci://${REGISTRY}/helm
+helm push airflow-1.15.0.tgz        oci://${REGISTRY}/helm
+helm push marquez-0.47.0.tgz        oci://${REGISTRY}/helm
+
+# 3. Clean up local tarballs
+rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz marquez-*.tgz
+```
+
+### Helm chart version matrix
+
+| Chart | Chart Version | App Version | ACR path |
+|-------|--------------|-------------|----------|
+| `spark-operator` | 1.4.6 | Spark Operator 1.4.6 | `oci://forgeacr-{env}.azurecr.io/helm/spark-operator:1.4.6` |
+| `trino` | 0.31.0 | Trino 438 | `oci://forgeacr-{env}.azurecr.io/helm/trino:0.31.0` |
+| `airflow` | 1.15.0 | Airflow 3.1.0 | `oci://forgeacr-{env}.azurecr.io/helm/airflow:1.15.0` |
+| `marquez` | 0.47.0 | Marquez 0.47.0 | `oci://forgeacr-{env}.azurecr.io/helm/marquez:0.47.0` |
+
+The `build-and-push-images.sh` script includes a `--charts-only` flag that runs the chart import loop for all four charts.
+
+---
+
+## 7. Full Build Script
+
+The canonical entry point for all image operations (container images + Helm charts) is `scripts/bootstrap/build-and-push-images.sh`. It handles both custom builds and imports, and accepts `--env` and `--registry` arguments.
 
 See the script at `scripts/bootstrap/build-and-push-images.sh` for the full implementation.
 
@@ -417,7 +463,7 @@ The script outputs a summary table on completion listing every image pushed with
 
 ---
 
-## 7. Verification
+## 8. Verification
 
 ### List all repositories in ACR
 
@@ -470,7 +516,7 @@ If this succeeds from a cluster node (or CI agent), ACR access is confirmed end-
 
 ---
 
-## 8. CI Pipeline Integration
+## 9. CI Pipeline Integration
 
 ### Trigger conditions
 
@@ -496,7 +542,7 @@ The image build pipeline (`ci/image-build-pipeline.yml`) runs on an Ubuntu agent
 
 ### GitHub Actions pipeline structure
 
-The equivalent GitHub Actions workflow (`.github/workflows/image-build.yml`) follows the same steps using `azure/login@v2`, `aquasecurity/Microsoft Defender for Containers-action`, and the Notation GitHub Action (`notaryproject/notation-action`).
+The equivalent GitHub Actions workflow (`.github/workflows/image-build.yml`) follows the same steps using `azure/login@v2`, `azure/defender-for-containers-action`, and the Notation GitHub Action (`notaryproject/notation-action`).
 
 ### Layer caching in CI
 

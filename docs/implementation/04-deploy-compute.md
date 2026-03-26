@@ -72,11 +72,10 @@ The Spark Operator watches the `spark-jobs` namespace for `SparkApplication` CRD
 ### Deploy
 
 ```bash
-helm repo add spark-operator https://kubeflow.github.io/spark-operator
-helm repo update
-
+# Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install spark-operator \
-  spark-operator/spark-operator \
+  oci://forgeacr-{env}.azurecr.io/helm/spark-operator \
+  --version 1.4.6 \
   --namespace spark-system \
   --create-namespace \
   --values infra/helm/compute/spark-operator/values.yaml \
@@ -209,7 +208,7 @@ from pyspark.sql import SparkSession
 CONNECT_URL = "sc://10.4.0.10:15002"  # or retrieve from Key Vault
 
 spark = SparkSession.builder.remote(CONNECT_URL).getOrCreate()
-print(spark.version)  # should print 4.0.0
+print(spark.version)  # should print 4.1.0
 spark.sql("SELECT 1 AS test").show()
 ```
 
@@ -231,11 +230,10 @@ kubectl get secretproviderclass -n trino trino-catalog-secrets
 ### Deploy
 
 ```bash
-helm repo add trino https://trinodb.github.io/charts
-helm repo update
-
+# Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install trino \
-  trino/trino \
+  oci://forgeacr-{env}.azurecr.io/helm/trino \
+  --version 0.31.0 \
   --namespace trino \
   --create-namespace \
   --values infra/helm/compute/trino/values.yaml \
