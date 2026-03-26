@@ -65,13 +65,13 @@ ENV="prod"                                   # dev | prod
 LOCATION="northcentralus"
 LOCATION_SECONDARY="westus2"                 # prod only, for geo-replication
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
-VNET_RG="rg-forge-network-${ENV}"
+VNET_RG="rg-forge-platform-${ENV}"
 VNET_NAME="vnet-forge-${ENV}"
 PE_SUBNET_NAME="snet-forge-pe-${ENV}"
-ACR_RG="rg-forge-acr-${ENV}"
+ACR_RG="rg-forge-acr"
 ACR_NAME="forgeacr${ENV}"                  # must be globally unique, lowercase, no hyphens
 DNS_ZONE_NAME="privatelink.azurecr.io"
-DNS_ZONE_RG="rg-forge-dns-${ENV}"
+DNS_ZONE_RG="rg-forge-platform-${ENV}"
 BUILD_MI_NAME="id-forge-build-${ENV}"
 ```
 
@@ -79,15 +79,14 @@ BUILD_MI_NAME="id-forge-build-${ENV}"
 
 ## 3. Create the ACR Resource Group
 
-ACR lives in its own resource group, separate from networking and from the AKS clusters. This isolation makes it straightforward to audit ACR-scoped access, apply targeted locks, and delete or recreate the registry without touching other resources.
+ACR lives in its own resource group, shared across all environments (`rg-forge-acr` — no env suffix). A single registry serves dev and prod by publishing per-env-tagged images. This isolation makes it straightforward to audit ACR-scoped access, apply targeted locks, and delete or recreate the registry without touching other resources.
 
 ```bash
 az group create \
-  --name "rg-forge-acr-${ENV}" \
+  --name "rg-forge-acr" \
   --location "${LOCATION}" \
   --tags \
     platform=forge \
-    environment="${ENV}" \
     component=acr \
     managed-by=bicep \
     owner=platform-team
@@ -96,15 +95,15 @@ az group create \
 Verify:
 
 ```bash
-az group show --name "rg-forge-acr-${ENV}" --query "{name:name, location:location, state:properties.provisioningState}" -o table
+az group show --name "rg-forge-acr" --query "{name:name, location:location, state:properties.provisioningState}" -o table
 ```
 
 Expected output:
 
 ```
-Name                  Location    State
---------------------  ----------  ---------
-rg-forge-acr-prod   northcentralus      Succeeded
+Name           Location         State
+-------------  ---------------  ---------
+rg-forge-acr   northcentralus   Succeeded
 ```
 
 ---
@@ -120,7 +119,7 @@ Premium SKU is required for:
 
 ```bash
 az acr create \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --name "${ACR_NAME}" \
   --sku Premium \
   --location "${LOCATION}" \
@@ -148,7 +147,7 @@ Retrieve the ACR resource ID (used in subsequent role assignments):
 ```bash
 ACR_ID=$(az acr show \
   --name "${ACR_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --query id -o tsv)
 
 echo "ACR ID: ${ACR_ID}"
@@ -164,7 +163,7 @@ For production, the registry is replicated to a secondary Azure region. This ens
 # Run for ENV=prod only
 az acr replication create \
   --registry "${ACR_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --location "${LOCATION_SECONDARY}" \
   --zone-redundancy Enabled \
   --tags \
@@ -177,7 +176,7 @@ Check replication status:
 ```bash
 az acr replication list \
   --registry "${ACR_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --output table
 ```
 
@@ -200,7 +199,7 @@ PE_SUBNET_ID=$(az network vnet subnet show \
 # Create the private endpoint
 az network private-endpoint create \
   --name "pe-forge-acr-${ENV}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --location "${LOCATION}" \
   --subnet "${PE_SUBNET_ID}" \
   --private-connection-resource-id "${ACR_ID}" \
@@ -217,7 +216,7 @@ Verify the endpoint is provisioned:
 ```bash
 az network private-endpoint show \
   --name "pe-forge-acr-${ENV}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --query "{name:name, provisioningState:provisioningState, networkInterfaces:networkInterfaces[0].id}" \
   -o table
 ```
@@ -227,7 +226,7 @@ Retrieve the private IP assigned to the endpoint (you will need this for the DNS
 ```bash
 PE_NIC_ID=$(az network private-endpoint show \
   --name "pe-forge-acr-${ENV}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --query "networkInterfaces[0].id" -o tsv)
 
 PE_PRIVATE_IP=$(az network nic show \
@@ -245,7 +244,7 @@ For pods and nodes inside the VNet to resolve `forgeacr${ENV}.azurecr.io` to the
 
 ### 7a. Create the private DNS zone (if not already present)
 
-If you have a centralised private DNS zone resource group (`rg-forge-dns-{env}`), the zone may already exist from the networking setup. Check first:
+If the DNS zone already exists in `rg-forge-platform-{env}` from the networking setup, check first:
 
 ```bash
 az network private-dns zone show \
@@ -322,12 +321,12 @@ The registry was created with `--public-network-enabled false`. Verify this is s
 ```bash
 az acr update \
   --name "${ACR_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --public-network-enabled false
 
 az acr show \
   --name "${ACR_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --query "{publicNetworkAccess:publicNetworkAccess, networkRuleBypassOptions:networkRuleBypassOptions}" \
   -o json
 ```
@@ -388,7 +387,7 @@ Verify:
 ```bash
 az acr show \
   --name "${ACR_NAME}" \
-  --resource-group "rg-forge-acr-${ENV}" \
+  --resource-group "rg-forge-acr" \
   --query "policies.exportPolicy.status" -o tsv
 ```
 
@@ -524,7 +523,7 @@ az role assignment create \
 # Orchestration cluster — kubelet identity
 ORCH_KUBELET_MI=$(az aks show \
   --name "aks-forge-orch-${ENV}" \
-  --resource-group "rg-forge-orch-${ENV}" \
+  --resource-group "rg-forge-compute-${ENV}" \
   --query identityProfile.kubeletidentity.objectId -o tsv)
 
 az role assignment create \
@@ -563,7 +562,7 @@ Expected output: `Login Succeeded`
 
 If this fails with `UNAUTHORIZED` or a network error, check:
 - DNS resolution: `nslookup ${ACR_NAME}.azurecr.io` should return a private IP
-- Private endpoint provisioning state: `az network private-endpoint show --name pe-forge-acr-${ENV} --resource-group rg-forge-acr-${ENV} --query provisioningState -o tsv`
+- Private endpoint provisioning state: `az network private-endpoint show --name pe-forge-acr-${ENV} --resource-group rg-forge-acr --query provisioningState -o tsv`
 - Role assignment: confirm AcrPull is assigned to your identity
 
 ### 14b. Pull, tag, and push a test image
@@ -844,7 +843,7 @@ output "acr_private_dns_zone_id" {
 
 Before proceeding to document `03-cluster-setup.md`, verify every item:
 
-- [ ] Resource group `rg-forge-acr-{env}` exists in `northcentralus`
+- [ ] Resource group `rg-forge-acr` exists in `northcentralus`
 - [ ] Registry `forgeacr{env}` is Premium SKU with admin account disabled
 - [ ] Geo-replication to `westus2` is in `Succeeded` state (prod only)
 - [ ] Private endpoint `pe-forge-acr-{env}` is provisioned and has a private IP

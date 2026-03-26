@@ -174,7 +174,7 @@ az monitor log-analytics query \
 # Get Managed Grafana endpoint
 GRAFANA_URL=$(az grafana show \
   --name "grafana-forge-{env}" \
-  --resource-group "rg-forge-orchestration-{env}" \
+  --resource-group "rg-forge-platform-{env}" \
   --query properties.endpoint -o tsv)
 
 # Verify it is accessible (requires Azure AD login in browser)

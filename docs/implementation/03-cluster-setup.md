@@ -200,7 +200,7 @@ param tenantId = '<your-tenant-id>'
 param adminGroupObjectIds = ['<your-aks-admin-group-object-id>']
 param platformAdminGroupObjectId = '<your-platform-admin-group-object-id>'
 param corporateIpRange = '10.0.0.0/12'     // dev VNet range; use '10.16.0.0/12' for prod
-param containerRegistryId = '/subscriptions/<sub-id>/resourceGroups/rg-forge-acr-{env}/providers/Microsoft.ContainerRegistry/registries/forgeacr-{env}'
+param containerRegistryId = '/subscriptions/<sub-id>/resourceGroups/rg-forge-acr/providers/Microsoft.ContainerRegistry/registries/forgeacr'
 param logRetentionDays = 30
 param tags = {
   environment: '{env}'
@@ -889,7 +889,7 @@ All commands in this section target the **orchestration cluster** (`aks-forge-or
 ```bash
 az aks get-credentials \
   --name "aks-forge-orch-${ENV}" \
-  --resource-group "rg-forge-orch-${ENV}" \
+  --resource-group "rg-forge-compute-${ENV}" \
   --context "forge-orch-${ENV}" \
   --overwrite-existing
 
@@ -1189,7 +1189,7 @@ Azure Managed Grafana is provisioned via Bicep (not Helm). This step verifies it
 # Get the Managed Grafana endpoint
 GRAFANA_URL=$(az grafana show \
   --name "grafana-forge-${ENV}" \
-  --resource-group "rg-forge-orchestration-${ENV}" \
+  --resource-group "rg-forge-platform-${ENV}" \
   --query properties.endpoint -o tsv)
 echo "Grafana URL: ${GRAFANA_URL}"
 
@@ -1638,7 +1638,7 @@ az monitor log-analytics query \
 ```bash
 GRAFANA_URL=$(az grafana show \
   --name "grafana-forge-${ENV}" \
-  --resource-group "rg-forge-orchestration-${ENV}" \
+  --resource-group "rg-forge-platform-${ENV}" \
   --query properties.endpoint -o tsv)
 echo "Open: ${GRAFANA_URL}"
 ```

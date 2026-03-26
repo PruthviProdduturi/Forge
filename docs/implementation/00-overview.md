@@ -48,7 +48,11 @@ All commands use `{env}` as a placeholder. Replace with `dev`, `staging`, or `pr
 |----------|--------------|----------------|
 | `{env}` | `dev` | `prod` |
 | `{registry}` | `forgeacr-dev.azurecr.io` | `forgeacr-prod.azurecr.io` |
-| `{rg_platform}` | `rg-forge-dev` | `rg-forge-prod` |
+| `rg-forge-acr` | `rg-forge-acr` (shared, no env suffix) | `rg-forge-acr` (shared, no env suffix) |
+| `rg-forge-platform-{env}` | `rg-forge-platform-dev` | `rg-forge-platform-prod` |
+| `rg-forge-compute-{env}` | `rg-forge-compute-dev` | `rg-forge-compute-prod` |
+| `rg-forge-network-{env}` | absorbed into `rg-forge-platform-dev` | absorbed into `rg-forge-platform-prod` |
+| `rg-forge-orch-{env}` | absorbed into `rg-forge-compute-dev` | absorbed into `rg-forge-compute-prod` |
 | `{compute_cluster}` | `aks-forge-compute-dev` | `aks-forge-compute-prod` |
 | `{orch_cluster}` | `aks-forge-orch-dev` | `aks-forge-orch-prod` |
 | `{adls_account}` | `forgeadlsdev` | `forgeadlsprod` |
