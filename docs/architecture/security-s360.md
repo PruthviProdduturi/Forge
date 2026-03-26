@@ -35,9 +35,13 @@ Pod (annotated SA)  →  OIDC token  →  Azure AD  →  short-lived access toke
 
 **Identities:**
 
-| Workload Identity | Scope | Role |
-|-------------------|-------|------|
-| `id-forge-{env}` | All ADLS containers, Key Vault, ACR | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoint), Storage Blob Data Reader (gold), KV Secrets User, AcrPush+AcrPull, Cost Management Reader |
+| Workload Identity | Used by | Permissions |
+|-------------------|---------|-------------|
+| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoints) · KV Secrets User |
+| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ, Marquez | Storage Blob Data Reader (silver/gold only) · KV Secrets User · Cost Management Reader |
+| `id-forge-build-{env}` | CI/CD pipeline | AcrPush + AcrPull only — no storage or KV access |
+
+Each identity has a distinct blast radius. A compromised read-path workload cannot write data or push images. The build identity has zero access to data or secrets.
 
 ---
 

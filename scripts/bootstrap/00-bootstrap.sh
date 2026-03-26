@@ -52,7 +52,10 @@ RG_SECURITY="rg-forge-security${ALIAS_SUFFIX}-${ENV}"
 ACR_RG="${RG_PLATFORM}"
 ACR_NAME="forgeacr${OWNER_ALIAS}${ENV}"           # no hyphens, globally unique
 ACR_LOGIN_SERVER="${ACR_NAME}.azurecr.io"
-PLATFORM_MI="id-forge${ALIAS_SUFFIX}-${ENV}"
+# 3 managed identities per environment — separate blast radii
+COMPUTE_MI="id-forge-compute${ALIAS_SUFFIX}-${ENV}"   # Spark: data write path
+READ_MI="id-forge-read${ALIAS_SUFFIX}-${ENV}"          # Trino, Airflow, Portal, DQ: read-only data path
+BUILD_MI="id-forge-build${ALIAS_SUFFIX}-${ENV}"        # CI/CD: AcrPush+AcrPull only, zero data access
 
 VNET_NAME="vnet-forge${ALIAS_SUFFIX}-${ENV}"
 PE_SUBNET_NAME="snet-forge-private-endpoints${ALIAS_SUFFIX}-${ENV}"
@@ -274,36 +277,58 @@ if should_run 2; then
         fi
     fi
 
-    # Platform managed identity for CI/CD use
-    if az identity show --name "${PLATFORM_MI}" --resource-group "${ACR_RG}" --query name -o tsv 2>/dev/null | grep -q "${PLATFORM_MI}"; then
-        log_ok "Platform managed identity already exists: ${PLATFORM_MI}"
-    else
-        log_info "Creating platform managed identity: ${PLATFORM_MI}"
-        run az identity create \
-            --name "${PLATFORM_MI}" \
-            --resource-group "${ACR_RG}" \
-            --location "${LOCATION}" \
-            --tags platform=forge environment="${ENV}" owner="${OWNER_ALIAS}"
-    fi
+    # Create all 3 platform managed identities
+    # BUILD_MI  — only identity created here (ACR phase); compute+read created by Bicep in Phase 4
+    for MI_NAME in "${BUILD_MI}" "${COMPUTE_MI}" "${READ_MI}"; do
+        if az identity show --name "${MI_NAME}" --resource-group "${ACR_RG}" --query name -o tsv 2>/dev/null | grep -q "${MI_NAME}"; then
+            log_ok "Managed identity already exists: ${MI_NAME}"
+        else
+            log_info "Creating managed identity: ${MI_NAME}"
+            run az identity create \
+                --name "${MI_NAME}" \
+                --resource-group "${ACR_RG}" \
+                --location "${LOCATION}" \
+                --tags platform=forge environment="${ENV}" owner="${OWNER_ALIAS}"
+        fi
+    done
 
     ACR_ID=$(az acr show --name "${ACR_NAME}" --resource-group "${ACR_RG}" --query id -o tsv)
-    MI_PRINCIPAL=$(az identity show --name "${PLATFORM_MI}" --resource-group "${ACR_RG}" --query principalId -o tsv 2>/dev/null || echo "")
 
-    # Role assignments for platform identity
-    if [[ -n "${MI_PRINCIPAL}" ]]; then
+    # BUILD_MI: AcrPush + AcrPull only — no data access (isolated blast radius for image push)
+    BUILD_PRINCIPAL=$(az identity show --name "${BUILD_MI}" --resource-group "${ACR_RG}" --query principalId -o tsv 2>/dev/null || echo "")
+    if [[ -n "${BUILD_PRINCIPAL}" ]]; then
         for role in AcrPush AcrPull; do
             if az role assignment list --scope "${ACR_ID}" --role "${role}" \
-                --query "[?principalId=='${MI_PRINCIPAL}']" -o tsv 2>/dev/null | grep -q .; then
-                log_ok "${role} already assigned to platform identity"
+                --query "[?principalId=='${BUILD_PRINCIPAL}']" -o tsv 2>/dev/null | grep -q .; then
+                log_ok "${role} already assigned to ${BUILD_MI}"
             else
-                log_info "Assigning ${role} to platform identity"
+                log_info "Assigning ${role} to ${BUILD_MI}"
                 run az role assignment create \
-                    --assignee "${MI_PRINCIPAL}" \
+                    --assignee "${BUILD_PRINCIPAL}" \
                     --role "${role}" \
                     --scope "${ACR_ID}"
             fi
         done
     fi
+
+    # COMPUTE_MI and READ_MI: AcrPull only (nodes need to pull images; no push)
+    for MI_NAME in "${COMPUTE_MI}" "${READ_MI}"; do
+        PRINCIPAL=$(az identity show --name "${MI_NAME}" --resource-group "${ACR_RG}" --query principalId -o tsv 2>/dev/null || echo "")
+        if [[ -n "${PRINCIPAL}" ]]; then
+            if az role assignment list --scope "${ACR_ID}" --role "AcrPull" \
+                --query "[?principalId=='${PRINCIPAL}']" -o tsv 2>/dev/null | grep -q .; then
+                log_ok "AcrPull already assigned to ${MI_NAME}"
+            else
+                log_info "Assigning AcrPull to ${MI_NAME}"
+                run az role assignment create \
+                    --assignee "${PRINCIPAL}" \
+                    --role "AcrPull" \
+                    --scope "${ACR_ID}"
+            fi
+        fi
+    done
+
+    # Storage and KV roles are assigned in Phase 4 (Bicep) — not here
 
     # Grant current user AcrPush so they can push images now
     if az role assignment list --scope "${ACR_ID}" --role "AcrPush" \

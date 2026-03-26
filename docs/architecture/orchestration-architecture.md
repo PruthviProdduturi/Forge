@@ -223,7 +223,7 @@ metadata:
     azure.workload.identity/client-id: "<managed-identity-client-id>"
 ```
 
-This means every task pod automatically receives an OIDC token for the `id-forge-airflow` managed identity, giving it access to Key Vault secrets and the checkpoints ADLS container — the only Azure resources task pods need directly.
+This means every task pod automatically receives an OIDC token for the `id-forge-read-{env}` managed identity, giving it access to Key Vault secrets and the checkpoints ADLS container — the only Azure resources task pods need directly.
 
 ### RBAC Role
 
@@ -648,7 +648,7 @@ When an operator calls `BaseHook.get_connection("compute_cluster_k8s")`, Airflow
 3. Receives the secret value — a URI-encoded connection string or a JSON blob
 4. Parses it into an `Airflow Connection` object and returns it to the operator
 
-The Key Vault request is authenticated via the pod's OIDC token (workload identity). No static credentials are involved. The `id-forge-airflow` managed identity has `Key Vault Secrets User` role on `kv-forge-{env}`.
+The Key Vault request is authenticated via the pod's OIDC token (workload identity). No static credentials are involved. The `id-forge-read-{env}` managed identity has `Key Vault Secrets User` role on `kv-forge-{env}`.
 
 ### Secret Naming Convention
 

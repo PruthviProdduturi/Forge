@@ -605,19 +605,17 @@ Azure AD (validates OIDC assertion)
 Azure Resource (ADLS, Key Vault, ACR, etc.)
 ```
 
-#### Managed Identities per Workload
+#### Managed Identities (3 per environment)
 
-| Identity | Permissions |
-|----------|-------------|
-| `id-forge-{env}` | **Single identity per environment** used by all platform workloads (Spark, Trino, Airflow, Portal, DQ, Lineage) |
+Three identities per environment, each with a distinct blast radius:
 
-| Permission | Scope |
-|------------|-------|
-| Storage Blob Data Contributor | bronze, silver, gold, code, checkpoint containers (ADLS) |
-| Storage Blob Data Reader | gold container (read-only for Trino and Portal) |
-| Key Vault Secrets User | `kv-forge-{env}` |
-| AcrPush + AcrPull | `forgeacr{env}.azurecr.io` |
-| Cost Management Reader | Forge resource group (Portal cost API) |
+| Identity | Used by | Permissions |
+|----------|---------|-------------|
+| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob **Data Contributor** (bronze, silver, gold, code, checkpoints) · KV Secrets User |
+| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ, Marquez | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader |
+| `id-forge-build-{env}` | CI/CD pipeline (image build + push) | AcrPush + AcrPull **only** — zero data access |
+
+A compromised Trino worker (read path) cannot overwrite data. A compromised build pipeline cannot read your data. Spark (write path) is isolated from the image registry.
 
 ### Secret Management
 

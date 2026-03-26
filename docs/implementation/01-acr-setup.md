@@ -72,7 +72,7 @@ ACR_RG="rg-forge-acr-${ENV}"
 ACR_NAME="forgeacr${ENV}"                  # must be globally unique, lowercase, no hyphens
 DNS_ZONE_NAME="privatelink.azurecr.io"
 DNS_ZONE_RG="rg-forge-dns-${ENV}"
-BUILD_MI_NAME="id-forge-${ENV}"
+BUILD_MI_NAME="id-forge-build-${ENV}"
 ```
 
 ---
@@ -410,11 +410,21 @@ Image signature enforcement is done in the cluster using OPA Gatekeeper and the 
 
 ---
 
-## 11. Create Platform Managed Identity
+## 11. Create Build Managed Identity
 
-Forge uses a single user-assigned managed identity per environment — `id-forge-{env}` — shared by all platform workloads (Spark, Trino, Airflow, Portal, DQ) and the build pipeline. This eliminates identity sprawl while maintaining full auditability.
+Forge uses **three managed identities per environment** with separate blast radii:
+
+| Identity | Used by | Permissions |
+|----------|---------|-------------|
+| `id-forge-build-{env}` | CI/CD pipeline | AcrPush + AcrPull **only** — no data access |
+| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob Data Contributor · KV Secrets User |
+| `id-forge-read-{env}` | Trino, Airflow, Portal, DQ | Storage Blob Data Reader (silver/gold) · KV Secrets User |
+
+This step creates `id-forge-build-{env}` only. The compute and read identities are created by the Bicep stack in Step 03 and assigned their storage/KV roles there.
 
 ```bash
+BUILD_MI_NAME="id-forge-build-${ENV}"
+
 az identity create \
   --name "${BUILD_MI_NAME}" \
   --resource-group "rg-forge-platform-${ENV}" \
@@ -422,7 +432,7 @@ az identity create \
   --tags \
     platform=forge \
     environment="${ENV}" \
-    component=platform-identity
+    component=acr-build-identity
 
 # Capture the identity's principal ID and client ID
 MI_PRINCIPAL_ID=$(az identity show \
@@ -435,8 +445,8 @@ MI_CLIENT_ID=$(az identity show \
   --resource-group "rg-forge-platform-${ENV}" \
   --query clientId -o tsv)
 
-echo "Platform MI Principal ID: ${MI_PRINCIPAL_ID}"
-echo "Platform MI Client ID:    ${MI_CLIENT_ID}"
+echo "Build MI Principal ID: ${MI_PRINCIPAL_ID}"
+echo "Build MI Client ID:    ${MI_CLIENT_ID}"
 ```
 
 ---
@@ -843,7 +853,7 @@ Before proceeding to document `03-cluster-setup.md`, verify every item:
 - [ ] `nslookup forgeacr{env}.azurecr.io` from inside VNet returns a private IP
 - [ ] Public network access is `Disabled`
 - [ ] Defender for Containers is `Standard` tier at subscription level
-- [ ] Managed identity `id-forge-{env}` exists with AcrPush + AcrPull
+- [ ] Build identity `id-forge-build-{env}` exists with AcrPush + AcrPull (no data access)
 - [ ] `az acr login` succeeds from inside VNet
 - [ ] Test image push and delete completed successfully
 - [ ] ACR resources confirmed in `infra/bicep/modules/`

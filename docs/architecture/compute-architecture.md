@@ -390,7 +390,7 @@ Forge uses **Azure Workload Identity** — no storage account keys, no SAS token
 ```
 1. The Spark driver pod is annotated:
    azure.workload.identity/use: "true"
-   azure.workload.identity/client-id: "<id-forge-spark client ID>"
+   azure.workload.identity/client-id: "<id-forge-compute-{env} client ID>"
 
 2. The Azure Workload Identity webhook (MutatingWebhookConfiguration) intercepts
    the pod creation request and injects:
@@ -419,7 +419,7 @@ Forge uses **Azure Workload Identity** — no storage account keys, no SAS token
       with the projected token as the assertion and
       scope = https://storage.azure.com/.default
    c. Azure AD validates the OIDC assertion against the registered federated
-      credential for id-forge-spark
+      credential for id-forge-compute-{env}
    d. Azure AD returns a short-lived (1 hour) OAuth2 access token for ADLS Gen2
 
 5. The ABFS driver presents this access token in the Authorization header of
@@ -442,13 +442,13 @@ No storage account key configuration is present anywhere in the cluster.
 
 ### No Storage Keys
 
-The `id-forge-spark` managed identity has Azure RBAC role assignments:
+The `id-forge-compute-{env}` managed identity has Azure RBAC role assignments:
 - `Storage Blob Data Contributor` on `bronze/` container
 - `Storage Blob Data Contributor` on `silver/` container
 - `Storage Blob Data Reader` on `code/` container
 - `Storage Blob Data Contributor` on `checkpoints/` container
 
-It has **no access** to `serving/` — production serving data is read by consumers (Trino, Portal) via their own identities. Spark jobs that need to write to `serving/` use a separate managed identity `id-forge-spark-serving` with tighter scope.
+It has **no access** to `serving/` — production serving data is read by consumers (Trino, Portal) via `id-forge-read-{env}`.
 
 ### Path Conventions
 
@@ -803,7 +803,7 @@ delta.native-snapshot-isolation.enabled=true
 
 ### Workload Identity Pattern
 
-Trino uses the same Azure Workload Identity pattern as Spark. Trino pods are annotated with `azure.workload.identity/use: "true"` and the `id-forge-trino` client ID. The projected service account token is injected by the workload identity webhook.
+Trino uses the same Azure Workload Identity pattern as Spark. Trino pods are annotated with `azure.workload.identity/use: "true"` and the `id-forge-read-{env}` client ID. The projected service account token is injected by the workload identity webhook.
 
 The Trino ABFS/Hadoop configuration is set in the catalog properties files and Trino node configuration, pointing to the WorkloadIdentity token provider:
 
@@ -818,7 +818,7 @@ fs.azure.account.oauth.provider.type.forgeprodadls.dfs.core.windows.net=\
 fs.azure.account.oauth2.msi.tenant.forgeprodadls.dfs.core.windows.net=<tenant-id>
 ```
 
-The `id-forge-trino` managed identity has:
+The `id-forge-read-{env}` managed identity has:
 - `Storage Blob Data Reader` on `silver/` container
 - `Storage Blob Data Reader` on `gold/` container
 - **No access** to `bronze/` or `code/` containers

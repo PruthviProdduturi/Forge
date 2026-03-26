@@ -47,7 +47,7 @@ helm upgrade --install hive-metastore \
   --set image.tag=3.1.3 \
   --set db.host=$(az keyvault secret show --vault-name kv-forge-{env} --name hms-postgres-host --query value -o tsv) \
   --set db.password="" \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-{env} --query clientId -o tsv) \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-compute-{env} --query clientId -o tsv) \
   --wait --timeout 5m
 ```
 
@@ -172,7 +172,7 @@ helm upgrade --install spark-connect \
   --namespace spark-system \
   --set image.repository=forgeacr-{env}.azurecr.io/spark \
   --set image.tag=4.1.0 \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-{env} --query clientId -o tsv) \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-compute-{env} --query clientId -o tsv) \
   --set config.adlsAccount=forgeadls{env} \
   --set config.openlineageUrl=http://marquez-api.lineage.svc.cluster.local:5000 \
   --wait --timeout 5m
@@ -239,7 +239,7 @@ helm upgrade --install trino \
   --values infra/helm/compute/trino/values.yaml \
   --set image.repository=forgeacr-{env}.azurecr.io/trino \
   --set image.tag=438 \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-{env} --query clientId -o tsv) \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-read-{env} --query clientId -o tsv) \
   --wait --timeout 10m
 ```
 

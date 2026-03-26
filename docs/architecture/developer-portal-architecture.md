@@ -830,7 +830,7 @@ The cost section attributes Azure compute spend to individual pipelines, making 
 
 ### Azure Cost Management API Integration
 
-The portal backend uses the Azure SDK (`azure-mgmt-costmanagement`) to query the Azure Cost Management API. Authentication uses the portal's workload identity (`id-forge-portal`), which has the `Cost Management Reader` role scoped to the Forge resource group.
+The portal backend uses the Azure SDK (`azure-mgmt-costmanagement`) to query the Azure Cost Management API. Authentication uses the portal's workload identity (`id-forge-read-{env}`), which has the `Cost Management Reader` role scoped to the Forge resource group.
 
 The primary API used is `CostManagementClient.query.usage()` with a date range and grouping. The backend queries at both the resource group level (overall platform cost) and filtered by resource tag (pipeline-level attribution).
 

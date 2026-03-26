@@ -858,7 +858,7 @@ for reporter in [StoreReporter(), AlertReporter(), LineageReporter()]:
 
 `StoreReporter` converts `DQRunReport` to a PySpark Row and appends it to the Delta table using `delta-spark`. The write uses `mode="append"` (never overwrite). The Delta table's schema is registered in the Hive Metastore on first write; subsequent writes validate schema compatibility.
 
-The reporter runs in the Airflow task pod using the `id-forge-dq` workload identity, which has `Storage Blob Data Contributor` on the `curated` container scoped to the `_platform/dq_results/` path.
+The reporter runs in the Airflow task pod using the `id-forge-read-{env}` workload identity, which has `Storage Blob Data Reader` on the `silver` and `gold` containers (DQ results are written by the Spark DQ job running under `id-forge-compute-{env}`).
 
 If the Delta table does not yet exist (first run in a new environment), `StoreReporter` creates it with the schema defined in `forge.dq.schema.DQ_RESULTS_SCHEMA`.
 
