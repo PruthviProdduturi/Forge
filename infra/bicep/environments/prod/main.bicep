@@ -54,8 +54,8 @@ param platformAdminGroupObjectId string
 @description('Corporate IP address range used in NSG inbound rules.')
 param corporateIpRange string = '10.0.0.0/8'
 
-@description('Number of days to retain Log Analytics data.')
-@minValue(7)
+@description('Number of days to retain Log Analytics data. S360 LM requires minimum 90 days.')
+@minValue(90)
 @maxValue(730)
 param logRetentionDays int = 90
 
@@ -162,7 +162,8 @@ module computeCluster '../../modules/aks.bicep' = {
     location: location
     ownerAlias: ownerAlias
     clusterPurpose: 'compute'
-    kubernetesVersion: '1.29'
+    kubernetesVersion: '1.32'
+    sparkVmSize: 'Standard_E96_v5'    // 96 vCPUs / 672 GiB — 4c/28g executors fill nodes exactly
     subnetId: networking.outputs.subnetIds.compute
     privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
@@ -181,7 +182,7 @@ module orchCluster '../../modules/aks.bicep' = {
     location: location
     ownerAlias: ownerAlias
     clusterPurpose: 'orchestration'
-    kubernetesVersion: '1.29'
+    kubernetesVersion: '1.32'
     subnetId: networking.outputs.subnetIds.orchestration
     privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds

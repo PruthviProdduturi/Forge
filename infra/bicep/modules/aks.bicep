@@ -16,7 +16,7 @@ param location string
 param clusterPurpose string
 
 @description('Kubernetes version to deploy.')
-param kubernetesVersion string = '1.29'
+param kubernetesVersion string = '1.32'
 
 @description('Resource ID of the subnet to place the AKS nodes in.')
 param subnetId string
@@ -30,13 +30,16 @@ param adminGroupObjectIds array
 @description('Resource ID of the Azure Container Registry to grant pull access.')
 param containerRegistryId string
 
-@description('Number of days to retain Log Analytics data.')
-@minValue(7)
+@description('Number of days to retain Log Analytics data. S360 LM requires minimum 90 days.')
+@minValue(90)
 @maxValue(730)
-param logRetentionDays int = 30
+param logRetentionDays int = 90
 
 @description('Owner alias appended to resource names for personal/shared deployment disambiguation (e.g., prproddu). Leave empty for shared environments.')
 param ownerAlias string = ''
+
+@description('VM size for the Spark node pool. E96_v5 for prod, E8s_v5 for dev.')
+param sparkVmSize string = 'Standard_E8s_v5'
 
 @description('Resource tags to apply to all resources.')
 param tags object = {}
@@ -254,10 +257,14 @@ resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
   parent: aksCluster
   name: 'sparkpool'
   properties: {
-    vmSize: 'Standard_E8s_v5'
+    // E96_v5 (96 vCPUs / 672 GiB) in prod — parameterised via sparkVmSize.
+    // Regular priority (not Spot): Spark Connect driver is a long-lived process;
+    // spot eviction would kill active VS Code sessions and is not recoverable.
+    // Spark Operator batch jobs tolerate restarts, but the driver pod does not.
+    vmSize: sparkVmSize
     count: 0
     minCount: 0
-    maxCount: environment == 'dev' ? 3 : 12
+    maxCount: environment == 'dev' ? 3 : 100
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'
@@ -272,10 +279,6 @@ resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
     upgradeSettings: {
       maxSurge: '33%'
     }
-    // Spot instances — evicted pods are rescheduled by Spark Operator
-    scaleSetPriority: 'Spot'
-    scaleSetEvictionPolicy: 'Delete'
-    spotMaxPrice: -1
   }
 }
 
