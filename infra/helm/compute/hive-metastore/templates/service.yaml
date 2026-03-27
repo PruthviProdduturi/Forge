@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hive-metastore
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: hive-metastore
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app: hive-metastore
+  ports:
+    - name: thrift
+      port: {{ .Values.service.port }}
+      targetPort: thrift
+      protocol: TCP

@@ -1,0 +1,63 @@
+# =============================================================================
+# Hive Metastore — Helm Values
+#
+# Deploys HMS 3.1.3 as a single ClusterIP service on port 9083.
+# Both Spark (DeltaCatalog) and Trino (delta_lake connector) use this
+# endpoint for table name → ADLS path resolution via the Thrift protocol.
+#
+# PostgreSQL connection details are read from Key Vault at deploy time
+# and passed as --set flags. The pod stores them in a K8s Secret.
+#
+# Usage:
+#   HMS_HOST=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-host --query value -o tsv)
+#   HMS_USER=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-user --query value -o tsv)
+#   HMS_PASS=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-password --query value -o tsv)
+#   helm upgrade --install hive-metastore infra/helm/compute/hive-metastore \
+#     --namespace hive-metastore --create-namespace \
+#     --set image.repository=forgeacr{alias}.azurecr.io/hive-metastore \
+#     --set db.host=${HMS_HOST} \
+#     --set db.user=${HMS_USER} \
+#     --set db.password=${HMS_PASS} \
+#     --set adls.account=forgeadls{alias}{env}
+# =============================================================================
+
+image:
+  repository: forgeacr.azurecr.io/hive-metastore
+  tag: "3.1.3"
+  pullPolicy: IfNotPresent
+
+# ----------------------------------------------------------------------------
+# PostgreSQL connection — set at deploy time from Key Vault
+# ----------------------------------------------------------------------------
+db:
+  host: ""       # set via --set db.host=...
+  port: 5432
+  name: hms_db
+  user: ""       # set via --set db.user=...
+  password: ""   # set via --set db.password=...
+
+# ----------------------------------------------------------------------------
+# ADLS warehouse directory — default location for HMS-registered tables
+# Spark/Trino write data directly to ADLS; HMS only stores the path pointer.
+# ----------------------------------------------------------------------------
+adls:
+  account: ""    # set via --set adls.account=forgeadls{alias}{env}
+
+# ----------------------------------------------------------------------------
+# HMS server resources — single instance, catalog lookups are lightweight
+# ----------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: "500m"
+    memory: "1Gi"
+  limits:
+    cpu: "1"
+    memory: "2Gi"
+
+nodeSelector:
+  agentpool: systempool
+
+replicaCount: 1
+
+service:
+  port: 9083

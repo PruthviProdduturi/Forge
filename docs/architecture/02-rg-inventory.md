@@ -26,18 +26,21 @@ Everything needed for connectivity. Must exist before any AKS cluster or PaaS se
 | 2 | Subnet | `snet-compute` | Isolated address space for compute cluster nodes. Separate subnet = separate NSG = separate blast radius from orchestration. | Compute AKS node VMSS |
 | 3 | Subnet | `snet-orchestration` | Isolated address space for orchestration cluster nodes. | Orchestration AKS node VMSS |
 | 4 | Subnet | `snet-private-endpoints` | Dedicated subnet for all private endpoint NICs. Keeps PE traffic isolated from node subnets. | ADLS, Key Vault, ACR private endpoints |
-| 5 | NSG | `nsg-snet-compute` | Network security group for the compute subnet. Controls inbound/outbound rules at subnet level. | Attached to `snet-compute` |
-| 6 | NSG | `nsg-snet-orchestration` | Network security group for the orchestration subnet. | Attached to `snet-orchestration` |
-| 7 | NSG | `nsg-snet-private-endpoints` | Network security group for the private endpoints subnet. | Attached to `snet-private-endpoints` |
-| 8 | Route Table | `rt-forge-prproddu-dev` | Custom route table — controls egress path for AKS nodes. Currently routes outbound via AKS load balancer; will route via Azure Firewall in prod. | Attached to compute + orchestration subnets |
-| 9 | Private DNS Zone | `privatelink.blob.core.windows.net` | Resolves ADLS Blob FQDN to the private endpoint IP inside the VNet instead of the public Azure IP. Without this, blob access from pods would go over the internet. | ADLS Blob private endpoint, all pods using `wasbs://` |
-| 10 | Private DNS Zone | `privatelink.dfs.core.windows.net` | Resolves ADLS DFS FQDN to private endpoint IP. DFS is the hierarchical namespace endpoint used by workload identities for RBAC-based ADLS access (`abfss://`). | ADLS DFS private endpoint, all pods using `abfss://` |
-| 11 | Private DNS Zone | `privatelink.vaultcore.azure.net` | Resolves Key Vault FQDN to private endpoint IP. Without this, pods would fail to reach the vault (public network access is disabled on the vault). | Key Vault private endpoint, CSI driver, all pods reading secrets |
-| 12 | Private DNS Zone | `privatelink.azurecr.io` | Resolves ACR FQDN to private endpoint IP. AKS nodes pull images from ACR — this ensures pulls go over the private network. | ACR private endpoint, AKS kubelet image pulls |
-| 13 | VNet Link (×4) | `vnetlink-blob`, `vnetlink-dfs`, `vnetlink-vault`, `vnetlink-acr` | Links each private DNS zone to the VNet so DNS queries from within the VNet are answered by the private zone, not public Azure DNS. | All pods and nodes doing DNS resolution |
-| 14 | Private Endpoint | `pe-forgeacrprproddu-dev` | Connects the shared ACR into this environment's VNet. AKS nodes pull images via this endpoint — ACR has public access disabled. | AKS compute + orchestration kubelet |
-| 15 | NIC | `nic-pe-forgeacrprproddu-dev` | Network interface card for the ACR private endpoint. Holds the private IP assigned inside `snet-private-endpoints`. | Azure networking — backing resource for the PE |
-| 16 | Log Analytics Workspace | `law-forge-platform-prproddu-dev` | Diagnostic sink for platform-level network resources (NSG flow logs, VNet diagnostics). Kept separate from workload LAWs so network ops logs don't mix with application logs. | NSG diagnostics, VNet flow data |
+| 5 | Subnet | `snet-postgres` | Delegated subnet for PostgreSQL Flexible Server VNet Integration. Delegation (`Microsoft.DBforPostgreSQL/flexibleServers`) allows the managed service to join the VNet directly — no public IP needed. | PostgreSQL Flexible Server (`psql-forge-prproddu-dev`) |
+| 6 | NSG | `nsg-snet-compute` | Network security group for the compute subnet. Controls inbound/outbound rules at subnet level. | Attached to `snet-compute` |
+| 7 | NSG | `nsg-snet-orchestration` | Network security group for the orchestration subnet. | Attached to `snet-orchestration` |
+| 8 | NSG | `nsg-snet-private-endpoints` | Network security group for the private endpoints subnet. | Attached to `snet-private-endpoints` |
+| 9 | NSG | `nsg-snet-postgres` | Allows inbound 5432 from compute subnet only (HMS pods). All other inbound denied. | Attached to `snet-postgres` |
+| 10 | Route Table | `rt-forge-prproddu-dev` | Custom route table — controls egress path for AKS nodes. Currently routes outbound via AKS load balancer; will route via Azure Firewall in prod. | Attached to compute + orchestration subnets |
+| 11 | Private DNS Zone | `privatelink.blob.core.windows.net` | Resolves ADLS Blob FQDN to the private endpoint IP inside the VNet instead of the public Azure IP. Without this, blob access from pods would go over the internet. | ADLS Blob private endpoint, all pods using `wasbs://` |
+| 12 | Private DNS Zone | `privatelink.dfs.core.windows.net` | Resolves ADLS DFS FQDN to private endpoint IP. DFS is the hierarchical namespace endpoint used by workload identities for RBAC-based ADLS access (`abfss://`). | ADLS DFS private endpoint, all pods using `abfss://` |
+| 13 | Private DNS Zone | `privatelink.vaultcore.azure.net` | Resolves Key Vault FQDN to private endpoint IP. Without this, pods would fail to reach the vault (public network access is disabled on the vault). | Key Vault private endpoint, CSI driver, all pods reading secrets |
+| 14 | Private DNS Zone | `privatelink.azurecr.io` | Resolves ACR FQDN to private endpoint IP. AKS nodes pull images from ACR — this ensures pulls go over the private network. | ACR private endpoint, AKS kubelet image pulls |
+| 15 | Private DNS Zone | `privatelink.postgres.database.azure.com` | Resolves PostgreSQL Flexible Server FQDN to its VNet-integrated IP. Required for HMS pods to reach the server by hostname. | HMS pod (JDBC), postgres module |
+| 16 | VNet Link (×5) | `vnetlink-blob`, `vnetlink-dfs`, `vnetlink-vault`, `vnetlink-acr`, `vnetlink-postgres` | Links each private DNS zone to the VNet so DNS queries from within the VNet are answered by the private zone, not public Azure DNS. | All pods and nodes doing DNS resolution |
+| 17 | Private Endpoint | `pe-forgeacrprproddu-dev` | Connects the shared ACR into this environment's VNet. AKS nodes pull images via this endpoint — ACR has public access disabled. | AKS compute + orchestration kubelet |
+| 18 | NIC | `nic-pe-forgeacrprproddu-dev` | Network interface card for the ACR private endpoint. Holds the private IP assigned inside `snet-private-endpoints`. | Azure networking — backing resource for the PE |
+| 19 | Log Analytics Workspace | `law-forge-platform-prproddu-dev` | Diagnostic sink for platform-level network resources (NSG flow logs, VNet diagnostics). Kept separate from workload LAWs so network ops logs don't mix with application logs. | NSG diagnostics, VNet flow data |
 
 ---
 
@@ -107,6 +110,13 @@ All compute, storage, identity, and observability resources. Deployed after the 
 | 26 | Key Vault | `kv-forge-prproddu-dev` | Single source of truth for all secrets. RBAC-authorized — no legacy access policies. Premium SKU for HSM-backed keys. Public network access disabled. | CSI driver mounts secrets into pods; Airflow KV secrets backend; platform admin group manages secrets |
 | 27 | Private Endpoint | `pep-kv-forge-prproddu-dev` | Connects Key Vault to the VNet. Pods reach the vault via this endpoint — public access is disabled so there is no other path. | All pods via CSI driver, Airflow secrets backend |
 | 28 | NIC | `nic-pep-kv-forge-prproddu-dev` | Network interface for the Key Vault private endpoint. | Azure networking backing resource |
+
+### PostgreSQL (Hive Metastore backend)
+
+| # | Resource | Name | Why it exists | Used by |
+|---|---|---|---|---|
+| 29 | PostgreSQL Flexible Server | `psql-forge-prproddu-dev` | Metadata backend for Hive Metastore. HMS stores all table registrations (name → ADLS path, schema, partition info) here. Uses VNet Integration — no public access. | Hive Metastore pod (JDBC on port 5432) |
+| 30 | Database | `hms_db` | The HMS schema database. Schema DDL is applied by HMS `schemaInit` on first startup. | Hive Metastore |
 
 ---
 

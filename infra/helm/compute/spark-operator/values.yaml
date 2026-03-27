@@ -1,0 +1,45 @@
+# =============================================================================
+# Spark Operator — Helm Values
+#
+# Chart is pulled from ACR OCI registry (imported in Step 02):
+#   helm upgrade --install spark-operator \
+#     oci://forgeacr{alias}.azurecr.io/helm/spark-operator \
+#     --version 1.4.6 \
+#     --namespace spark-system --create-namespace \
+#     --values infra/helm/compute/spark-operator/values.yaml \
+#     --set image.repository=forgeacr{alias}.azurecr.io/spark-operator \
+#     --set image.tag=1.4.6
+# =============================================================================
+
+image:
+  repository: forgeacr.azurecr.io/spark-operator
+  tag: "1.4.6"
+  pullPolicy: IfNotPresent
+
+# Watch only the spark-jobs namespace — operator does not need cluster-wide scope
+sparkJobNamespace: spark-jobs
+
+# Webhook injects workload identity labels and node affinity into driver/executor pods
+webhook:
+  enable: true
+  namespaceSelector: "kubernetes.io/metadata.name=spark-jobs"
+
+# Prometheus-format metrics scraped by Azure Monitor Agent
+metrics:
+  enable: true
+  port: 10254
+  portName: metrics
+  endpoint: /metrics
+
+# Operator pod resources — lightweight controller, not a data plane component
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# Run operator on system node pool — keep it away from Spark workload nodes
+nodeSelector:
+  agentpool: systempool

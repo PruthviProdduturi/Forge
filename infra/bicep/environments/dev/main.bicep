@@ -18,6 +18,7 @@
 //   4. Storage      (→ rg-forge-dev, depends on networking)
 //   5. Identity     (→ rg-forge-dev, depends on AKS + storage)
 //   6. Key Vault    (→ rg-forge-dev, depends on networking + identity)
+//   7. PostgreSQL   (→ rg-forge-dev, depends on networking + keyvault)
 //
 // Deploy:
 //   az deployment sub create \
@@ -98,6 +99,10 @@ param storageReplicationType string = 'LRS'
 @description('Resource tags applied to all resources.')
 param tags object = {}
 
+@secure()
+@description('Admin password for the HMS PostgreSQL Flexible Server. Pass on CLI: --parameters hmsAdminPassword=<password>')
+param hmsAdminPassword string
+
 // ---------------------------------------------------------------------------
 // Generated name variables
 // ---------------------------------------------------------------------------
@@ -114,6 +119,9 @@ var keyVaultName       = 'kv-forge${aliasSuffix}-${environment}'
 // Resource group names — 2 RGs per environment
 var rgPlatform = 'rg-forge-platform${aliasSuffix}-${environment}'
 var rgCompute  = 'rg-forge${aliasSuffix}-${environment}'
+
+// PostgreSQL Flexible Server name — globally unique, no hyphens in embedded alias
+var postgresServerName = 'psql-forge${aliasSuffix}-${environment}'
 
 // Common tags merged with required platform tags
 var mergedTags = union(tags, {
@@ -371,6 +379,26 @@ module keyvault '../../modules/keyvault.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Step 7: PostgreSQL Flexible Server  (→ rg-forge-dev, depends on networking + keyvault)
+// HMS metadata backend. Uses VNet Integration — no public access.
+// ---------------------------------------------------------------------------
+module postgres '../../modules/postgres.bicep' = {
+  name: 'postgres-${environment}'
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes, keyvault]
+  params: {
+    environment: environment
+    location: location
+    serverName: postgresServerName
+    subnetId: networking.outputs.subnetIds.postgres
+    privateDnsZoneId: networking.outputs.privateDnsZoneIds.postgres
+    keyVaultId: keyvault.outputs.keyVaultId
+    adminPassword: hmsAdminPassword
+    tags: mergedTags
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
@@ -407,3 +435,7 @@ output orchLogAnalyticsWorkspaceId string = orchCluster.outputs.logAnalyticsWork
 
 // Workload Identities
 output workloadIdentities object = identity.outputs.identities
+
+// PostgreSQL (HMS backend)
+output postgresServerName string = postgres.outputs.serverName
+output postgresServerFqdn string = postgres.outputs.serverFqdn

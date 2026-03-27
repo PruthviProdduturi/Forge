@@ -1,0 +1,103 @@
+# =============================================================================
+# Trino — Helm Values
+#
+# Chart is pulled from ACR OCI registry (imported in Step 02):
+#   helm upgrade --install trino \
+#     oci://forgeacr{alias}.azurecr.io/helm/trino \
+#     --version 0.31.0 \
+#     --namespace trino --create-namespace \
+#     --values infra/helm/compute/trino/values.yaml \
+#     --set image.repository=forgeacr{alias}.azurecr.io/trino \
+#     --set image.tag=438 \
+#     --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID}
+#
+# WI_CLIENT_ID is the clientId of id-forge-trino-{env} managed identity.
+# =============================================================================
+
+image:
+  repository: forgeacr.azurecr.io/trino
+  tag: "438"
+  pullPolicy: IfNotPresent
+
+# ----------------------------------------------------------------------------
+# Coordinator — always-on, handles query planning and client connections
+# ----------------------------------------------------------------------------
+coordinator:
+  jvm:
+    maxHeapSize: "6G"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "8Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+  nodeSelector:
+    agentpool: trino
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: trino
+      effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# Workers — autoscaled 2–8 based on active query count (HPA)
+# Dev sizing: D4s_v5 (4 vCPU / 16 GiB per node)
+# ----------------------------------------------------------------------------
+worker:
+  replicas: 1
+  jvm:
+    maxHeapSize: "10G"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "12Gi"
+    limits:
+      cpu: "4"
+      memory: "12Gi"
+  nodeSelector:
+    agentpool: trino
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: trino
+      effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# Autoscaling
+# ----------------------------------------------------------------------------
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 60
+
+# ----------------------------------------------------------------------------
+# Catalogs
+# HMS Thrift endpoint: hive-metastore.hive-metastore.svc.cluster.local:9083
+# ----------------------------------------------------------------------------
+additionalCatalogs:
+  lakehouse: |
+    connector.name=delta_lake
+    hive.metastore.uri=thrift://hive-metastore.hive-metastore.svc.cluster.local:9083
+    delta.hive-catalog-name=hive
+    fs.native-azure.enabled=true
+    azure.auth-type=MANAGED_IDENTITY
+
+  hive: |
+    connector.name=hive
+    hive.metastore.uri=thrift://hive-metastore.hive-metastore.svc.cluster.local:9083
+    fs.native-azure.enabled=true
+    azure.auth-type=MANAGED_IDENTITY
+
+# ----------------------------------------------------------------------------
+# Workload identity — client ID set at deploy time via --set
+# ----------------------------------------------------------------------------
+serviceAccount:
+  create: false    # created by identity Bicep module
+  name: trino
+  annotations: {}  # azure.workload.identity/client-id set at deploy time
+
+# Pod labels required for workload identity token injection
+podLabels:
+  azure.workload.identity/use: "true"

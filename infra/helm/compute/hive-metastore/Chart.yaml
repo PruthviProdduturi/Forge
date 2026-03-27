@@ -1,0 +1,6 @@
+apiVersion: v2
+name: hive-metastore
+description: Hive Metastore 3.1.3 — table catalog for Spark and Trino on Azure
+type: application
+version: 1.0.0
+appVersion: "3.1.3"

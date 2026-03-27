@@ -21,11 +21,13 @@ var addressPrefixes = environment == 'dev' ? {
   compute:          '10.1.0.0/16'
   orchestration:    '10.2.0.0/16'
   privateEndpoints: '10.3.0.0/24'
+  postgres:         '10.4.0.0/24'
 } : {
   vnet:             '10.16.0.0/12'
   compute:          '10.17.0.0/16'
   orchestration:    '10.18.0.0/16'
   privateEndpoints: '10.19.0.0/24'
+  postgres:         '10.20.0.0/24'
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +443,47 @@ resource nsgPrivateEndpoints 'Microsoft.Network/networkSecurityGroups@2023-11-01
 
 
 // ---------------------------------------------------------------------------
+// NSG — Postgres Subnet (PostgreSQL Flexible Server VNet integration)
+// Allows inbound 5432 from compute subnet only (HMS pods).
+// ---------------------------------------------------------------------------
+resource nsgPostgres 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
+  name: 'nsg-forge-postgres-${environment}'
+  location: location
+  tags: tags
+  properties: {
+    securityRules: [
+      {
+        name: 'AllowHMSInbound5432'
+        properties: {
+          priority: 100
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: addressPrefixes.compute
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '5432'
+        }
+      }
+      {
+        name: 'DenyAllOtherInbound'
+        properties: {
+          priority: 4096
+          direction: 'Inbound'
+          access: 'Deny'
+          protocol: '*'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+    ]
+  }
+}
+
+
+// ---------------------------------------------------------------------------
 // Route Tables — pre-created stubs for future Azure Firewall UDR migration.
 // Currently empty (Azure default system routes apply). When Azure Firewall is
 // deployed, add a 0.0.0.0/0 → Firewall IP route here and switch AKS clusters
@@ -512,6 +555,25 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
             id: nsgPrivateEndpoints.id
           }
           privateEndpointNetworkPolicies: 'Disabled'
+          privateLinkServiceNetworkPolicies: 'Enabled'
+        }
+      }
+      {
+        name: 'snet-forge-postgres-${environment}'
+        properties: {
+          addressPrefix: addressPrefixes.postgres
+          networkSecurityGroup: {
+            id: nsgPostgres.id
+          }
+          delegations: [
+            {
+              name: 'postgres-delegation'
+              properties: {
+                serviceName: 'Microsoft.DBforPostgreSQL/flexibleServers'
+              }
+            }
+          ]
+          privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
         }
       }
@@ -765,6 +827,7 @@ output subnetIds object = {
   compute: '${vnet.id}/subnets/snet-forge-compute-${environment}'
   orchestration: '${vnet.id}/subnets/snet-forge-orchestration-${environment}'
   privateEndpoints: '${vnet.id}/subnets/snet-forge-private-endpoints-${environment}'
+  postgres: '${vnet.id}/subnets/snet-forge-postgres-${environment}'
 }
 
 output privateDnsZoneIds object = {
@@ -780,3 +843,21 @@ output privateDnsZoneIds object = {
 }
 
 output platformLogAnalyticsWorkspaceId string = platformLaw.id
+
+resource nsgPostgresDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-nsg-postgres-${environment}'
+  scope: nsgPostgres
+  properties: {
+    workspaceId: platformLaw.id
+    logs: [
+      {
+        category: 'NetworkSecurityGroupEvent'
+        enabled: true
+      }
+      {
+        category: 'NetworkSecurityGroupRuleCounter'
+        enabled: true
+      }
+    ]
+  }
+}

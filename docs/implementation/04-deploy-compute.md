@@ -30,8 +30,8 @@ Deploy in order:
 Set your kubectl context before running any command in this step:
 ```bash
 az aks get-credentials \
-  --resource-group rg-forge-compute-{env} \
-  --name aks-forge-compute-{env} \
+  --resource-group rg-forge-{alias}-{env} \
+  --name aks-forge-compute-{alias}-{env} \
   --overwrite-existing
 
 kubectl config current-context   # verify
@@ -49,14 +49,19 @@ Trino and Spark both use the Hive Metastore (HMS) to look up Delta table schemas
 ```bash
 kubectl create namespace hive-metastore --dry-run=client -o yaml | kubectl apply -f -
 
+HMS_HOST=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-host --query value -o tsv)
+HMS_USER=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-user --query value -o tsv)
+HMS_PASS=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-password --query value -o tsv)
+
 helm upgrade --install hive-metastore \
   infra/helm/compute/hive-metastore \
   --namespace hive-metastore \
   --set image.repository=forgeacr{alias}.azurecr.io/hive-metastore \
   --set image.tag=3.1.3 \
-  --set db.host=$(az keyvault secret show --vault-name kv-forge-{env} --name hms-postgres-host --query value -o tsv) \
-  --set db.password="" \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-compute-{env} --query clientId -o tsv) \
+  --set db.host="${HMS_HOST}" \
+  --set db.user="${HMS_USER}" \
+  --set db.password="${HMS_PASS}" \
+  --set adls.account=forgeadls{alias}{env} \
   --wait --timeout 5m
 ```
 
@@ -185,8 +190,8 @@ One shared Spark Connect server per environment. The entire team connects to the
 
 ```bash
 WI_CLIENT_ID=$(az identity show \
-  -g rg-forge-platform-{alias}-dev \
-  -n id-forge-compute-{alias}-dev \
+  -g rg-forge-{alias}-dev \
+  -n id-forge-spark-dev \
   --query clientId -o tsv)
 
 helm upgrade --install spark-connect \
@@ -205,8 +210,8 @@ helm upgrade --install spark-connect \
 
 ```bash
 WI_CLIENT_ID=$(az identity show \
-  -g rg-forge-platform-{alias}-prod \
-  -n id-forge-compute-{alias}-prod \
+  -g rg-forge-{alias}-prod \
+  -n id-forge-spark-prod \
   --query clientId -o tsv)
 
 helm upgrade --install spark-connect \
@@ -222,7 +227,7 @@ helm upgrade --install spark-connect \
 
 ### Get the Spark Connect Endpoint
 
-Exposed on an internal Azure Load Balancer (VNet / VPN only):
+The service is an internal Azure Load Balancer (VNet-only). Since the AKS API server is public, developers reach it via `kubectl port-forward` from their laptops — no VPN required.
 
 ```bash
 kubectl get svc -n spark-system spark-connect-lb
@@ -231,24 +236,25 @@ kubectl get svc -n spark-system spark-connect-lb
 
 SC_HOST=$(kubectl get svc -n spark-system spark-connect-lb \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-echo "sc://${SC_HOST}:15002"
-```
 
-Store in Key Vault for developer distribution:
-```bash
+# Store the internal IP in Key Vault (used when connecting from within the cluster)
 az keyvault secret set --vault-name kv-forge-{alias}-{env} \
   --name spark-connect-endpoint --value "sc://${SC_HOST}:15002"
 ```
 
-### Verify from VS Code / Notebook
+### Developer Access via Port-Forward
 
+Each developer runs this once in a terminal before opening VS Code:
+```bash
+kubectl port-forward svc/spark-connect-lb 15002:15002 -n spark-system
+# Forwarding from 127.0.0.1:15002 -> 15002
+```
+
+Then connect from VS Code / notebook:
 ```python
 from pyspark.sql import SparkSession
 
-# Use the primary endpoint (retrieve from Key Vault or ask platform team)
-CONNECT_URL = "sc://10.4.0.10:15002"
-
-spark = SparkSession.builder.remote(CONNECT_URL).getOrCreate()
+spark = SparkSession.builder.remote("sc://localhost:15002").getOrCreate()
 print(spark.version)  # should print 4.1.1
 spark.sql("SELECT 1 AS test").show()
 ```
@@ -272,6 +278,11 @@ kubectl get secretproviderclass -n trino trino-catalog-secrets
 
 ```bash
 # Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
+WI_CLIENT_ID=$(az identity show \
+  -g rg-forge-{alias}-{env} \
+  -n id-forge-trino-{env} \
+  --query clientId -o tsv)
+
 helm upgrade --install trino \
   oci://forgeacr{alias}.azurecr.io/helm/trino \
   --version 0.31.0 \
@@ -280,7 +291,7 @@ helm upgrade --install trino \
   --values infra/helm/compute/trino/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/trino \
   --set image.tag=438 \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-read-{env} --query clientId -o tsv) \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 10m
 ```
 

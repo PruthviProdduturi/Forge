@@ -61,7 +61,7 @@ spec:
   driver:
     cores: 2
     memory: "4g"
-    serviceAccount: spark-driver-sa
+    serviceAccount: spark
     labels:
       workload: spark-driver
     annotations:
