@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "prod"
+    },
+    "location": {
+      "value": "northcentralus"
+    },
+    "subscriptionId": {
+      "value": "REPLACE_WITH_SUBSCRIPTION_ID"
+    },
+    "tenantId": {
+      "value": "REPLACE_WITH_TENANT_ID"
+    },
+    "adminGroupObjectIds": {
+      "value": [
+        "REPLACE_WITH_AKS_ADMIN_GROUP_OBJECT_ID"
+      ]
+    },
+    "platformAdminGroupObjectId": {
+      "value": "REPLACE_WITH_PLATFORM_ADMIN_GROUP_OBJECT_ID"
+    },
+    "ownerAlias": {
+      "value": ""
+    },
+    "logRetentionDays": {
+      "value": 90
+    },
+    "tags": {
+      "value": {
+        "owner": "platform-team"
+      }
+    }
+  }
+}

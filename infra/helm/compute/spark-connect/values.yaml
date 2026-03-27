@@ -1,0 +1,130 @@
+# =============================================================================
+# Spark Connect — Helm Values
+#
+# Deploys a named Spark Connect server instance for interactive PySpark
+# development. Each instance is an independent driver process with its own
+# executor pool — engineers connect via VS Code PySpark extension.
+#
+# Node type: Standard_E96_v5 (96 vCPUs / 672 GiB RAM per node)
+#
+# Team of 15 (single team) — deploy 2 instances:
+#   spark-connect-a  →  primary   (all 15 engineers)
+#   spark-connect-b  →  standby   (overflow / heavy batch sessions)
+#
+# Each driver supports ~10 concurrent active sessions at the settings below.
+# Executors are shared across sessions and scale dynamically with actual load.
+#
+# Usage (deploy each instance separately):
+#   helm upgrade --install spark-connect-a infra/helm/compute/spark-connect \
+#     --namespace spark-system \
+#     --set nameOverride=spark-connect-a \
+#     --values infra/helm/compute/spark-connect/values.yaml \
+#     --set adls.account=forgeadls{alias}dev
+# =============================================================================
+
+# Instance name — override per deployment (spark-connect-a, spark-connect-b)
+nameOverride: spark-connect
+
+image:
+  repository: forgeacr.azurecr.io/spark
+  tag: "4.1.1"
+  pullPolicy: IfNotPresent
+
+# ----------------------------------------------------------------------------
+# Driver pod resources
+# Handles session management, query planning, result streaming.
+# 8 cores / 28g supports 10+ concurrent active sessions.
+# ----------------------------------------------------------------------------
+driver:
+  cores: 8
+  memory: "28g"
+  resources:
+    requests:
+      cpu: "8"
+      memory: "30Gi"
+    limits:
+      cpu: "12"
+      memory: "32Gi"
+  nodeSelector:
+    workload: spark
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: spark
+      effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# Dynamic executor allocation
+# E96_v5 (96 vCPUs / 672 GiB) — 8 cores / 48g fits ~8 executors per node.
+# Executors scale with actual query load — idle executors are released.
+# ----------------------------------------------------------------------------
+executor:
+  cores: 8
+  memory: "48g"
+  instances:
+    min: 2
+    max: 20
+  resources:
+    requests:
+      cpu: "8"
+      memory: "52Gi"
+    limits:
+      cpu: "8"
+      memory: "52Gi"
+  nodeSelector:
+    workload: spark
+  tolerations:
+    - key: workload
+      operator: Equal
+      value: spark
+      effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# Spark Connect gRPC service
+# Internal load balancer — accessible from VNet / VPN only.
+# Each instance gets its own LB IP so engineers connect to either instance.
+# ----------------------------------------------------------------------------
+service:
+  type: LoadBalancer
+  port: 15002
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "snet-forge-compute-{env}"
+
+# ----------------------------------------------------------------------------
+# Spark configuration
+# ----------------------------------------------------------------------------
+sparkConf:
+  # ADLS Gen2 — workload identity
+  spark.hadoop.fs.azure.account.auth.type: "OAuth"
+  spark.hadoop.fs.azure.account.oauth.provider.type: "org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider"
+
+  # Delta Lake
+  spark.sql.extensions: "io.delta.sql.DeltaSparkSessionExtension"
+  spark.sql.catalog.spark_catalog: "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+
+  # Dynamic allocation — scales executors with actual load
+  spark.dynamicAllocation.enabled: "true"
+  spark.dynamicAllocation.shuffleTracking.enabled: "true"
+  spark.dynamicAllocation.minExecutors: "2"
+  spark.dynamicAllocation.maxExecutors: "20"
+  spark.dynamicAllocation.executorIdleTimeout: "120s"
+
+  # OpenLineage — lineage from interactive sessions too
+  spark.extraListeners: "io.openlineage.spark.agent.OpenLineageSparkListener"
+  spark.openlineage.transport.type: "http"
+  spark.openlineage.namespace: "forge-interactive"
+
+# ----------------------------------------------------------------------------
+# ADLS account (set per environment at deploy time)
+# ----------------------------------------------------------------------------
+adls:
+  account: ""  # set via --set adls.account=forgeadls{alias}dev
+
+# ----------------------------------------------------------------------------
+# Workload identity — client ID injected at deploy time
+# ----------------------------------------------------------------------------
+serviceAccount:
+  create: false      # created by identity Bicep module
+  name: spark
+  annotations: {}    # azure.workload.identity/client-id set at deploy time

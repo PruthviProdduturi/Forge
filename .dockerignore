@@ -1,0 +1,16 @@
+# =============================================================================
+# .dockerignore — Spark image build context (repo root)
+#
+# Only the Spark Dockerfile uses repo root as build context (needed for
+# sdk/python). Everything else is excluded to minimise upload size.
+# =============================================================================
+
+# Exclude everything by default
+*
+
+# Spark Dockerfile + config
+!infra/docker/spark/
+infra/docker/spark/wheels/
+
+# Forge DQ / SDK — baked into the Spark image
+!sdk/python/

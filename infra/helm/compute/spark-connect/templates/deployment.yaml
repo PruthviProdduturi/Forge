@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.nameOverride | default "spark-connect" }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.nameOverride | default "spark-connect" }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.nameOverride | default "spark-connect" }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.nameOverride | default "spark-connect" }}
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      nodeSelector:
+        {{- toYaml .Values.driver.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.driver.tolerations | nindent 8 }}
+      containers:
+        - name: spark-connect
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              ${SPARK_HOME}/sbin/start-connect-server.sh \
+                --master k8s://https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT} \
+                --deploy-mode client \
+                --conf spark.kubernetes.namespace={{ .Release.Namespace }} \
+                --conf spark.kubernetes.container.image={{ .Values.image.repository }}:{{ .Values.image.tag }} \
+                --conf spark.kubernetes.driver.pod.name=${HOSTNAME} \
+                --conf spark.driver.cores={{ .Values.driver.cores }} \
+                --conf spark.driver.memory={{ .Values.driver.memory }} \
+                --conf spark.executor.cores={{ .Values.executor.cores }} \
+                --conf spark.executor.memory={{ .Values.executor.memory }} \
+                --conf spark.dynamicAllocation.minExecutors={{ .Values.executor.instances.min }} \
+                --conf spark.dynamicAllocation.maxExecutors={{ .Values.executor.instances.max }} \
+                --conf spark.kubernetes.executor.request.cores={{ .Values.executor.resources.requests.cpu }} \
+                --conf spark.kubernetes.executor.limit.cores={{ .Values.executor.resources.limits.cpu }} \
+                --conf spark.kubernetes.executor.memory={{ .Values.executor.resources.requests.memory }} \
+                --conf spark.kubernetes.node.selector.workload=spark \
+                {{- range $key, $val := .Values.sparkConf }}
+                --conf {{ $key }}={{ $val }} \
+                {{- end }}
+                --conf spark.hadoop.fs.azure.account.auth.type.{{ .Values.adls.account }}.dfs.core.windows.net=OAuth \
+                --wait
+          ports:
+            - containerPort: 15002
+              name: grpc
+          resources:
+            {{- toYaml .Values.driver.resources | nindent 12 }}
+          env:
+            - name: SPARK_NO_DAEMONIZE
+              value: "true"

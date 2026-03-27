@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "northcentralus"
+    },
+    "subscriptionId": {
+      "value": "eaa4a83d-8511-497c-b0bc-40aa5f0deae1"
+    },
+    "tenantId": {
+      "value": "72f988bf-86f1-41af-91ab-2d7cd011db47"
+    },
+    "adminGroupObjectIds": {
+      "value": [
+        "b9fe1db5-56c8-40cd-a661-27ef360605f0"
+      ]
+    },
+    "platformAdminGroupObjectId": {
+      "value": "b9fe1db5-56c8-40cd-a661-27ef360605f0"
+    },
+    "ownerAlias": {
+      "value": "prproddu"
+    },
+    "logRetentionDays": {
+      "value": 30
+    },
+    "tags": {
+      "value": {
+        "owner": "platform-team"
+      }
+    }
+  }
+}

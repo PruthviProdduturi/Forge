@@ -1,13 +1,14 @@
 # =============================================================================
-# Forge — Spark 4.1.0 Image
+# Forge — Spark 4.1.1 Image
 # Base: eclipse-temurin:17-jre-jammy
 #
 # Included:
-#   - Apache Spark 4.1.0 (Hadoop 3.3.4 distribution)
-#   - Delta Lake 4.0.0
-#   - hadoop-azure 3.3.6 (ABFS / ADLS Gen2 driver)
+#   - Apache Spark 4.1.1 (Hadoop 3 distribution)
+#   - Delta Lake 4.1.0
+#   - Apache Iceberg 1.10.1 (spark-runtime-4.0_2.13)
+#   - hadoop-azure 3.4.1 (ABFS / ADLS Gen2 driver)
 #   - azure-identity + azure-storage-file-datalake (workload identity)
-#   - openlineage-spark 1.18.0
+#   - openlineage-spark 1.39.0
 #   - Python 3.11 + PySpark + delta-spark + pandas + pyarrow + azure-identity
 #   - spark-defaults.conf baked in (ADLS + workload identity + OpenLineage)
 #   - forge-dq 0.1.0 (Forge Data Quality framework)
@@ -21,12 +22,12 @@ FROM eclipse-temurin:17-jre-jammy
 # ----------------------------------------------------------------------------
 # Build arguments — override at build time if needed
 # ----------------------------------------------------------------------------
-ARG SPARK_VERSION=4.1.0
+ARG SPARK_VERSION=4.1.1
 ARG HADOOP_VERSION=3
-ARG DELTA_VERSION=4.0.0
-ARG ICEBERG_VERSION=1.6.1
-ARG HADOOP_AZURE_VERSION=3.3.6
-ARG OPENLINEAGE_VERSION=1.18.0
+ARG DELTA_VERSION=4.1.0
+ARG ICEBERG_VERSION=1.10.1
+ARG HADOOP_AZURE_VERSION=3.4.1
+ARG OPENLINEAGE_VERSION=1.39.0
 ARG PYTHON_VERSION=3.11
 
 # ----------------------------------------------------------------------------
@@ -92,19 +93,20 @@ RUN set -eux; \
 # Download additional JARs into $SPARK_HOME/jars/
 #
 # Maven Central coordinates:
-#   delta-spark:             io.delta:delta-spark_2.13:4.0.0
-#   iceberg 1.6.1
-#   hadoop-azure:            org.apache.hadoop:hadoop-azure:3.3.6
+#   delta-spark:             io.delta:delta-spark_2.13:4.1.0
+#   delta-storage:           io.delta:delta-storage:4.1.0
+#   iceberg:                 org.apache.iceberg:iceberg-spark-runtime-4.0_2.13:1.10.1
+#   hadoop-azure:            org.apache.hadoop:hadoop-azure:3.4.1
 #   azure-identity:          com.azure:azure-identity:1.13.0
 #   azure-storage-datalake:  com.azure:azure-storage-file-datalake:12.20.0
 #   azure-core:              com.azure:azure-core:1.49.0
-#   openlineage-spark:       io.openlineage:openlineage-spark_2.13:1.18.0
+#   openlineage-spark:       io.openlineage:openlineage-spark_2.12:1.39.0
 # ----------------------------------------------------------------------------
 RUN set -eux; \
     MAVEN_CENTRAL="https://repo1.maven.org/maven2"; \
     JARS_DIR="${SPARK_HOME}/jars"; \
     \
-    # Delta Lake 4.0.0 (default table format)
+    # Delta Lake 4.1.0 (default table format)
     curl -fsSL \
         "${MAVEN_CENTRAL}/io/delta/delta-spark_2.13/${DELTA_VERSION}/delta-spark_2.13-${DELTA_VERSION}.jar" \
         -o "${JARS_DIR}/delta-spark_2.13-${DELTA_VERSION}.jar"; \
@@ -114,12 +116,12 @@ RUN set -eux; \
         "${MAVEN_CENTRAL}/io/delta/delta-storage/${DELTA_VERSION}/delta-storage-${DELTA_VERSION}.jar" \
         -o "${JARS_DIR}/delta-storage-${DELTA_VERSION}.jar"; \
     \
-    # Apache Iceberg 1.6.1 runtime (opt-in table format)
+    # Apache Iceberg 1.10.1 runtime (opt-in table format; 4.0_2.13 artifact is Spark 4.x compatible)
     curl -fsSL \
         "${MAVEN_CENTRAL}/org/apache/iceberg/iceberg-spark-runtime-4.0_2.13/${ICEBERG_VERSION}/iceberg-spark-runtime-4.0_2.13-${ICEBERG_VERSION}.jar" \
         -o "${JARS_DIR}/iceberg-spark-runtime-${ICEBERG_VERSION}.jar"; \
     \
-    # Hadoop Azure 3.3.6 (ABFS driver for ADLS Gen2)
+    # Hadoop Azure 3.4.1 (ABFS driver for ADLS Gen2)
     curl -fsSL \
         "${MAVEN_CENTRAL}/org/apache/hadoop/hadoop-azure/${HADOOP_AZURE_VERSION}/hadoop-azure-${HADOOP_AZURE_VERSION}.jar" \
         -o "${JARS_DIR}/hadoop-azure-${HADOOP_AZURE_VERSION}.jar"; \
@@ -144,7 +146,7 @@ RUN set -eux; \
         "${MAVEN_CENTRAL}/com/azure/azure-core-http-netty/1.15.0/azure-core-http-netty-1.15.0.jar" \
         -o "${JARS_DIR}/azure-core-http-netty-1.15.0.jar"; \
     \
-    # OpenLineage Spark integration 1.18.0
+    # OpenLineage Spark integration 1.39.0
     curl -fsSL \
         "${MAVEN_CENTRAL}/io/openlineage/openlineage-spark_2.12/${OPENLINEAGE_VERSION}/openlineage-spark_2.12-${OPENLINEAGE_VERSION}.jar" \
         -o "${JARS_DIR}/openlineage-spark_2.12-${OPENLINEAGE_VERSION}.jar"
@@ -162,7 +164,7 @@ RUN pip3 install --upgrade pip && \
         "pyarrow==16.1.0" \
         "azure-identity==1.17.1" \
         "azure-storage-file-datalake==12.18.0" \
-        "openlineage-python==1.18.0" \
+        "openlineage-python==1.39.0" \
         "pydantic==2.7.4" \
         "pyyaml==6.0.2"
 

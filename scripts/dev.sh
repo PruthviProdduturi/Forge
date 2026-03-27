@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Forge — Local Development Launcher
+# Forge — Local Development Launcher (portal only)
+#
+# Starts the portal frontend (Next.js) and/or backend (FastAPI) for local
+# development. This script does NOT deploy infrastructure or build Docker
+# images — see docs/implementation/ for those steps.
 #
 # Usage:
-#   ./scripts/dev.sh                    # run all services
+#   ./scripts/dev.sh                    # start frontend + backend
 #   ./scripts/dev.sh portal             # portal frontend only
 #   ./scripts/dev.sh api                # portal backend (FastAPI) only
 #   ./scripts/dev.sh install            # install all dependencies only
 #
 # Prerequisites:
-#   - Node.js 20+ and npm
-#   - Python 3.11+ and pip
+#   - Node.js 20+ and npm  (frontend)
+#   - Python 3.11+ and pip (backend)
+#   - Copy portal/backend/.env.example to portal/backend/.env and fill in values
 # =============================================================================
 set -euo pipefail
 

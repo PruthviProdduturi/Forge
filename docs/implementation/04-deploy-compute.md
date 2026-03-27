@@ -43,7 +43,7 @@ kubectl create namespace hive-metastore --dry-run=client -o yaml | kubectl apply
 helm upgrade --install hive-metastore \
   infra/helm/compute/hive-metastore \
   --namespace hive-metastore \
-  --set image.repository=forgeacr-{env}.azurecr.io/hive-metastore \
+  --set image.repository=forgeacr{alias}.azurecr.io/hive-metastore \
   --set image.tag=3.1.3 \
   --set db.host=$(az keyvault secret show --vault-name kv-forge-{env} --name hms-postgres-host --query value -o tsv) \
   --set db.password="" \
@@ -74,12 +74,12 @@ The Spark Operator watches the `spark-jobs` namespace for `SparkApplication` CRD
 ```bash
 # Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install spark-operator \
-  oci://forgeacr-{env}.azurecr.io/helm/spark-operator \
+  oci://forgeacr{alias}.azurecr.io/helm/spark-operator \
   --version 1.4.6 \
   --namespace spark-system \
   --create-namespace \
   --values infra/helm/compute/spark-operator/values.yaml \
-  --set image.repository=forgeacr-{env}.azurecr.io/spark-operator \
+  --set image.repository=forgeacr{alias}.azurecr.io/spark-operator \
   --set image.tag=1.4.6 \
   --wait --timeout 5m
 ```
@@ -134,10 +134,10 @@ spec:
   type: Python
   pythonVersion: "3"
   mode: cluster
-  image: "forgeacr-{env}.azurecr.io/spark:4.1.0"
+  image: "forgeacr{alias}.azurecr.io/spark:4.1.1"
   imagePullPolicy: Always
   mainApplicationFile: "local:///opt/spark/examples/src/main/python/pi.py"
-  sparkVersion: "4.1.0"
+  sparkVersion: "4.1.1"
   restartPolicy:
     type: Never
   driver:
@@ -164,41 +164,68 @@ kubectl delete sparkapplication spark-pi-test -n spark-jobs
 
 The Spark Connect server provides a persistent gRPC endpoint for remote PySpark development via VS Code.
 
+**Capacity planning (team of 15, Standard_E96_v5 nodes):**
+- Each driver supports ~10 concurrent active sessions
+- Deploy **2 instances**: `spark-connect-a` (primary) and `spark-connect-b` (overflow)
+- Executors: 8 cores / 48 GiB each — up to 20 executors per instance (dynamic allocation)
+- E96_v5 (96 vCPUs / 672 GiB RAM) fits ~8 executors per node — executors scale across the pool
+
 ### Deploy
 
 ```bash
-helm upgrade --install spark-connect \
+WI_CLIENT_ID=$(az identity show \
+  -g rg-forge-platform-{alias}-{env} \
+  -n id-forge-compute-{alias}-{env} \
+  --query clientId -o tsv)
+
+# Primary instance
+helm upgrade --install spark-connect-a \
   infra/helm/compute/spark-connect \
   --namespace spark-system \
-  --set image.repository=forgeacr-{env}.azurecr.io/spark \
-  --set image.tag=4.1.0 \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-compute-{env} --query clientId -o tsv) \
-  --set config.adlsAccount=forgeadls{env} \
-  --set config.openlineageUrl=https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events \
-  --set config.openlineageAuthType=azure_identity \
+  --set nameOverride=spark-connect-a \
+  --set image.repository=forgeacr{alias}.azurecr.io/spark \
+  --set image.tag=4.1.1 \
+  --set adls.account=forgeadls{alias}{env} \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
+  --wait --timeout 5m
+
+# Overflow / standby instance
+helm upgrade --install spark-connect-b \
+  infra/helm/compute/spark-connect \
+  --namespace spark-system \
+  --set nameOverride=spark-connect-b \
+  --set image.repository=forgeacr{alias}.azurecr.io/spark \
+  --set image.tag=4.1.1 \
+  --set adls.account=forgeadls{alias}{env} \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 5m
 ```
 
-### Get the Spark Connect Endpoint
+### Get the Spark Connect Endpoints
 
-The Spark Connect server is exposed on an **internal** Azure Load Balancer (only accessible from the VNet / VPN):
+Each instance gets its own internal Azure Load Balancer IP (VNet / VPN only):
 
 ```bash
-kubectl get svc -n spark-system spark-connect-lb
-# NAME               TYPE           CLUSTER-IP    EXTERNAL-IP    PORT(S)
-# spark-connect-lb   LoadBalancer   10.100.1.50   10.4.0.10      15002:...
+kubectl get svc -n spark-system -l app.kubernetes.io/managed-by=Helm
+# NAME                  TYPE           CLUSTER-IP    EXTERNAL-IP    PORT(S)
+# spark-connect-a-lb    LoadBalancer   10.100.1.50   10.4.0.10      15002:...
+# spark-connect-b-lb    LoadBalancer   10.100.1.51   10.4.0.11      15002:...
 
-SPARK_CONNECT_HOST=$(kubectl get svc -n spark-system spark-connect-lb \
+SC_A=$(kubectl get svc -n spark-system spark-connect-a-lb \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-echo "Spark Connect: sc://${SPARK_CONNECT_HOST}:15002"
+SC_B=$(kubectl get svc -n spark-system spark-connect-b-lb \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+echo "Primary:  sc://${SC_A}:15002"
+echo "Overflow: sc://${SC_B}:15002"
 ```
 
-Store this in Key Vault for developer distribution:
+Store in Key Vault for developer distribution:
 ```bash
-az keyvault secret set \
-  --vault-name kv-forge-{env} \
-  --name spark-connect-endpoint \
-  --value "sc://${SPARK_CONNECT_HOST}:15002"
+az keyvault secret set --vault-name kv-forge-{alias}-{env} \
+  --name spark-connect-primary   --value "sc://${SC_A}:15002"
+az keyvault secret set --vault-name kv-forge-{alias}-{env} \
+  --name spark-connect-overflow  --value "sc://${SC_B}:15002"
 ```
 
 ### Verify from VS Code / Notebook
@@ -206,10 +233,11 @@ az keyvault secret set \
 ```python
 from pyspark.sql import SparkSession
 
-CONNECT_URL = "sc://10.4.0.10:15002"  # or retrieve from Key Vault
+# Use the primary endpoint (retrieve from Key Vault or ask platform team)
+CONNECT_URL = "sc://10.4.0.10:15002"
 
 spark = SparkSession.builder.remote(CONNECT_URL).getOrCreate()
-print(spark.version)  # should print 4.1.0
+print(spark.version)  # should print 4.1.1
 spark.sql("SELECT 1 AS test").show()
 ```
 
@@ -233,12 +261,12 @@ kubectl get secretproviderclass -n trino trino-catalog-secrets
 ```bash
 # Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install trino \
-  oci://forgeacr-{env}.azurecr.io/helm/trino \
+  oci://forgeacr{alias}.azurecr.io/helm/trino \
   --version 0.31.0 \
   --namespace trino \
   --create-namespace \
   --values infra/helm/compute/trino/values.yaml \
-  --set image.repository=forgeacr-{env}.azurecr.io/trino \
+  --set image.repository=forgeacr{alias}.azurecr.io/trino \
   --set image.tag=438 \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=$(az identity show -g rg-forge-platform-{env} -n id-forge-read-{env} --query clientId -o tsv) \
   --wait --timeout 10m
@@ -322,8 +350,8 @@ Before proceeding to Step 05:
 [ ] Spark Operator pod Running:             kubectl get pods -n spark-system
 [ ] Spark CRDs installed:                   kubectl get crd | grep spark
 [ ] spark-pi-test SparkApplication COMPLETED (ran and cleaned up)
-[ ] Spark Connect LB IP assigned:           kubectl get svc -n spark-system spark-connect-lb
-[ ] Spark Connect endpoint in Key Vault:    az keyvault secret show --name spark-connect-endpoint
+[ ] Spark Connect a+b LB IPs assigned:      kubectl get svc -n spark-system
+[ ] Spark Connect endpoints in Key Vault:   az keyvault secret show --name spark-connect-primary
 [ ] Trino coordinator + 2 workers Running:  kubectl get pods -n trino
 [ ] Trino test query returns results:       curl port-forward test above
 [ ] Workload identity test passed:          test pod reads from ADLS bronze/ container

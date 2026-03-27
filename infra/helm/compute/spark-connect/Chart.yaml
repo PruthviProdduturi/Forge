@@ -1,0 +1,6 @@
+apiVersion: v2
+name: spark-connect
+description: Spark Connect server for interactive PySpark development (Forge platform)
+type: application
+version: 0.1.0
+appVersion: "4.1.1"

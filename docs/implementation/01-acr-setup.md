@@ -1,10 +1,10 @@
 # Forge — ACR Setup Guide
 
 > **Document:** 01 — Azure Container Registry Setup
-> **Version:** 1.0
+> **Version:** 1.1
 > **Status:** Production
 > **Audience:** Platform engineers
-> **Last updated:** 2026-03-24
+> **Last updated:** 2026-03-27
 
 [![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 
@@ -39,10 +39,10 @@ The practical consequence is that ACR must exist, be accessible from the private
 The setup order is therefore:
 
 ```
-1. Networking (VNet, subnets, NSGs, private DNS zones)
-2. ACR (this document)
-3. AKS clusters (document 03)
-4. Platform services (Airflow, Spark Operator, etc.)
+1. ACR — shared registry (this document, Step 02)
+2. Image Builds — push all images into ACR (Step 03)
+3. Env Bicep deployment — networking + AKS + storage + identity + Key Vault (Step 04)
+4. Platform services — Spark Operator, Trino, Airflow, etc. (Steps 05–06)
 ```
 
 ACR also must be reachable from the build agent that runs image import pipelines. The private endpoint and DNS configuration done in this guide establishes that reachability.
@@ -125,7 +125,7 @@ az acr create \
   --location "${LOCATION}" \
   --admin-enabled false \
   --public-network-enabled false \
-  --zone-redundancy Enabled \
+  --zone-redundancy Disabled \
   --retention-days 365 \
   --tags \
     platform=forge \
@@ -139,7 +139,7 @@ az acr create \
 
 - `--admin-enabled false` — The admin account is a shared credential that cannot be audited per-user. Disabled permanently. All access goes through managed identities and service principals.
 - `--public-network-enabled false` — Immediately locks the registry to VNet-only access. The private endpoint created in the next step provides the actual access path.
-- `--zone-redundancy Enabled` — Distributes registry storage across availability zones. Requires Premium SKU and a zone-enabled region.
+- `--zone-redundancy Disabled` — Zone redundancy is not supported in `northcentralus` for ACR. Set to `Enabled` only if deploying to a supported region.
 - `--retention-days 365` — Retains tagged images for a minimum of 365 days. Untagged manifests are swept by a separate retention policy.
 
 Retrieve the ACR resource ID (used in subsequent role assignments):
@@ -620,239 +620,44 @@ az acr repository delete \
 
 ---
 
-## 15. Bicep Resource Snippets
+## 15. Bicep Implementation
 
-These snippets are the declarative equivalent of the CLI commands above. They are already covered in `infra/bicep/modules/` — reference them there.
+All resources in this guide are declared in the following Bicep files — reference them there rather than the CLI commands above for production deployments:
 
-### 15a. ACR resource
+| File | What it provisions |
+|------|-------------------|
+| `infra/bicep/environments/shared/main.bicep` | ACR resource group + ACR registry (run once) |
+| `infra/bicep/modules/acr.bicep` | ACR module: Premium SKU, private endpoint, Defender, retention policy |
+| `infra/bicep/environments/shared/shared.parameters.json` | Parameters: location, ownerAlias, tags |
 
-```hcl
-resource "azurerm_container_registry" "acr" {
-  name                          = var.acr_name
-  resource_group_name           = azurerm_resource_group.acr.name
-  location                      = var.location
-  sku                           = "Premium"
-  admin_enabled                 = false
-  public_network_access_enabled = false
-  zone_redundancy_enabled       = true
-
-  retention_policy {
-    days    = 365
-    enabled = true
-  }
-
-  trust_policy {
-    enabled = true
-  }
-
-  network_rule_bypass_option = "AzureServices"
-
-  tags = local.common_tags
-}
+**Deploy shared ACR:**
+```bash
+az deployment sub create \
+  --location northcentralus \
+  --template-file infra/bicep/environments/shared/main.bicep \
+  --parameters @infra/bicep/environments/shared/shared.parameters.json
 ```
 
-### 15b. Geo-replication (production only)
+The Bicep module handles everything covered in Sections 3–8 of this guide declaratively. The CLI commands in this guide are provided for reference and manual remediation only.
 
-```hcl
-resource "azurerm_container_registry_replication" "secondary" {
-  count                   = var.environment == "prod" ? 1 : 0
-  name                    = var.location_secondary
-  container_registry_id   = azurerm_container_registry.acr.id
-  location                = var.location_secondary
-  zone_redundancy_enabled = true
-
-  tags = local.common_tags
-}
-```
-
-### 15c. Private endpoint
-
-```hcl
-resource "azurerm_private_endpoint" "acr" {
-  name                = "pe-forge-acr-${var.environment}"
-  resource_group_name = azurerm_resource_group.acr.name
-  location            = var.location
-  subnet_id           = var.private_endpoint_subnet_id
-
-  private_service_connection {
-    name                           = "plsc-forge-acr-${var.environment}"
-    private_connection_resource_id = azurerm_container_registry.acr.id
-    subresource_names              = ["registry"]
-    is_manual_connection           = false
-  }
-
-  private_dns_zone_group {
-    name                 = "acr-dns-zone-group"
-    private_dns_zone_ids = [var.acr_private_dns_zone_id]
-  }
-
-  tags = local.common_tags
-}
-```
-
-### 15d. Private DNS zone and VNet link
-
-```hcl
-resource "azurerm_private_dns_zone" "acr" {
-  name                = "privatelink.azurecr.io"
-  resource_group_name = var.dns_resource_group_name
-  tags                = local.common_tags
-}
-
-resource "azurerm_private_dns_zone_virtual_network_link" "acr" {
-  name                  = "link-forge-vnet-${var.environment}"
-  resource_group_name   = var.dns_resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.acr.name
-  virtual_network_id    = var.vnet_id
-  registration_enabled  = false
-  tags                  = local.common_tags
-}
-```
-
-### 15e. AcrPull role assignment for AKS node pools
-
-```hcl
-resource "azurerm_role_assignment" "acr_pull_compute" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = var.compute_cluster_kubelet_identity_object_id
-}
-
-resource "azurerm_role_assignment" "acr_pull_orch" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = var.orch_cluster_kubelet_identity_object_id
-}
-```
-
-### 15f. AcrPush role assignment for build identity
-
-```hcl
-resource "azurerm_user_assigned_identity" "acr_build" {
-  name                = "id-forge-${var.environment}"
-  resource_group_name = azurerm_resource_group.acr.name
-  location            = var.location
-  tags                = local.common_tags
-}
-
-resource "azurerm_role_assignment" "acr_push_build" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPush"
-  principal_id         = azurerm_user_assigned_identity.acr_build.principal_id
-}
-
-resource "azurerm_role_assignment" "acr_pull_build" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_user_assigned_identity.acr_build.principal_id
-}
-```
-
-### 15g. Module variables (`variables.tf`)
-
-```hcl
-variable "acr_name" {
-  description = "Globally unique name for the Azure Container Registry (lowercase, no hyphens)"
-  type        = string
-}
-
-variable "environment" {
-  description = "Deployment environment: dev or prod"
-  type        = string
-  validation {
-    condition     = contains(["dev", "prod"], var.environment)
-    error_message = "environment must be 'dev' or 'prod'."
-  }
-}
-
-variable "location" {
-  description = "Primary Azure region"
-  type        = string
-  default     = "northcentralus"
-}
-
-variable "location_secondary" {
-  description = "Secondary Azure region for geo-replication (prod only)"
-  type        = string
-  default     = "westus2"
-}
-
-variable "private_endpoint_subnet_id" {
-  description = "Resource ID of the private endpoints subnet"
-  type        = string
-}
-
-variable "acr_private_dns_zone_id" {
-  description = "Resource ID of the privatelink.azurecr.io private DNS zone"
-  type        = string
-}
-
-variable "vnet_id" {
-  description = "Resource ID of the platform VNet (for DNS zone VNet link)"
-  type        = string
-}
-
-variable "dns_resource_group_name" {
-  description = "Resource group name containing the private DNS zones"
-  type        = string
-}
-
-variable "compute_cluster_kubelet_identity_object_id" {
-  description = "Object ID of the compute AKS cluster kubelet managed identity"
-  type        = string
-}
-
-variable "orch_cluster_kubelet_identity_object_id" {
-  description = "Object ID of the orchestration AKS cluster kubelet managed identity"
-  type        = string
-}
-```
-
-### 15h. Module outputs (`outputs.tf`)
-
-```hcl
-output "acr_id" {
-  description = "Resource ID of the Azure Container Registry"
-  value       = azurerm_container_registry.acr.id
-}
-
-output "acr_login_server" {
-  description = "Login server URL for the registry"
-  value       = azurerm_container_registry.acr.login_server
-}
-
-output "acr_build_identity_client_id" {
-  description = "Client ID of the build managed identity (used by CI pipelines)"
-  value       = azurerm_user_assigned_identity.acr_build.client_id
-}
-
-output "acr_build_identity_principal_id" {
-  description = "Principal ID of the build managed identity"
-  value       = azurerm_user_assigned_identity.acr_build.principal_id
-}
-
-output "acr_private_dns_zone_id" {
-  description = "Resource ID of the ACR private DNS zone"
-  value       = azurerm_private_dns_zone.acr.id
-}
-```
+> **Removed:** Terraform/HCL snippets that were previously in this section are deleted.
+> Forge uses Bicep exclusively — see `infra/bicep/modules/acr.bicep` for the authoritative
+> resource definitions.
 
 ---
 
 ## Summary Checklist
 
-Before proceeding to document `03-cluster-setup.md`, verify every item:
+Before proceeding to [02-image-builds.md](./02-image-builds.md), verify every item:
 
-- [ ] Resource group `rg-forge-acr` exists in `northcentralus`
-- [ ] Registry `forgeacr{env}` is Premium SKU with admin account disabled
-- [ ] Geo-replication to `westus2` is in `Succeeded` state (prod only)
-- [ ] Private endpoint `pe-forge-acr-{env}` is provisioned and has a private IP
-- [ ] DNS zone `privatelink.azurecr.io` has A records for registry and data endpoints
-- [ ] VNet link from the DNS zone to `vnet-forge-{env}` is active
-- [ ] `nslookup forgeacr{env}.azurecr.io` from inside VNet returns a private IP
+- [ ] Resource group `rg-forge-acr{-alias}` exists in `northcentralus`
+- [ ] Registry `forgeacr{alias}` is Premium SKU, admin account disabled
+- [ ] Geo-replication to secondary region is `Succeeded` (prod only)
 - [ ] Public network access is `Disabled`
 - [ ] Defender for Containers is `Standard` tier at subscription level
-- [ ] Build identity `id-forge-build-{env}` exists with AcrPush + AcrPull (no data access)
-- [ ] `az acr login` succeeds from inside VNet
-- [ ] Test image push and delete completed successfully
-- [ ] ACR resources confirmed in `infra/bicep/modules/`
+- [ ] Build identity has `AcrPush` + `AcrPull` on the registry
+- [ ] `az acr login` succeeds (from inside VNet or with public access temporarily enabled)
+
+---
+
+*← [README.md](./README.md) | Next: [02-image-builds.md](./02-image-builds.md) →*

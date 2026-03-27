@@ -677,7 +677,7 @@ spec:
   serviceAccountName: spark-driver-sa
   containers:
   - name: test
-    image: "forgeacr-${ENV}.azurecr.io/spark:4.1.0"
+    image: "forgeacr${ALIAS}.azurecr.io/spark:4.1.1"
     command:
     - /bin/bash
     - -c
@@ -737,7 +737,7 @@ helm repo add spark-operator \
   https://kubeflow.github.io/spark-operator
 helm repo update
 
-ACR_SERVER="forgeacr-${ENV}.azurecr.io"
+ACR_SERVER="forgeacr${ALIAS}.azurecr.io"
 
 helm upgrade --install spark-operator \
   spark-operator/spark-operator \
@@ -1226,12 +1226,12 @@ AIRFLOW_WS_SECRET=$(az keyvault secret show \
   --query value -o tsv)
 
 cat <<EOF > /tmp/airflow-values.yaml
-airflowVersion: "3.1.0"
+airflowVersion: "3.1.8"
 
 images:
   airflow:
-    repository: "forgeacr-${ENV}.azurecr.io/airflow"
-    tag: "3.1.0"
+    repository: "forgeacr${ALIAS}.azurecr.io/airflow"
+    tag: "3.1.8"
     pullPolicy: Always
   gitSync:
     repository: "registry.k8s.io/git-sync/git-sync"
@@ -1253,8 +1253,8 @@ config:
     max_active_runs_per_dag: "8"
   kubernetes:
     namespace: airflow
-    worker_container_repository: "forgeacr-${ENV}.azurecr.io/airflow"
-    worker_container_tag: "3.1.0"
+    worker_container_repository: "forgeacr${ALIAS}.azurecr.io/airflow"
+    worker_container_tag: "3.1.8"
     delete_worker_pods: "True"
     delete_worker_pods_on_failure: "False"
     worker_service_account_name: airflow-sa
@@ -1457,13 +1457,13 @@ metadata:
 spec:
   type: Scala
   mode: cluster
-  image: "{ACR}/spark:4.1.0"
+  image: "{ACR}/spark:4.1.1"
   imagePullPolicy: Always
   mainClass: org.apache.spark.examples.SparkPi
-  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.13-4.1.0.jar"
+  mainApplicationFile: "local:///opt/spark/examples/jars/spark-examples_2.13-4.1.1.jar"
   arguments:
     - "100"
-  sparkVersion: "4.1.0"
+  sparkVersion: "4.1.1"
   restartPolicy:
     type: Never
   driver:
@@ -1676,7 +1676,7 @@ Do not declare the platform ready for pipeline onboarding until every item below
 - [ ] Public network access is Disabled
 
 **Networking**
-- [ ] `nslookup forgeacr-${ENV}.azurecr.io` from any cluster pod returns a private IP
+- [ ] `nslookup forgeacr${ALIAS}.azurecr.io` from any cluster pod returns a private IP
 - [ ] `nslookup ${ADLS_ACCOUNT}.dfs.core.windows.net` returns a private IP
 - [ ] `nslookup ${KV_NAME}.vault.azure.net` returns a private IP
 - [ ] Compute cluster API server is reachable only via private endpoint

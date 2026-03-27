@@ -3,13 +3,27 @@
 // Subscription-scoped orchestration template that provisions resource groups
 // and calls all platform modules in dependency order.
 //
+// Prerequisites:
+//   1. Run shared/main.bicep once to create rg-forge-acr and ACR.
+//   2. Pass the ACR resource ID as containerRegistryId parameter.
+//
+// Resource groups created by this template (prod):
+//   - rg-forge-platform-prod : VNet, NSGs, DNS zones, Bastion, LAW
+//   - rg-forge-compute-prod  : AKS clusters, ADLS, Key Vault, managed identities
+//
 // Deployment order:
 //   1. Resource Groups (parallel)
-//   2. Networking
-//   3. AKS clusters (compute + orchestration, parallel, both depend on networking)
-//   4. Storage (depends on networking + orchCluster LAW)
-//   5. Identity (depends on both AKS clusters + storage)
-//   6. Key Vault (depends on networking + identity for workload principal IDs)
+//   2. Networking  (→ rg-forge-platform-prod)
+//   3. AKS clusters (compute + orchestration, parallel, both → rg-forge-compute-prod)
+//   4. Storage      (→ rg-forge-compute-prod, GZRS for cross-zone + cross-region redundancy)
+//   5. Identity     (→ rg-forge-compute-prod, depends on AKS + storage)
+//   6. Key Vault    (→ rg-forge-compute-prod, depends on networking + identity)
+//
+// Deploy:
+//   az deployment sub create \
+//     --location northcentralus \
+//     --template-file infra/bicep/environments/prod/main.bicep \
+//     --parameters @infra/bicep/environments/prod/prod.parameters.json
 // =============================================================================
 
 targetScope = 'subscription'
@@ -40,15 +54,12 @@ param platformAdminGroupObjectId string
 @description('Corporate IP address range used in NSG inbound rules.')
 param corporateIpRange string = '10.0.0.0/8'
 
-@description('Resource ID of the shared Azure Container Registry.')
-param containerRegistryId string
-
 @description('Number of days to retain Log Analytics data.')
 @minValue(7)
 @maxValue(730)
 param logRetentionDays int = 90
 
-@description('Owner alias appended to top-level resource names for personal/shared deployment disambiguation. Leave empty (default) for production shared environments.')
+@description('Owner alias appended to top-level resource names. Leave empty (default) for production shared environments.')
 param ownerAlias string = ''
 
 @description('Resource tags applied to all resources.')
@@ -59,13 +70,17 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
 
+// Shared ACR resource ID — derived from ownerAlias to match shared/main.bicep naming
+var acrRegistryName     = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr'
+var acrRgName           = ownerAlias != '' ? 'rg-forge-acr-${ownerAlias}' : 'rg-forge-acr'
+var containerRegistryId = '/subscriptions/${subscriptionId}/resourceGroups/${acrRgName}/providers/Microsoft.ContainerRegistry/registries/${acrRegistryName}'
+
 var storageAccountName = 'forgeadls${ownerAlias}${environment}'
 var keyVaultName       = 'kv-forge${aliasSuffix}-${environment}'
 
-// Resource group names — 3 RGs: platform (infra+compute), data, security
-var rgPlatform  = 'rg-forge-platform${aliasSuffix}-${environment}'
-var rgData      = 'rg-forge-data${aliasSuffix}-${environment}'
-var rgSecurity  = 'rg-forge-security${aliasSuffix}-${environment}'
+// Resource group names — 2 RGs per environment
+var rgPlatform = 'rg-forge-platform${aliasSuffix}-${environment}'
+var rgCompute  = 'rg-forge-compute${aliasSuffix}-${environment}'
 
 // Common tags merged with required platform tags
 var mergedTags = union(tags, {
@@ -73,6 +88,18 @@ var mergedTags = union(tags, {
   platform: 'forge'
   managedBy: 'bicep'
 })
+
+// ---------------------------------------------------------------------------
+// Microsoft Defender for Containers — subscription-level plan
+// S360: Covers ACR image scanning + AKS runtime threat detection.
+// Deployed at subscription scope (this template's targetScope).
+// ---------------------------------------------------------------------------
+resource defenderForContainers 'Microsoft.Security/pricings@2024-01-01' = {
+  name: 'Containers'
+  properties: {
+    pricingTier: 'Standard'
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Resource Groups
@@ -83,20 +110,14 @@ resource rgPlatformRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   tags: mergedTags
 }
 
-resource rgDataRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
-  name: rgData
-  location: location
-  tags: mergedTags
-}
-
-resource rgSecurityRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
-  name: rgSecurity
+resource rgComputeRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
+  name: rgCompute
   location: location
   tags: mergedTags
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: Networking
+// Step 1: Networking  (→ rg-forge-platform-prod)
 // ---------------------------------------------------------------------------
 module networking '../../modules/networking.bicep' = {
   name: 'networking-${environment}'
@@ -111,13 +132,31 @@ module networking '../../modules/networking.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: AKS Clusters (parallel, both depend on networking)
+// Step 1b: ACR Private Endpoint  (→ rg-forge-platform-prod, depends on networking)
+// ---------------------------------------------------------------------------
+module acrPrivateEndpoint '../../modules/acr.bicep' = {
+  name: 'acr-pe-${environment}'
+  scope: resourceGroup(rgPlatform)
+  dependsOn: [rgPlatformRes]
+  params: {
+    registryName: acrRegistryName
+    location: location
+    privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
+    privateDnsZoneAcrId: networking.outputs.privateDnsZoneIds.acr
+    logAnalyticsWorkspaceId: networking.outputs.platformLogAnalyticsWorkspaceId
+    exportPolicyEnabled: false
+    tags: mergedTags
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 2: AKS Clusters  (→ rg-forge-compute-prod, parallel, depend on networking)
 // Prod uses larger VM SKUs and higher min/max counts than dev.
 // ---------------------------------------------------------------------------
 module computeCluster '../../modules/aks.bicep' = {
   name: 'aks-compute-${environment}'
-  scope: resourceGroup(rgPlatform)
-  dependsOn: [rgPlatformRes]
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
@@ -135,8 +174,8 @@ module computeCluster '../../modules/aks.bicep' = {
 
 module orchCluster '../../modules/aks.bicep' = {
   name: 'aks-orchestration-${environment}'
-  scope: resourceGroup(rgPlatform)
-  dependsOn: [rgPlatformRes]
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
@@ -153,12 +192,12 @@ module orchCluster '../../modules/aks.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Storage (GZRS for prod cross-zone and cross-region redundancy)
+// Step 3: Storage  (→ rg-forge-compute-prod, GZRS for cross-zone + cross-region)
 // ---------------------------------------------------------------------------
 module storage '../../modules/storage.bicep' = {
   name: 'storage-${environment}'
-  scope: resourceGroup(rgData)
-  dependsOn: [rgDataRes]
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
   params: {
     storageAccountName: storageAccountName
     environment: environment
@@ -173,12 +212,12 @@ module storage '../../modules/storage.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Identity (depends on both AKS clusters + storage)
+// Step 4: Identity  (→ rg-forge-compute-prod, depends on AKS clusters + storage)
 // ---------------------------------------------------------------------------
 module identity '../../modules/identity.bicep' = {
   name: 'identity-${environment}'
-  scope: resourceGroup(rgSecurity)
-  dependsOn: [rgSecurityRes]
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
@@ -190,23 +229,23 @@ module identity '../../modules/identity.bicep' = {
     keyVaultId: ''
     namespaces: {
       spark:   { namespace: 'spark-jobs', serviceAccountName: 'spark' }
-      trino:   { namespace: 'trino',       serviceAccountName: 'trino' }
-      airflow: { namespace: 'airflow',     serviceAccountName: 'airflow' }
-      dq:      { namespace: 'dq',          serviceAccountName: 'dq-runner' }
-      portal:  { namespace: 'portal',      serviceAccountName: 'portal-api' }
-      lineage: { namespace: 'lineage',     serviceAccountName: 'marquez' }
+      trino:   { namespace: 'trino',      serviceAccountName: 'trino' }
+      airflow: { namespace: 'airflow',    serviceAccountName: 'airflow' }
+      dq:      { namespace: 'dq',         serviceAccountName: 'dq-runner' }
+      portal:  { namespace: 'portal',     serviceAccountName: 'portal-api' }
+      lineage: { namespace: 'lineage',    serviceAccountName: 'purview' }
     }
     tags: mergedTags
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Key Vault (depends on networking + identity for principal IDs)
+// Step 5: Key Vault  (→ rg-forge-compute-prod, depends on networking + identity)
 // ---------------------------------------------------------------------------
 module keyvault '../../modules/keyvault.bicep' = {
   name: 'keyvault-${environment}'
-  scope: resourceGroup(rgSecurity)
-  dependsOn: [rgSecurityRes]
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
   params: {
     keyVaultName: keyVaultName
     environment: environment

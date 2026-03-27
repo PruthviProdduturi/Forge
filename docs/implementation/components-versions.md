@@ -1,7 +1,7 @@
 # Forge — Component Versions & Container Registry Strategy
 
 > **Status:** Production
-> **Last updated:** 2026-03-24
+> **Last updated:** 2026-03-27
 
 [![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-003366?style=flat-square&logo=delta&logoColor=white)](https://delta.io) [![Azure Monitor](https://img.shields.io/badge/Azure%20Monitor-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/monitor) [![Azure Managed Grafana](https://img.shields.io/badge/Azure%20Managed%20Grafana-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/managed-grafana) [![OpenLineage](https://img.shields.io/badge/OpenLineage-7B2FBE?style=flat-square&logoColor=white)](https://openlineage.io) [![Azure Key Vault](https://img.shields.io/badge/Key%20Vault-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/key-vault) [![ADLS Gen2](https://img.shields.io/badge/ADLS%20Gen2-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/storage/data-lake-storage)
 
@@ -28,8 +28,8 @@ No cluster node ever pulls from a public registry. This eliminates:
 
 | Registry | Environment | SKU | Geo-replication |
 |----------|------------|-----|----------------|
-| `forgeacr-dev.azurecr.io` | dev | Premium | None |
-| `forgeacr-prod.azurecr.io` | prod | Premium | Yes (secondary region) |
+| `forgeacr{alias}.azurecr.io` | personal dev (ownerAlias set) | Premium | None |
+| `forgeacr.azurecr.io` | shared / prod | Premium | Yes (prod only, secondary region) |
 
 - **Private endpoint** only — no public registry access
 - **Defender for Containers** enabled — all images scanned on push and on re-assessment
@@ -45,17 +45,18 @@ No cluster node ever pulls from a public registry. This eliminates:
 
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
-| **Apache Spark** | 4.1.0 | `eclipse-temurin:17-jre-jammy` | `forgeacr/spark:4.1.0` | Custom image — see below |
-| **Spark Operator** | 1.4.6 | `gcr.io/kubeflow/spark-operator` | `forgeacr/spark-operator:1.4.6` | Imported, not modified |
-| **Trino** | 438 | `trinodb/trino:438` | `forgeacr/trino:438` | Imported + custom plugins |
-| **Hive Metastore** | 3.1.3 | `eclipse-temurin:11-jre` | `forgeacr/hive-metastore:3.1.3` | Custom image for Delta catalog |
-| **Delta Lake** | 4.0.0 | — | — | Bundled in Spark image; no separate container |
+| **Apache Spark** | 4.1.1 | `eclipse-temurin:17-jre-jammy` | `forgeacr/spark:4.1.1` | Custom image — see below |
+| **Spark Operator** | 2.1.1 | `ghcr.io/kubeflow/spark-operator:v2.1.1` | `forgeacr/spark-operator:2.1.1` | Imported, not modified |
+| **Trino** | 438 | `trinodb/trino:438` | `forgeacr/trino:438` | Custom image (catalog-discovery plugin) |
+| **Hive Metastore** | 3.1.3 | `apache/hive:3.1.3` | `forgeacr/hive-metastore:3.1.3` | Imported, not modified |
+| **Delta Lake** | 4.1.0 | — | — | Bundled in Spark image as JAR; no separate container |
+| **Apache Iceberg** | 1.10.1 | — | — | Bundled in Spark image as JAR (`iceberg-spark-runtime-4.0_2.13`) |
 
 ### Orchestration Layer
 
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
-| **Apache Airflow** | 3.1.0 | `apache/airflow:3.1.0-python3.12` | `forgeacr/airflow:3.1.0` | Custom image — see below |
+| **Apache Airflow** | 3.1.8 | `apache/airflow:3.1.8-python3.11` | `forgeacr/airflow:3.1.8` | Custom image — see below |
 | **Microsoft Purview** | Managed service | — | — | Org-wide license; no image to manage. Lineage backend via OpenLineage REST endpoint. |
 
 ### Observability Layer
@@ -89,48 +90,54 @@ No cluster node ever pulls from a public registry. This eliminates:
 
 ## Custom Images
 
-### `forgeacr/spark:4.1.0`
+### `forgeacr/spark:4.1.1`
 
-Built from `Dockerfile` at `infra/docker/spark/Dockerfile`.
+Built from `infra/docker/spark/Dockerfile`. Build context is the repo root (required for `sdk/python/`).
 
 **What's included:**
-- OpenJDK 17 (Temurin) base
-- Spark 4.1.0 distribution (full, with Hadoop 3.3.4)
-- Delta Lake 4.0.0 JAR
-- Hadoop Azure (`hadoop-azure-3.3.6.jar`) for ADLS Gen2 access via ABFS
-- Azure Identity SDK (for workload identity token provider)
-- OpenLineage Spark integration (`openlineage-spark-1.18.0.jar`)
-- Python 3.11 + PySpark
-- Common data science dependencies: `pandas`, `pyarrow`, `delta-spark`
-- No Hadoop YARN / HDFS — cluster-mode on Kubernetes only
+- OpenJDK 17 (Temurin, Ubuntu Jammy) base
+- Spark 4.1.1 (Hadoop 3 distribution, Kubernetes-ready)
+- Delta Lake 4.1.0 JAR + storage library
+- Apache Iceberg 1.10.1 (`iceberg-spark-runtime-4.0_2.13` — Spark 4.x compatible)
+- Hadoop Azure 3.4.1 — ABFS driver for ADLS Gen2
+- Azure Identity + Azure Storage File DataLake JARs — workload identity token provider
+- OpenLineage Spark 1.39.0 — automatic lineage emission to Purview
+- Python 3.11, PySpark, delta-spark, pandas, pyarrow, openlineage-python 1.39.0
+- `spark-defaults.conf` with ADLS and OpenLineage defaults baked in
+- `forge-dq` SDK baked in from `sdk/python/`
+- Non-root `spark` user (UID 185)
 
 **Build triggers:**
-- Spark patch release
-- Delta Lake minor/patch release
-- Security CVE in base image (automated by Defender alert → CI pipeline)
+- Spark version bump
+- Delta Lake / Iceberg version bump
+- `sdk/python/` (forge-dq) changes
+- Security CVE in base image
 
-### `forgeacr/airflow:3.1.0`
+### `forgeacr/airflow:3.1.8`
 
-Built from `Dockerfile` at `infra/docker/airflow/Dockerfile`.
+Built from `infra/docker/airflow/Dockerfile`.
 
 **What's included:**
-- Official `apache/airflow:3.1.0-python3.12` base
-- `apache-airflow-providers-cncf-kubernetes` (SparkKubernetesOperator)
-- `apache-airflow-providers-microsoft-azure` (ADLS hooks, Key Vault backend)
-- `openlineage-airflow` (automatic OpenLineage emission)
-- `forge-dq` (Forge DQ SDK — installed as wheel from `code/` container)
-- `forge-lineage` (Forge lineage SDK)
+- Official `apache/airflow:3.1.8-python3.11` base
+- `apache-airflow-providers-cncf-kubernetes` — SparkKubernetesOperator, KubernetesPodOperator
+- `apache-airflow-providers-microsoft-azure` — ADLS hooks, Key Vault secrets backend
+- `apache-airflow-providers-openlineage` — OpenLineage provider
+- `openlineage-airflow` 1.39.0 — automatic START/COMPLETE/FAIL lineage for every task
+- `forge-dq` and `forge-lineage` wheels (from `wheels/` in build context)
 - Azure Workload Identity dependencies
+- Provider versions pinned by the official Airflow 3.1.8 constraints file
 
 ### `forgeacr/trino:438`
 
-Built from `Dockerfile` at `infra/docker/trino/Dockerfile`.
+Built from `infra/docker/trino/Dockerfile`.
 
 **What's included:**
-- Official `trinodb/trino:438` base
-- Delta Lake connector plugin (`trino-delta-lake-438.jar`) — included in official dist
-- OpenLineage Trino plugin (`openlineage-trino-1.18.0.jar`)
-- Custom `catalog-discovery` plugin for dynamic catalog registration (Forge-built)
+- Official `trinodb/trino:438` base (includes Delta Lake connector)
+- Custom `catalog-discovery` plugin for dynamic per-tenant catalog registration (Forge-built JAR)
+- Shell access removed for `trino` user (`/sbin/nologin`) — security hardening
+
+**Note:** OpenLineage is intentionally not included. Trino serves interactive SQL — lineage is
+captured at the Spark (job) and Airflow (pipeline) layers where it has real value.
 
 ### Grafana Dashboards (Azure Managed Grafana)
 
@@ -147,13 +154,11 @@ Scheduled trigger / Security alert
          │
          ▼
 Import Pipeline (Azure DevOps / GitHub Actions)
-  1. docker pull <upstream-image>:<version>
-  2. Microsoft Defender for Containers scan — fail on CRITICAL CVEs
-  3. docker tag → forgeacr-dev.azurecr.io/...
-  4. docker push → ACR (triggers Defender re-scan)
-  5. Notary v2 sign (Notation)
-  6. Update version matrix in this document (PR)
-  7. Notify platform channel
+  1. az acr import — pulls from upstream and pushes to ACR in one step (no local Docker needed)
+  2. Microsoft Defender for Containers scan — triggered automatically on push, fail on CRITICAL CVEs
+  3. Notary v2 sign (Notation) — signs the image digest after clean scan
+  4. Update version matrix in this document (PR)
+  5. Notify platform channel
 ```
 
 If Microsoft Defender for Containers finds a CRITICAL CVE in a new upstream image:

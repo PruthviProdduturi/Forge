@@ -17,6 +17,25 @@ param corporateIpRange string = '10.0.0.0/8'
 param tags object = {}
 
 // ---------------------------------------------------------------------------
+// Address space — dev uses 10.x.x.x, prod uses 10.1x.x.x
+// ---------------------------------------------------------------------------
+var addressPrefixes = environment == 'dev' ? {
+  vnet:             '10.0.0.0/12'
+  compute:          '10.1.0.0/16'
+  orchestration:    '10.2.0.0/16'
+  privateEndpoints: '10.3.0.0/24'
+  appgw:            '10.4.0.0/24'
+  bastion:          '10.5.0.0/24'
+} : {
+  vnet:             '10.16.0.0/12'
+  compute:          '10.17.0.0/16'
+  orchestration:    '10.18.0.0/16'
+  privateEndpoints: '10.19.0.0/24'
+  appgw:            '10.20.0.0/24'
+  bastion:          '10.21.0.0/24'
+}
+
+// ---------------------------------------------------------------------------
 // Platform Log Analytics Workspace — NSG and network diagnostics
 // S360: Network activity audit trail. All NSGs send diagnostic logs here.
 // ---------------------------------------------------------------------------
@@ -66,9 +85,9 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
           direction: 'Inbound'
           access: 'Allow'
           protocol: '*'
-          sourceAddressPrefix: '10.1.0.0/16'
+          sourceAddressPrefix: addressPrefixes.compute
           sourcePortRange: '*'
-          destinationAddressPrefix: '10.1.0.0/16'
+          destinationAddressPrefix: addressPrefixes.compute
           destinationPortRange: '*'
         }
       }
@@ -79,9 +98,9 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
           direction: 'Inbound'
           access: 'Allow'
           protocol: 'Tcp'
-          sourceAddressPrefix: '10.2.0.0/16'
+          sourceAddressPrefix: addressPrefixes.orchestration
           sourcePortRange: '*'
-          destinationAddressPrefix: '10.1.0.0/16'
+          destinationAddressPrefix: addressPrefixes.compute
           destinationPortRange: '*'
         }
       }
@@ -200,9 +219,9 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
           direction: 'Inbound'
           access: 'Allow'
           protocol: '*'
-          sourceAddressPrefix: '10.2.0.0/16'
+          sourceAddressPrefix: addressPrefixes.orchestration
           sourcePortRange: '*'
-          destinationAddressPrefix: '10.2.0.0/16'
+          destinationAddressPrefix: addressPrefixes.orchestration
           destinationPortRange: '*'
         }
       }
@@ -213,9 +232,9 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
           direction: 'Inbound'
           access: 'Allow'
           protocol: 'Tcp'
-          sourceAddressPrefix: '10.1.0.0/16'
+          sourceAddressPrefix: addressPrefixes.compute
           sourcePortRange: '*'
-          destinationAddressPrefix: '10.2.0.0/16'
+          destinationAddressPrefix: addressPrefixes.orchestration
           destinationPortRange: '*'
         }
       }
@@ -678,13 +697,13 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
   tags: tags
   properties: {
     addressSpace: {
-      addressPrefixes: ['10.0.0.0/8']
+      addressPrefixes: [addressPrefixes.vnet]
     }
     subnets: [
       {
         name: 'snet-forge-compute-${environment}'
         properties: {
-          addressPrefix: '10.1.0.0/16'
+          addressPrefix: addressPrefixes.compute
           networkSecurityGroup: {
             id: nsgCompute.id
           }
@@ -695,7 +714,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
       {
         name: 'snet-forge-orchestration-${environment}'
         properties: {
-          addressPrefix: '10.2.0.0/16'
+          addressPrefix: addressPrefixes.orchestration
           networkSecurityGroup: {
             id: nsgOrchestration.id
           }
@@ -706,7 +725,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
       {
         name: 'snet-forge-private-endpoints-${environment}'
         properties: {
-          addressPrefix: '10.3.0.0/24'
+          addressPrefix: addressPrefixes.privateEndpoints
           networkSecurityGroup: {
             id: nsgPrivateEndpoints.id
           }
@@ -717,7 +736,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
       {
         name: 'snet-forge-appgw-${environment}'
         properties: {
-          addressPrefix: '10.4.0.0/24'
+          addressPrefix: addressPrefixes.appgw
           networkSecurityGroup: {
             id: nsgAppGw.id
           }
@@ -729,7 +748,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
         // Must be named exactly AzureBastionSubnet for the Bastion service
         name: 'AzureBastionSubnet'
         properties: {
-          addressPrefix: '10.5.0.0/24'
+          addressPrefix: addressPrefixes.bastion
           networkSecurityGroup: {
             id: nsgBastion.id
           }
@@ -839,6 +858,12 @@ resource dnsZoneOds 'Microsoft.Network/privateDnsZones@2020-06-01' = {
 
 resource dnsZoneAgentsvc 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.agentsvc.azure-automation.net'
+  location: 'global'
+  tags: tags
+}
+
+resource dnsZonePurview 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: 'privatelink.purview.azure.com'
   location: 'global'
   tags: tags
 }
@@ -954,6 +979,18 @@ resource vnetLinkAgentsvc 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
   }
 }
 
+resource vnetLinkPurview 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: dnsZonePurview
+  name: 'link-purview-${environment}'
+  location: 'global'
+  properties: {
+    virtualNetwork: {
+      id: vnet.id
+    }
+    registrationEnabled: false
+  }
+}
+
 // ---------------------------------------------------------------------------
 // NSG Diagnostic Settings — S360: audit all allow/deny decisions
 // ---------------------------------------------------------------------------
@@ -993,6 +1030,60 @@ resource nsgOrchestrationDiagnostics 'Microsoft.Insights/diagnosticSettings@2021
   }
 }
 
+resource nsgPrivateEndpointsDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-nsg-pe-${environment}'
+  scope: nsgPrivateEndpoints
+  properties: {
+    workspaceId: platformLaw.id
+    logs: [
+      {
+        category: 'NetworkSecurityGroupEvent'
+        enabled: true
+      }
+      {
+        category: 'NetworkSecurityGroupRuleCounter'
+        enabled: true
+      }
+    ]
+  }
+}
+
+resource nsgAppGwDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-nsg-appgw-${environment}'
+  scope: nsgAppGw
+  properties: {
+    workspaceId: platformLaw.id
+    logs: [
+      {
+        category: 'NetworkSecurityGroupEvent'
+        enabled: true
+      }
+      {
+        category: 'NetworkSecurityGroupRuleCounter'
+        enabled: true
+      }
+    ]
+  }
+}
+
+resource nsgBastionDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: 'diag-nsg-bastion-${environment}'
+  scope: nsgBastion
+  properties: {
+    workspaceId: platformLaw.id
+    logs: [
+      {
+        category: 'NetworkSecurityGroupEvent'
+        enabled: true
+      }
+      {
+        category: 'NetworkSecurityGroupRuleCounter'
+        enabled: true
+      }
+    ]
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
@@ -1017,6 +1108,7 @@ output privateDnsZoneIds object = {
   oms: dnsZoneOms.id
   ods: dnsZoneOds.id
   agentsvc: dnsZoneAgentsvc.id
+  purview: dnsZonePurview.id
 }
 
 output bastionId string = bastion.id

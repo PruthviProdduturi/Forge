@@ -30,7 +30,7 @@ param namespaces object = {
   airflow: { namespace: 'airflow', serviceAccountName: 'airflow' }
   dq: { namespace: 'dq', serviceAccountName: 'dq-runner' }
   portal: { namespace: 'portal', serviceAccountName: 'portal-api' }
-  lineage: { namespace: 'lineage', serviceAccountName: 'marquez' }
+  lineage: { namespace: 'lineage', serviceAccountName: 'purview' }
 }
 
 @description('Resource tags to apply to all resources.')
@@ -49,13 +49,18 @@ var kvSecretsUserRoleId              = subscriptionResourceId('Microsoft.Authori
 var storageContainerBase = '${storageAccountId}/blobServices/default/containers'
 
 // ---------------------------------------------------------------------------
-// Existing resource reference — storage account
-// S360: Role assignments are scoped directly to the storage account rather
+// Existing resource references
+// S360: Role assignments are scoped directly to the resource rather
 // than the resource group, minimising blast radius per least-privilege.
 // ---------------------------------------------------------------------------
 resource storageAccountRef 'Microsoft.Storage/storageAccounts@2023-04-01' existing = {
   name: last(split(storageAccountId, '/'))
   scope: resourceGroup(split(storageAccountId, '/')[2], split(storageAccountId, '/')[4])
+}
+
+resource keyVaultRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (keyVaultId != '') {
+  name: last(split(keyVaultId, '/'))
+  scope: resourceGroup(split(keyVaultId, '/')[2], split(keyVaultId, '/')[4])
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +413,7 @@ resource lineageGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 // ---------------------------------------------------------------------------
 resource kvSparkSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idSpark.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: storageAccountRef
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idSpark.properties.principalId
@@ -419,7 +424,7 @@ resource kvSparkSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource kvTrinoSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idTrino.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: storageAccountRef
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idTrino.properties.principalId
@@ -430,7 +435,7 @@ resource kvTrinoSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 resource kvAirflowSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idAirflow.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: storageAccountRef
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idAirflow.properties.principalId
@@ -441,7 +446,7 @@ resource kvAirflowSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-0
 
 resource kvDqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idDq.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: storageAccountRef
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idDq.properties.principalId
@@ -452,7 +457,7 @@ resource kvDqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 
 resource kvPortalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idPortal.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: storageAccountRef
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idPortal.properties.principalId
@@ -463,7 +468,7 @@ resource kvPortalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
 
 resource kvLineageSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
   name: guid(idLineage.properties.principalId, kvSecretsUserRoleId, keyVaultId)
-  scope: storageAccountRef
+  scope: keyVaultRef
   properties: {
     roleDefinitionId: kvSecretsUserRoleId
     principalId: idLineage.properties.principalId

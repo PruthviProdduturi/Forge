@@ -2,411 +2,304 @@
 
 > **Document:** 02-image-builds
 > **Status:** Current
-> **Last updated:** 2026-03-24
-> **Audience:** Platform engineers, CI/CD pipeline authors
+> **Last updated:** 2026-03-27
+> **Audience:** Platform engineers performing initial setup or image updates
 
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
+[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
 
 ---
 
 ## Table of Contents
 
-1. [Prerequisites](#1-prerequisites)
-2. [ACR Login](#2-acr-login)
-3. [Tag Convention](#3-tag-convention)
-4. [Custom Images](#4-custom-images)
-   - [spark:4.1.0](#41-spark351)
-   - [trino:438](#42-trino438)
-   - [airflow:3.1.0](#43-airflow293)
-   - [Azure Managed Grafana (no custom image)](#44-azure-managed-grafana-no-custom-image)
-   - [portal-api](#45-portal-api)
-   - [portal-web](#46-portal-web)
-5. [Imported Images](#5-imported-images)
-6. [Helm Chart Import](#6-helm-chart-import)
-7. [Full Build Script](#7-full-build-script)
-8. [Verification](#8-verification)
-9. [CI Pipeline Integration](#9-ci-pipeline-integration)
+1. [Overview](#1-overview)
+2. [Prerequisites](#2-prerequisites)
+3. [ACR Naming](#3-acr-naming)
+4. [Enabling ACR Tasks (public access)](#4-enabling-acr-tasks-public-access)
+5. [Custom Images](#5-custom-images)
+   - [spark:4.1.1](#51-spark411)
+   - [trino:438](#52-trino438)
+   - [airflow:3.1.8](#53-airflow318)
+   - [portal-api](#54-portal-api)
+   - [portal-web](#55-portal-web)
+6. [Third-Party Image Import](#6-third-party-image-import)
+7. [Helm Chart Import](#7-helm-chart-import)
+8. [Lock ACR Back Down](#8-lock-acr-back-down)
+9. [Verification](#9-verification)
+10. [CI Pipeline Integration](#10-ci-pipeline-integration)
 
 ---
 
-## 1. Prerequisites
+## 1. Overview
 
-The following tools must be available in the environment where builds run.
+All images are built using **ACR Tasks** (`az acr build`). The build runs inside Azure — no local Docker daemon or `docker push` is needed. The only requirement is an authenticated Azure CLI session with `AcrPush` on the registry.
 
-| Tool | Minimum Version | Purpose |
+**Why ACR Tasks and not local Docker build + push?**
+- No Docker Desktop dependency in CI or on engineer workstations
+- Build runs in Azure — no large image upload over a laptop connection
+- ACR Tasks natively support workload identity (no stored credentials)
+- Defender for Containers scans the image immediately on push
+
+---
+
+## 2. Prerequisites
+
+| Tool | Minimum Version | Install |
 |------|----------------|---------|
-| Docker | 24.x | Build and push images |
-| Azure CLI (`az`) | 2.57.x | ACR login, tag queries |
-| `jq` | 1.6 | Parse JSON in build script |
-| `curl` | 7.x | Download upstream artifacts in Dockerfiles |
+| Azure CLI (`az`) | ≥ 2.58 | `winget install Microsoft.AzureCLI` |
+| Git | ≥ 2.44 | required for `git rev-parse` in portal builds |
 
-### Azure CLI login
+**Azure authentication:**
+```bash
+az login --tenant <tenant-id>
+az account set --subscription <subscription-id>
+az account show  # verify correct subscription
+```
 
-For local workstation builds:
+---
+
+## 3. ACR Naming
+
+The shared ACR is created by `infra/bicep/environments/shared/main.bicep`.
+
+| Deployment type | Registry name | Example |
+|----------------|--------------|---------|
+| Personal dev (with `ownerAlias`) | `forgeacr{alias}` | `forgeacrprproddu` |
+| Shared / production | `forgeacr` | `forgeacr` |
+
+Set a shell variable before running any build command:
 
 ```bash
-az login
-az account set --subscription <forge-subscription-id>
+ACR="forgeacrprproddu"   # replace with your registry name
 ```
-
-For CI/CD (Azure DevOps / GitHub Actions), an AzureCLI task or `azure/login` action provides the authenticated context using a workload identity federated credential — no client secret required (see [Section 8](#8-ci-pipeline-integration)).
-
-### ACR naming convention
-
-| Environment | Registry FQDN |
-|-------------|--------------|
-| dev | `forgeacr-dev.azurecr.io` |
-| staging | `forgeacr-staging.azurecr.io` |
-| prod | `forgeacr-prod.azurecr.io` |
-
-The ACR name passed to all scripts and commands is the **FQDN**, not the short name. Examples in this document use `forgeacr-dev.azurecr.io` and `forgeacr-prod.azurecr.io` as representative values.
 
 ---
 
-## 2. ACR Login
+## 4. Enabling ACR Tasks (public access)
 
-### Local workstation
+ACR is deployed with `publicNetworkAccess: Disabled`. ACR Tasks require temporary public access to run. Follow these steps **before** building images, and lock down after ([Section 8](#8-lock-acr-back-down)).
+
+> **Important:** Export policy must be re-enabled before public access can be toggled.
 
 ```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-az acr login --name forgeacr-dev
-```
+# Step 1 — re-enable exports (required before enabling public access)
+az acr update --name $ACR --allow-exports true
 
-`az acr login` refreshes the Docker credential store with a short-lived token (valid 3 hours). Re-run before a long build session.
-
-### CI — workload identity (Azure DevOps)
-
-In Azure DevOps, the pipeline service connection is federated to a managed identity that holds `AcrPush` on the ACR resource. The login step in the pipeline YAML:
-
-```yaml
-- task: AzureCLI@2
-  displayName: ACR login
-  inputs:
-    azureSubscription: sc-forge-$(environment)
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az acr login --name forgeacr-$(environment)
-```
-
-No password or token is stored. The federated OIDC credential is exchanged for a short-lived ACR refresh token automatically.
-
-### CI — workload identity (GitHub Actions)
-
-```yaml
-- uses: azure/login@v2
-  with:
-    client-id: ${{ vars.AZURE_CLIENT_ID }}
-    tenant-id: ${{ vars.AZURE_TENANT_ID }}
-    subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-- name: ACR login
-  run: az acr login --name forgeacr-${{ inputs.environment }}
+# Step 2 — enable public network access
+az acr update --name $ACR --public-network-enabled true
 ```
 
 ---
 
-## 3. Tag Convention
+## 5. Custom Images
 
-All images in ACR use the following tag scheme:
+Custom images have a Dockerfile in `infra/docker/<name>/`. Each image uses `az acr build` which packages the build context, uploads it to Azure, and builds + pushes the image in one step.
 
-```
-{registry}/{image}:{version}-{env}
-```
+### Image version matrix
 
-| Segment | Example | Notes |
-|---------|---------|-------|
-| `registry` | `forgeacr-prod.azurecr.io` | Full FQDN always |
-| `image` | `spark` | Lowercase, hyphenated |
-| `version` | `4.1.0` | Upstream version or `git-sha` for first-party code |
-| `env` | `prod` | `dev`, `staging`, or `prod` |
-
-**Examples:**
-
-```
-forgeacr-prod.azurecr.io/spark:4.1.0-prod
-forgeacr-dev.azurecr.io/airflow:3.1.0-dev
-forgeacr-prod.azurecr.io/portal-api:a3f92c1-prod
-forgeacr-dev.azurecr.io/portal-api:a3f92c1-dev
-```
-
-For first-party images (`portal-api`, `portal-web`) where there is no upstream version, the tag is the **short Git SHA** of the commit being built. The CI pipeline sets this from `$(Build.SourceVersion)` (Azure DevOps) or `${{ github.sha }}` (GitHub Actions).
+| Image | Version | Dockerfile |
+|-------|---------|-----------|
+| `spark` | `4.1.1` | `infra/docker/spark/Dockerfile` |
+| `trino` | `438` | `infra/docker/trino/Dockerfile` |
+| `airflow` | `3.1.8` | `infra/docker/airflow/Dockerfile` |
+| `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
+| `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |
 
 ---
 
-## 4. Custom Images
+### 5.1 spark:4.1.1
 
-Custom images have a Dockerfile in `infra/docker/<name>/`. Build them locally or in CI before pushing.
-
----
-
-### 4.1 spark:4.1.0
-
-**Purpose:** Spark driver and executor pods for all Bronze, Silver, and Gold processing jobs. This image is the workhorse of the platform — every SparkApplication CRD references it.
+**Purpose:** Spark driver and executor pods for all Bronze, Silver, and Gold processing jobs. Every `SparkApplication` CRD references this image.
 
 **What is included:**
 - Eclipse Temurin 17 JRE (OpenJDK 17, Ubuntu Jammy base)
-- Apache Spark 4.1.0 with Hadoop 3.3.4 (full distribution, Kubernetes-ready)
-- Delta Lake 4.0.0 JAR (`delta-spark==4.0.0.0.jar`)
-- Hadoop Azure (`hadoop-azure-3.3.6.jar`) — the ABFS driver for ADLS Gen2
+- Apache Spark 4.1.1 (Hadoop 3 distribution)
+- Delta Lake 4.1.0 JAR + storage library
+- Apache Iceberg 1.10.1 runtime (`iceberg-spark-runtime-4.0_2.13` — Spark 4.x compatible)
+- Hadoop Azure 3.4.1 — ABFS driver for ADLS Gen2
 - Azure Identity + Azure Storage File DataLake JARs — workload identity token provider
-- OpenLineage Spark integration (`openlineage-spark-1.18.0.jar`) — automatic lineage emission
-- Python 3.11, pip, PySpark, delta-spark, pandas, pyarrow, azure-identity
+- Azure Core + Azure Core HTTP Netty — transitive Azure SDK dependencies
+- OpenLineage Spark 1.39.0 — automatic lineage emission to Purview
+- Python 3.11, PySpark, delta-spark, pandas, pyarrow, azure-identity, openlineage-python
 - `spark-defaults.conf` with ADLS and OpenLineage defaults baked in
+- `forge-dq` SDK (from `sdk/python/`) — baked in so Spark jobs can run DQ checks without a separate install
 - Runs as non-root user `spark` (UID 185)
 
-**Dockerfile:** `infra/docker/spark/Dockerfile`
-
-**Build:**
+**Build context:** Repo root is required because `sdk/python/` must be accessible to the Dockerfile.
+A `.dockerignore` at the repo root limits the upload to only `sdk/python/` and `infra/docker/spark/`.
 
 ```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-ENV="dev"
-VERSION="4.1.0"
-
-docker build \
-  --tag "${REGISTRY}/spark:${VERSION}-${ENV}" \
+# Run from repo root (D:\Repos\DSEngCoreInfra\Forge)
+az acr build \
+  --registry $ACR \
+  --image spark:4.1.1 \
   --file infra/docker/spark/Dockerfile \
-  infra/docker/spark/
-```
-
-**Push:**
-
-```bash
-docker push "${REGISTRY}/spark:${VERSION}-${ENV}"
+  .
 ```
 
 **When to rebuild:**
-- Spark patch release
-- Delta Lake patch/minor release
-- Security CVE alert from Defender for Containers on the base image
-- Any change to `spark-defaults.conf` or JAR versions
+- Spark version bump
+- Delta Lake / Iceberg version bump
+- JAR version change
+- `sdk/python/` (forge-dq) changes
+- `spark-defaults.conf` changes
+- Defender CVE alert on the base image
 
 ---
 
-### 4.2 trino:438
+### 5.2 trino:438
 
-**Purpose:** Trino coordinator and worker pods for ad-hoc SQL queries against Silver and Gold Delta tables, and for Gold materialisation jobs that use Trino CTAS.
+**Purpose:** Trino coordinator and worker pods for ad-hoc SQL queries against Delta tables in the Silver and Gold layers.
 
 **What is included:**
-- Official `trinodb/trino:438` base (includes Delta Lake connector in distribution)
-- OpenLineage Trino plugin (`openlineage-trino-1.18.0.jar`) installed to `/usr/lib/trino/plugin/openlineage/`
-- Custom `catalog-discovery` plugin for dynamic per-tenant catalog registration (Forge-built JAR, placed in `/usr/lib/trino/plugin/catalog-discovery/`)
+- Official `trinodb/trino:438` base (includes Delta Lake connector)
+- Custom `catalog-discovery` plugin — dynamic per-tenant catalog registration without static property files (Forge-built JAR; build context includes a `.gitkeep` placeholder if not yet built)
 - Proper file ownership on plugin directories for the `trino` user
-- Shell access removed for the `trino` user (security hardening — `/sbin/nologin`)
+- Shell access removed for the `trino` user (`/sbin/nologin`) — security hardening
 
-**Dockerfile:** `infra/docker/trino/Dockerfile`
-
-**Build:**
+**Note on OpenLineage:** Trino is intentionally not instrumented with OpenLineage. Trino serves
+interactive SQL queries — meaningful lineage is captured upstream at the Spark (job) and Airflow
+(pipeline) layers. Instrumenting ad-hoc Trino queries produces noise in Purview, not signal.
 
 ```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-ENV="dev"
-VERSION="438"
-
-docker build \
-  --tag "${REGISTRY}/trino:${VERSION}-${ENV}" \
+az acr build \
+  --registry $ACR \
+  --image trino:438 \
   --file infra/docker/trino/Dockerfile \
   infra/docker/trino/
 ```
 
-**Push:**
-
-```bash
-docker push "${REGISTRY}/trino:${VERSION}-${ENV}"
-```
+**When to rebuild:**
+- Trino version bump
+- `catalog-discovery` plugin update
+- Defender CVE alert on the base image
 
 ---
 
-### 4.3 airflow:3.1.0
+### 5.3 airflow:3.1.8
 
-**Purpose:** Airflow scheduler, webserver, and worker pods. All DAG orchestration for Bronze ingestion, Silver transformation, DQ validation, and Gold publication runs from this image.
+**Purpose:** Airflow scheduler, webserver, triggerer, and worker pods. All pipeline orchestration for Bronze ingestion, Silver transformation, DQ validation, and Gold publication runs from this image.
 
 **What is included:**
-- Official `apache/airflow:3.1.0-python3.12` base
-- `apache-airflow-providers-cncf-kubernetes` — `SparkKubernetesOperator`, `KubernetesPodOperator`
-- `apache-airflow-providers-microsoft-azure` — ADLS hooks, Azure Key Vault secrets backend
-- `openlineage-airflow` — automatic OpenLineage START/COMPLETE/FAIL emission for every task
-- `azure-identity`, `azure-storage-file-datalake` — workload identity token handling
-- `forge-dq` wheel — Forge DQ SDK (from `sdk/` build context, if present)
-- `forge-lineage` wheel — Forge lineage helpers (from `sdk/` build context, if present)
+- Official `apache/airflow:3.1.8-python3.11` base
+- `apache-airflow-providers-cncf-kubernetes==9.0.0` — `SparkKubernetesOperator`, `KubernetesPodOperator`
+- `apache-airflow-providers-microsoft-azure==10.0.0` — ADLS hooks, Azure Key Vault secrets backend
+- `apache-airflow-providers-openlineage==2.0.0` — OpenLineage provider for Airflow
+- `apache-airflow-providers-openlineage (via constraints)` — automatic START/COMPLETE/FAIL lineage emission for every task
+- `azure-identity`, `azure-storage-file-datalake`, `azure-keyvault-secrets` — workload identity
+- `forge-dq` wheel — Forge DQ SDK (from `wheels/` directory in build context, if present)
+- `forge-lineage` wheel — Forge lineage helpers (from `wheels/` directory, if present)
 - All dependencies pinned in `infra/docker/airflow/requirements.txt`
+- Platform-level DAGs and plugins baked in; domain DAGs mounted at runtime via git-sync
 
-**Dockerfile:** `infra/docker/airflow/Dockerfile`
-
-**Build:**
+**Build context:** `infra/docker/airflow/`. Wheels directory must exist in build context:
+```bash
+# If wheels are not yet built, create the placeholder so the COPY step succeeds
+mkdir -p infra/docker/airflow/wheels
+touch infra/docker/airflow/wheels/.gitkeep
+```
 
 ```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-ENV="dev"
-VERSION="3.1.0"
-
-docker build \
-  --tag "${REGISTRY}/airflow:${VERSION}-${ENV}" \
+az acr build \
+  --registry $ACR \
+  --image airflow:3.1.8 \
   --file infra/docker/airflow/Dockerfile \
-  --build-arg AIRFLOW_VERSION="3.1.0" \
   infra/docker/airflow/
 ```
 
-**Push:**
-
-```bash
-docker push "${REGISTRY}/airflow:${VERSION}-${ENV}"
-```
-
----
-
-### 4.4 Azure Managed Grafana (no custom image)
-
-**Purpose:** Azure Managed Grafana serves all platform observability dashboards — Spark job metrics, Airflow pipeline health, DQ pass rates, Trino query performance, and infrastructure resource utilisation.
-
-Forge uses **Azure Managed Grafana** — no custom container image is built or pushed to ACR. Dashboard JSON files are version-controlled in Git under `infra/grafana/dashboards/` and provisioned to the Managed Grafana instance via the Grafana HTTP API in the CI/CD pipeline:
-
-```bash
-# Provision dashboards to Azure Managed Grafana (run in CI/CD)
-GRAFANA_URL=$(az grafana show \
-  --name grafana-forge-${ENV} \
-  --resource-group rg-forge-platform-${ENV} \
-  --query "properties.endpoint" -o tsv)
-
-for dashboard_file in infra/grafana/dashboards/*.json; do
-  az grafana dashboard create \
-    --name grafana-forge-${ENV} \
-    --resource-group rg-forge-platform-${ENV} \
-    --definition "@${dashboard_file}"
-done
-```
-
-Data source connections (Azure Monitor, Log Analytics, Application Insights) are configured via Bicep — no manual provisioning YAML required.
+**When to rebuild:**
+- Airflow version bump
+- Provider package version bump
+- `forge-dq` or `forge-lineage` wheel update
+- Platform DAG / plugin changes
+- Defender CVE alert on the base image
 
 ---
 
-### 4.5 portal-api
+### 5.4 portal-api
 
-**Purpose:** FastAPI backend for the Forge Developer Portal. Aggregates data from Airflow, Purview (lineage), Trino (DQ store), Azure Cost Management, and ADLS catalog. Runs on the `platform` node pool.
+**Purpose:** FastAPI backend for the Forge Developer Portal. Aggregates data from Airflow, Purview (lineage), Trino, Azure Cost Management, and ADLS catalog.
 
-**What is included:**
-- `mcr.microsoft.com/cbl-mariner/base/python:3.11` base (Azure-hosted, no public registry dependency)
-- FastAPI + uvicorn server
-- `azure-identity` for workload identity credential
-- Airflow REST API client, Purview SDK (`azure-purview-catalog`), Trino Python driver
-- All source code from `portal/api/` copied in at build time
-
-**Tag scheme:** Uses Git SHA — no upstream version number applies.
-
-**Build:**
+**Tag scheme:** Git SHA — no upstream version applies to first-party code.
 
 ```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-ENV="dev"
 GIT_SHA=$(git rev-parse --short HEAD)
 
-docker build \
-  --tag "${REGISTRY}/portal-api:${GIT_SHA}-${ENV}" \
-  --file infra/docker/portal-api/Dockerfile \
-  .
-```
-
-> The build context is the repo root (`.`) because the Dockerfile copies from `portal/api/`.
-
-**Push:**
-
-```bash
-docker push "${REGISTRY}/portal-api:${GIT_SHA}-${ENV}"
+az acr build \
+  --registry $ACR \
+  --image "portal-api:${GIT_SHA}" \
+  --file portal/backend/Dockerfile \
+  portal/backend/
 ```
 
 ---
 
-### 4.6 portal-web
+### 5.5 portal-web
 
-**Purpose:** Next.js 14 frontend for the Forge Developer Portal. Server-side rendered, served via Node.js runtime. Proxies API calls to `portal-api`.
+**Purpose:** Next.js frontend for the Forge Developer Portal.
 
-**What is included:**
-- `mcr.microsoft.com/cbl-mariner/base/node:20` base
-- Multi-stage build: Node.js build stage produces `.next/` standalone output, then copied to a lean runtime stage
-- All source code from `portal/web/` built and embedded
-
-**Tag scheme:** Uses Git SHA.
-
-**Build:**
+**Tag scheme:** Git SHA.
 
 ```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-ENV="dev"
 GIT_SHA=$(git rev-parse --short HEAD)
 
-docker build \
-  --tag "${REGISTRY}/portal-web:${GIT_SHA}-${ENV}" \
-  --file infra/docker/portal-web/Dockerfile \
-  .
-```
-
-**Push:**
-
-```bash
-docker push "${REGISTRY}/portal-web:${GIT_SHA}-${ENV}"
+az acr build \
+  --registry $ACR \
+  --image "portal-web:${GIT_SHA}" \
+  --file portal/frontend/Dockerfile \
+  portal/frontend/
 ```
 
 ---
 
-## 5. Imported Images
+## 6. Third-Party Image Import
 
-Imported images are not modified — they are pulled from upstream, retagged, and pushed to ACR. No Dockerfile involved.
-
-The full import loop is encapsulated in the build script (see [Section 6](#6-full-build-script)). The manual procedure for a single image is:
+Third-party images are not modified — they are imported directly into ACR using `az acr import`. No local pull or push is required.
 
 ```bash
-REGISTRY="forgeacr-prod.azurecr.io"
-ENV="prod"
+# Spark Operator
+az acr import \
+  --name $ACR \
+  --source ghcr.io/kubeflow/spark-operator:v2.1.1 \
+  --image spark-operator:2.1.1
 
-# Pull from upstream
-docker pull trinodb/trino:438
+# Hive Metastore
+az acr import \
+  --name $ACR \
+  --source apache/hive:3.1.3 \
+  --image hive-metastore:3.1.3
+```
 
-# Retag to ACR
-docker tag trinodb/trino:438 "${REGISTRY}/trino:438-${ENV}"
+### Third-party image version matrix
+
+| Image | Upstream Source | ACR tag |
+|-------|----------------|---------|
+| `spark-operator` | `ghcr.io/kubeflow/spark-operator:v2.1.1` | `spark-operator:2.1.1` |
+| `hive-metastore` | `apache/hive:3.1.3` | `hive-metastore:3.1.3` |
+
+---
+
+## 7. Helm Chart Import
+
+All Helm charts are stored in ACR as OCI artifacts before deployment. Cluster deployments reference
+`oci://{registry}.azurecr.io/helm/...` — no cluster egresses to public Helm repositories.
+
+```bash
+# Authenticate Helm to ACR
+az acr login --name $ACR
+TOKEN=$(az acr login --name $ACR --expose-token --output tsv --query accessToken)
+echo $TOKEN | helm registry login ${ACR}.azurecr.io --username 00000000-0000-0000-0000-000000000000 --password-stdin
+
+# Pull charts from public repos
+helm pull spark-operator/spark-operator --version 2.1.1  --repo https://kubeflow.github.io/spark-operator
+helm pull trino/trino                   --version 0.31.0 --repo https://trinodb.github.io/charts
+helm pull apache-airflow/airflow        --version 1.15.0 --repo https://airflow.apache.org
 
 # Push to ACR
-docker push "${REGISTRY}/trino:438-${ENV}"
-```
+helm push spark-operator-2.1.1.tgz  oci://${ACR}.azurecr.io/helm
+helm push trino-0.31.0.tgz          oci://${ACR}.azurecr.io/helm
+helm push airflow-1.15.0.tgz        oci://${ACR}.azurecr.io/helm
 
-### Full import table
-
-| Image | Upstream Source | ACR Tag |
-|-------|----------------|---------|
-| `hive-metastore:3.1.3` | `apache/hive:3.1.3` | `forgeacr/hive-metastore:3.1.3-{env}` |
-| `statsd-exporter:0.26.1` | `prom/statsd-exporter:v0.26.1` | `forgeacr/statsd-exporter:0.26.1-{env}` |
-| `spark-operator:1.4.6` | `ghcr.io/kubeflow/spark-operator:v1.4.6` | `forgeacr/spark-operator:1.4.6-{env}` |
-| `gatekeeper:3.16.3` | `openpolicyagent/gatekeeper:v3.16.3` | `forgeacr/gatekeeper:3.16.3-{env}` |
-
----
-
-## 6. Helm Chart Import
-
-All Helm charts must be stored in ACR as OCI artifacts before deployment. No cluster pulls from public Helm repositories — all `helm upgrade --install` commands in Steps 04 and 05 reference `oci://forgeacr-{env}.azurecr.io/helm/...`.
-
-### Why OCI Helm charts in ACR
-
-- **S360 compliance** — AKS nodes and CI agents must not egress to public Helm repos (`kubeflow.github.io`, `trinodb.github.io`, `airflow.apache.org`)
-- **Supply chain control** — chart tarballs are scanned and pinned before entering the environment
-- **Consistency** — same ACR is the single source of truth for both images and charts
-
-### Import procedure (manual / first-time)
-
-```bash
-REGISTRY="forgeacr-dev.azurecr.io"
-az acr login --name forgeacr-dev
-
-# 1. Pull the chart from the public Helm repo (run from a machine with internet access)
-helm pull spark-operator/spark-operator --version 1.4.6 --repo https://kubeflow.github.io/spark-operator
-helm pull trino/trino              --version 0.31.0 --repo https://trinodb.github.io/charts
-helm pull apache-airflow/airflow   --version 1.15.0 --repo https://airflow.apache.org
-
-# 2. Push each chart to ACR as an OCI artifact
-helm push spark-operator-1.4.6.tgz  oci://${REGISTRY}/helm
-helm push trino-0.31.0.tgz          oci://${REGISTRY}/helm
-helm push airflow-1.15.0.tgz        oci://${REGISTRY}/helm
-
-# 3. Clean up local tarballs
+# Clean up local tarballs
 rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
 ```
 
@@ -414,77 +307,51 @@ rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
 
 | Chart | Chart Version | App Version | ACR path |
 |-------|--------------|-------------|----------|
-| `spark-operator` | 1.4.6 | Spark Operator 1.4.6 | `oci://forgeacr-{env}.azurecr.io/helm/spark-operator:1.4.6` |
-| `trino` | 0.31.0 | Trino 438 | `oci://forgeacr-{env}.azurecr.io/helm/trino:0.31.0` |
-| `airflow` | 1.15.0 | Airflow 3.1.0 | `oci://forgeacr-{env}.azurecr.io/helm/airflow:1.15.0` |
-
-Note: Microsoft Purview is a managed Azure service — no Helm chart is required.
-
-The `build-and-push-images.sh` script includes a `--charts-only` flag that runs the chart import loop for all three charts.
+| `spark-operator` | `2.1.1` | Spark Operator 2.1.1 | `oci://{acr}.azurecr.io/helm/spark-operator:2.1.1` |
+| `trino` | `0.31.0` | Trino 438 | `oci://{acr}.azurecr.io/helm/trino:0.31.0` |
+| `airflow` | `1.15.0` | Airflow 3.1.8 | `oci://{acr}.azurecr.io/helm/airflow:1.15.0` |
 
 ---
 
-## 7. Full Build Script
+## 8. Lock ACR Back Down
 
-The canonical entry point for all image operations (container images + Helm charts) is `scripts/bootstrap/build-and-push-images.sh`. It handles both custom builds and imports, and accepts `--env` and `--registry` arguments.
-
-See the script at `scripts/bootstrap/build-and-push-images.sh` for the full implementation.
-
-**Usage:**
+After all builds and imports are complete, restore the secure network configuration:
 
 ```bash
-# Build and push all images to dev ACR
-./scripts/bootstrap/build-and-push-images.sh \
-  --env dev \
-  --registry forgeacr-dev.azurecr.io
+# Step 1 — disable public network access
+az acr update --name $ACR --public-network-enabled false
 
-# Build and push to prod ACR
-./scripts/bootstrap/build-and-push-images.sh \
-  --env prod \
-  --registry forgeacr-prod.azurecr.io
-
-# Build only custom images (skip imports)
-./scripts/bootstrap/build-and-push-images.sh \
-  --env dev \
-  --registry forgeacr-dev.azurecr.io \
-  --custom-only
-
-# Import only third-party images (skip custom builds)
-./scripts/bootstrap/build-and-push-images.sh \
-  --env dev \
-  --registry forgeacr-dev.azurecr.io \
-  --import-only
+# Step 2 — disable exports
+az acr update --name $ACR --allow-exports false
 ```
 
-The script outputs a summary table on completion listing every image pushed with its full ACR tag and the duration of each operation.
+All access to ACR after this point is via the private endpoint provisioned by `infra/bicep/environments/{env}/main.bicep`.
 
 ---
 
-## 8. Verification
+## 9. Verification
 
-### List all repositories in ACR
+### List all repositories
 
 ```bash
-az acr repository list \
-  --name forgeacr-dev \
-  --output table
+az acr repository list --name $ACR --output table
 ```
 
 ### List tags for a specific image
 
 ```bash
 az acr repository show-tags \
-  --name forgeacr-dev \
+  --name $ACR \
   --repository spark \
   --orderby time_desc \
   --output table
 ```
 
-### Show full manifest details (digest, creation time, size)
+### Show manifest details (digest, size, creation time)
 
 ```bash
 az acr manifest list-metadata \
-  --registry forgeacr-dev \
+  --registry $ACR \
   --name spark \
   --orderby time_desc \
   --output table
@@ -492,65 +359,45 @@ az acr manifest list-metadata \
 
 ### Confirm Defender scan result
 
-Defender for Containers scans images on push. Query the scan status via the Azure portal (Defender for Cloud → Container images) or via the REST API:
+Defender for Containers scans every image on push. Check the result in **Defender for Cloud → Container images** in the Azure portal, or query via CLI:
 
 ```bash
-# Get vulnerability assessment findings for an image
 az security assessment list \
-  --query "[?contains(id, 'forgeacr-dev')].{name:name, status:status.code}" \
+  --query "[?contains(id, '${ACR}')].{name:name, status:status.code}" \
   --output table
 ```
 
-A clean image shows `Healthy`. An image with findings shows `Unhealthy` with severity breakdown. Deployments to production are blocked by OPA Gatekeeper policy if the image is not signed by Notation (which only signs after a clean Defender scan in the import pipeline).
-
-### Pull-test from ACR (confirm credentials and reachability)
-
-```bash
-docker pull forgeacr-dev.azurecr.io/spark:4.1.0-dev
-```
-
-If this succeeds from a cluster node (or CI agent), ACR access is confirmed end-to-end.
+A clean image shows `Healthy`.
 
 ---
 
-## 9. CI Pipeline Integration
+## 10. CI Pipeline Integration
+
+In CI (Azure DevOps), the `az acr build` command replaces the local build workflow exactly. The pipeline service connection is federated to a managed identity with `AcrPush` on the registry.
+
+```yaml
+- task: AzureCLI@2
+  displayName: Build and push Spark image
+  inputs:
+    azureSubscription: sc-forge-$(environment)
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az acr build \
+        --registry forgeacr$(ownerAlias) \
+        --image spark:$(sparkVersion) \
+        --file infra/docker/spark/Dockerfile \
+        .
+```
 
 ### Trigger conditions
 
-| Change | Pipeline triggered |
-|--------|-------------------|
-| `infra/docker/spark/**` modified | Spark image build + push |
-| `infra/docker/trino/**` modified | Trino image build + push |
-| `infra/docker/airflow/**` modified | Airflow image build + push |
-| `infra/grafana/dashboards/**` modified | Azure Managed Grafana dashboard provisioning (HTTP API, not image build) |
-| `portal/api/**` or `portal/web/**` modified | Portal API/Web build + push |
-| Weekly schedule | Import pipeline — pull + retag + push all third-party images |
-| Defender CVE alert webhook | Targeted rebuild of the affected image |
-
-### Azure DevOps pipeline structure
-
-The image build pipeline (`ci/image-build-pipeline.yml`) runs on an Ubuntu agent with Docker-in-Docker or Azure Container Registry Tasks. Key steps:
-
-1. `az acr login` using the service connection (workload identity federated credential)
-2. `docker build` — with `--cache-from` pointing to the last pushed image for layer caching
-3. Microsoft Defender for Containers scan — fails the pipeline on `CRITICAL` CVEs before pushing
-4. `docker push`
-5. Notation sign — signs the image digest using the Forge signing key stored in Azure Key Vault
-
-### GitHub Actions pipeline structure
-
-The equivalent GitHub Actions workflow (`.github/workflows/image-build.yml`) follows the same steps using `azure/login@v2`, `azure/defender-for-containers-action`, and the Notation GitHub Action (`notaryproject/notation-action`).
-
-### Layer caching in CI
-
-Both pipelines pass `--cache-from` to Docker to reuse layers from the previous successful build:
-
-```bash
-docker build \
-  --cache-from "${REGISTRY}/spark:cache" \
-  --cache-to   "type=registry,ref=${REGISTRY}/spark:cache,mode=max" \
-  --tag "${REGISTRY}/spark:${VERSION}-${ENV}" \
-  ...
-```
-
-This keeps build times for incremental changes (e.g., a single JAR version bump) under 2 minutes even for the Spark image.
+| Change | Build triggered |
+|--------|----------------|
+| `infra/docker/spark/**` | Spark image |
+| `infra/docker/trino/**` | Trino image |
+| `infra/docker/airflow/**` | Airflow image |
+| `sdk/python/**` | Spark image (forge-dq is baked in) |
+| `portal/backend/**` | portal-api image |
+| `portal/frontend/**` | portal-web image |
+| Weekly schedule | Third-party image re-import (base image security patches) |

@@ -1,8 +1,8 @@
 # =============================================================================
 # Forge — Airflow Image Python Requirements
-# Pinned versions for the forgeacr/airflow:2.9.3 image.
+# Pinned versions for the forgeacr/airflow:3.1.8 image.
 #
-# These packages are installed on top of apache/airflow:2.9.3-python3.11.
+# These packages are installed on top of apache/airflow:3.1.8-python3.11.
 # Provider packages are installed with Airflow's official constraints file
 # (see Dockerfile). Non-provider packages are listed here for reference and
 # are installed directly.
@@ -16,51 +16,49 @@
 # =============================================================================
 
 # Kubernetes provider — SparkKubernetesOperator, KubernetesPodOperator
-apache-airflow-providers-cncf-kubernetes==8.4.2
+# Version determined by the Airflow constraints file (constraints-3.1.8/constraints-3.11.txt)
+apache-airflow-providers-cncf-kubernetes
 
-# Azure provider — ADLS hooks, Azure Key Vault secrets backend,
-# AzureContainerInstancesOperator (not used but included for completeness)
-apache-airflow-providers-microsoft-azure==9.0.0
+# Azure provider — ADLS hooks, Azure Key Vault secrets backend
+# Version determined by the Airflow constraints file
+apache-airflow-providers-microsoft-azure
 
 # OpenLineage provider — wraps the openlineage-airflow package into an
 # Airflow-native integration with DAG-level configuration support
-apache-airflow-providers-openlineage==1.10.0
+# Version determined by the Airflow constraints file
+apache-airflow-providers-openlineage
 
 # =============================================================================
 # OpenLineage
 # =============================================================================
 
-# Core OpenLineage Airflow integration — auto-emits lineage for all tasks
-openlineage-airflow==1.18.0
-
-# OpenLineage Python client (transport library used by openlineage-airflow)
-openlineage-python==1.18.0
+# OpenLineage is provided via apache-airflow-providers-openlineage (above).
+# openlineage-airflow is the legacy package superseded by the official provider
+# in Airflow 3.x — do NOT install it separately as it conflicts with the provider.
 
 # =============================================================================
 # Azure SDK
 # =============================================================================
 
 # Azure Workload Identity credential provider
-azure-identity==1.17.1
+# Min 1.24.0 required by azure-kusto-data in the Airflow 3.1.8 base image
+azure-identity>=1.24.0
 
 # Azure Data Lake Storage Gen2 (ADLS) file operations
-azure-storage-file-datalake==12.18.0
+azure-storage-file-datalake>=12.18.0
 
 # Azure Key Vault secrets (used by the Key Vault secrets backend)
-azure-keyvault-secrets==4.8.0
+azure-keyvault-secrets>=4.8.0
 
-# Azure Core (transitive dependency — pinned for reproducibility)
-azure-core==1.31.0
+# Azure Core (transitive dependency)
+azure-core>=1.31.0
 
 # =============================================================================
 # Data processing
 # =============================================================================
 
-# Apache Arrow — used by DQ SDK and azure-storage-file-datalake
-pyarrow==16.1.0
-
-# Pandas — used by DQ SDK and data preview operators
-pandas==2.2.2
+# Apache Arrow and Pandas are already present in the Airflow 3.1.8 base image
+# at versions newer than what we need — no need to pin here.
 
 # =============================================================================
 # HTTP / networking

@@ -237,8 +237,8 @@ Platform Helm values files reference image tags explicitly. To update an image i
 ```yaml
 # infra/helm/compute/spark-connect/values.yaml
 image:
-  repository: forgeacr-prod.azurecr.io/spark
-  tag: "4.1.0-a1b2c3d4"    ← git SHA pinned, updated via PR
+  repository: forgeacr{alias}.azurecr.io/spark
+  tag: "4.1.1-a1b2c3d4"    ← git SHA pinned, updated via PR
 ```
 
 The CI pipeline updates the tag in the values file as part of Stage 3 (build), commits the change back to `main`, and Azure DevOps picks it up. This means the deployed image tag is always visible in Git history — full audit trail.

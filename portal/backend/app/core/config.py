@@ -6,15 +6,15 @@ class Settings(BaseSettings):
     # Platform
     forge_env: str = "dev"
     adls_account: str = "forgeadlsdev"
-    azure_tenant_id: str = "72f988bf-86f1-41af-91ab-2d7cd011db47"
+    azure_tenant_id: str = ""  # injected at runtime via env var or Key Vault
     azure_client_id: str = ""  # workload identity client ID, injected by K8s
-    subscription_id: str = "eaa4a83d-8511-497c-b0bc-40aa5f0deae1"
-    resource_group: str = "rg-forge-platform-prproddu-dev"
+    subscription_id: str = ""  # injected at runtime via env var or Key Vault
+    resource_group: str = ""   # injected at runtime via env var or Key Vault
 
     # Auth
     auth_provider: str = "local"  # "local" | "azure_ad"
     local_admin_user: str = "admin"
-    local_admin_password: str = "admin"  # dev default; override in prod via KV secret LOCAL_ADMIN_PASSWORD
+    local_admin_password: str = "forge-dev-admin"  # dev default; override in prod via KV secret LOCAL_ADMIN_PASSWORD
     jwt_secret: str = "forge-dev-secret-change-in-prod"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480

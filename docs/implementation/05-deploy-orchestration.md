@@ -237,12 +237,12 @@ kubectl create namespace airflow --dry-run=client -o yaml | kubectl apply -f -
 
 # Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install airflow \
-  oci://forgeacr-{env}.azurecr.io/helm/airflow \
+  oci://forgeacr{alias}.azurecr.io/helm/airflow \
   --version 1.15.0 \
   --namespace airflow \
   --values infra/helm/orchestration/airflow/values.yaml \
-  --set images.airflow.repository=forgeacr-{env}.azurecr.io/airflow \
-  --set images.airflow.tag=3.1.0 \
+  --set images.airflow.repository=forgeacr{alias}.azurecr.io/airflow \
+  --set images.airflow.tag=3.1.8 \
   --set data.metadataConnection.host=$(az keyvault secret show --vault-name kv-forge-{env} --name postgres-host --query value -o tsv) \
   --set data.metadataConnection.db=airflow \
   --set data.metadataConnection.user=airflow \
@@ -354,7 +354,7 @@ spec:
       serviceAccountName: portal
       containers:
         - name: portal-api
-          image: forgeacr-{env}.azurecr.io/portal-api:latest
+          image: forgeacr{alias}.azurecr.io/portal-api:latest
           ports:
             - containerPort: 8080
           env:
@@ -395,7 +395,7 @@ spec:
     spec:
       containers:
         - name: portal-web
-          image: forgeacr-{env}.azurecr.io/portal-web:latest
+          image: forgeacr{alias}.azurecr.io/portal-web:latest
           ports:
             - containerPort: 3000
           env:
