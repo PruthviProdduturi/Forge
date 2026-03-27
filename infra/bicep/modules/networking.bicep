@@ -24,13 +24,11 @@ var addressPrefixes = environment == 'dev' ? {
   compute:          '10.1.0.0/16'
   orchestration:    '10.2.0.0/16'
   privateEndpoints: '10.3.0.0/24'
-  appgw:            '10.4.0.0/24'
 } : {
   vnet:             '10.16.0.0/12'
   compute:          '10.17.0.0/16'
   orchestration:    '10.18.0.0/16'
   privateEndpoints: '10.19.0.0/24'
-  appgw:            '10.20.0.0/24'
 }
 
 // ---------------------------------------------------------------------------
@@ -411,109 +409,6 @@ resource nsgPrivateEndpoints 'Microsoft.Network/networkSecurityGroups@2023-11-01
   }
 }
 
-// ---------------------------------------------------------------------------
-// NSG — Application Gateway Subnet
-// ---------------------------------------------------------------------------
-resource nsgAppGw 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
-  name: 'nsg-forge-appgw-${environment}'
-  location: location
-  tags: tags
-  properties: {
-    securityRules: [
-      {
-        name: 'AllowGatewayManagerInbound'
-        properties: {
-          priority: 100
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: 'GatewayManager'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '65200-65535'
-        }
-      }
-      {
-        name: 'AllowVNet443Inbound'
-        properties: {
-          priority: 110
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: 'VirtualNetwork'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'AllowAzureLoadBalancerInbound'
-        properties: {
-          priority: 120
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: 'AzureLoadBalancer'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-      {
-        name: 'DenyAllOtherInbound'
-        properties: {
-          priority: 4096
-          direction: 'Inbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-      {
-        name: 'AllowVNetOutbound'
-        properties: {
-          priority: 100
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: 'VirtualNetwork'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRange: '*'
-        }
-      }
-      {
-        name: 'AllowInternetOutbound443'
-        properties: {
-          priority: 110
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'Internet'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'DenyAllOtherOutbound'
-        properties: {
-          priority: 4096
-          direction: 'Outbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-    ]
-  }
-}
 
 
 // ---------------------------------------------------------------------------
@@ -558,17 +453,6 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
             id: nsgPrivateEndpoints.id
           }
           privateEndpointNetworkPolicies: 'Disabled'
-          privateLinkServiceNetworkPolicies: 'Enabled'
-        }
-      }
-      {
-        name: 'snet-forge-appgw-${environment}'
-        properties: {
-          addressPrefix: addressPrefixes.appgw
-          networkSecurityGroup: {
-            id: nsgAppGw.id
-          }
-          privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
         }
       }
@@ -820,23 +704,6 @@ resource nsgPrivateEndpointsDiagnostics 'Microsoft.Insights/diagnosticSettings@2
   }
 }
 
-resource nsgAppGwDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-nsg-appgw-${environment}'
-  scope: nsgAppGw
-  properties: {
-    workspaceId: platformLaw.id
-    logs: [
-      {
-        category: 'NetworkSecurityGroupEvent'
-        enabled: true
-      }
-      {
-        category: 'NetworkSecurityGroupRuleCounter'
-        enabled: true
-      }
-    ]
-  }
-}
 
 
 // ---------------------------------------------------------------------------
@@ -849,7 +716,6 @@ output subnetIds object = {
   compute: '${vnet.id}/subnets/snet-forge-compute-${environment}'
   orchestration: '${vnet.id}/subnets/snet-forge-orchestration-${environment}'
   privateEndpoints: '${vnet.id}/subnets/snet-forge-private-endpoints-${environment}'
-  appgw: '${vnet.id}/subnets/snet-forge-appgw-${environment}'
 }
 
 output privateDnsZoneIds object = {
