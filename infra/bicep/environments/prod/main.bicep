@@ -83,18 +83,6 @@ var mergedTags = union(tags, {
 })
 
 // ---------------------------------------------------------------------------
-// Microsoft Defender for Containers — subscription-level plan
-// S360: Covers ACR image scanning + AKS runtime threat detection.
-// Deployed at subscription scope (this template's targetScope).
-// ---------------------------------------------------------------------------
-resource defenderForContainers 'Microsoft.Security/pricings@2024-01-01' = {
-  name: 'Containers'
-  properties: {
-    pricingTier: 'Standard'
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Resource Groups
 // ---------------------------------------------------------------------------
 resource rgPlatformRes 'Microsoft.Resources/resourceGroups@2023-07-01' = {
