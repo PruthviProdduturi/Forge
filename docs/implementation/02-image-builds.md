@@ -38,7 +38,6 @@ All images are built using **ACR Tasks** (`az acr build`). The build runs inside
 - No Docker Desktop dependency in CI or on engineer workstations
 - Build runs in Azure — no large image upload over a laptop connection
 - ACR Tasks natively support workload identity (no stored credentials)
-- Defender for Containers scans the image immediately on push
 
 ---
 
@@ -370,18 +369,6 @@ az acr manifest list-metadata \
   --orderby time_desc \
   --output table
 ```
-
-### Confirm Defender scan result
-
-Defender for Containers scans every image on push. Check the result in **Defender for Cloud → Container images** in the Azure portal, or query via CLI:
-
-```bash
-az security assessment list \
-  --query "[?contains(id, '${ACR}')].{name:name, status:status.code}" \
-  --output table
-```
-
-A clean image shows `Healthy`.
 
 ---
 
