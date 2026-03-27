@@ -25,6 +25,8 @@ ARG AZURE_IDENTITY_EXTENSIONS_VERSION=1.1.5
 
 USER root
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Add PostgreSQL JDBC driver
 RUN curl -fsSL \
     "https://jdbc.postgresql.org/download/postgresql-${POSTGRES_JDBC_VERSION}.jar" \
