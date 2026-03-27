@@ -596,7 +596,7 @@ For long-running Trino queries, the Forge TrinoOperator uses the Triggerer (defe
 - Loading DQ rulesets and running the `DQRunner` (which may internally issue Trino queries for content checks or read Delta metadata for volume/freshness checks — all via lightweight HTTP/ADLS calls, not Spark)
 - Updating the metadata catalog table after a successful pipeline run (writing schema, row count, last-refreshed timestamp)
 - Computing the incremental watermark from the DQ results store and writing it to XCom for the downstream transform task to consume
-- Declaring upstream source datasets for ingest jobs using the `forge-lineage` SDK (see [Lineage Architecture](lineage-architecture.md) Section 4)
+- Declaring upstream source datasets for ingest jobs using the `forge-lineage` SDK (see [Lineage Architecture](10-lineage.md) Section 4)
 
 ### EmailOperator
 

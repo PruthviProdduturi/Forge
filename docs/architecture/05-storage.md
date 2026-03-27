@@ -220,7 +220,7 @@ Two restatement modes exist:
 
 Corrections to historical data must **not** silently overwrite a prior version when the correction represents a semantic change. Either publish a new version or a clearly labelled correction layer, with domain governance approval.
 
-See [Restatement Architecture](./restatement-architecture.md) for the full operational flow.
+See [Restatement Architecture](./13-restatement.md) for the full operational flow.
 
 ---
 

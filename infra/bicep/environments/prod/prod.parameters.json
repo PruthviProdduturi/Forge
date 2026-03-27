@@ -8,9 +8,6 @@
     "location": {
       "value": "northcentralus"
     },
-    "subscriptionId": {
-      "value": "REPLACE_WITH_SUBSCRIPTION_ID"
-    },
     "tenantId": {
       "value": "REPLACE_WITH_TENANT_ID"
     },

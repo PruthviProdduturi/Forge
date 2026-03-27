@@ -69,7 +69,7 @@ Infrastructure is Bicep. Platform configuration is Helm. Pipelines are Python DA
                 ▼                         ▼                   ▼
 ┌──────────────────────┐    ┌──────────────────────────────────────────────┐
 │   Compute Cluster    │    │           Orchestration Cluster              │
-│   (AKS Private)      │    │           (AKS Private)                      │
+│   (AKS Public)       │    │           (AKS Public)                       │
 │                      │◄───│                                              │
 │  Spark Operator      │    │  Apache Airflow     Developer Portal         │
 │  Spark Connect*      │    │  DQ Framework                                │
@@ -134,7 +134,7 @@ Each environment (dev, prod) is an independent deployment of the same topology. 
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Why no Spark Connect in prod?** Interactive sessions bypass DQ, lineage, and audit controls. In prod, every Spark execution is scheduled via Airflow, runs through the Spark Operator, emits lineage, and is fully auditable. See [Environment Promotion](architecture/environment-promotion.md) for the full dev→prod workflow.
+**Why no Spark Connect in prod?** Interactive sessions bypass DQ, lineage, and audit controls. In prod, every Spark execution is scheduled via Airflow, runs through the Spark Operator, emits lineage, and is fully auditable. See [Environment Promotion](architecture/14-environment-promotion.md) for the full dev→prod workflow.
 
 ---
 
@@ -161,7 +161,7 @@ The compute cluster provides elastic, scalable execution for batch processing an
 - Query history, performance metrics, and audit signals flow to Azure Monitor
 - Coordinators are always-on; workers autoscale based on query queue depth
 
-→ Full detail: [Compute Architecture](architecture/compute-architecture.md)
+→ Full detail: [Compute Architecture](architecture/06-compute.md)
 
 ---
 
@@ -200,7 +200,7 @@ Rules are managed as YAML in Git — the same PR review and CI validation proces
 
 - OpenLineage events are emitted automatically by Airflow tasks, Spark jobs, and Trino queries — no manual instrumentation for standard pipeline operations
 - Microsoft Purview stores the full lineage graph: upstream source systems → bronze → silver → gold, with dataset versions, column-level flows, and custom facets (DQ summary, compute cost)
-- The full lineage chain from source system (SQL Server, PostgreSQL, REST API) to gold is captured when ingest jobs declare their upstream source as an OpenLineage input — see [Lineage Architecture](architecture/lineage-architecture.md) Section 4 for the upstream source naming convention
+- The full lineage chain from source system (SQL Server, PostgreSQL, REST API) to gold is captured when ingest jobs declare their upstream source as an OpenLineage input — see [Lineage Architecture](architecture/10-lineage.md) Section 4 for the upstream source naming convention
 - Impact analysis: "what breaks if I change this source table or column?" is answerable from Purview's lineage graph or the Developer Portal's Lineage Explorer
 - `id-forge-read-{env}` holds **Purview Data Curator** role on the Purview collection, enabling all emitters (Airflow, Spark, Trino pods) to POST lineage events via workload identity
 
@@ -216,7 +216,7 @@ All telemetry is Azure-native — no self-hosted stack to maintain:
 | Dashboards | Azure Managed Grafana | Job health, DQ rates, Trino perf, infra utilisation |
 | Alerts | Azure Monitor Alerts | Pipeline failures, SLO breaches, DQ failures → Teams |
 
-→ Full detail: [Orchestration Architecture](architecture/orchestration-architecture.md) · [Observability Architecture](architecture/observability-architecture.md)
+→ Full detail: [Orchestration Architecture](architecture/07-orchestration.md) · [Observability Architecture](architecture/08-observability.md)
 
 ---
 
@@ -256,7 +256,7 @@ SOURCE SYSTEMS
 └─────────────────────────────────────────────────────┘
 ```
 
-→ Full detail: [Storage Architecture](architecture/storage-architecture.md)
+→ Full detail: [Storage Architecture](architecture/05-storage.md)
 
 ---
 
@@ -276,28 +276,59 @@ df = spark.read.format("delta") \
 df.show()
 ```
 
-### Phase 2 — Package as a production job
+### Phase 2 — Scaffold a notebook with the Forge SDK
+
+Production jobs are **Jupyter notebooks** (`.ipynb`), not standalone `.py` files. The SDK generates a complete notebook with locked preamble, performance settings, and parameter injection — engineers fill in one section.
+
+```bash
+# Generate a silver notebook scaffold:
+forge generate silver --dataset crm_orders
+# → src/spark/jobs/crm_orders_silver.ipynb
+```
+
+The generated notebook has:
+- **🔒 SDK-locked cells** (preamble, perf settings, params, write, tracker) — not to be edited
+- **✏️ Business logic zone** — the only section engineers modify
 
 ```python
-# compute/spark/jobs/crm_orders_silver.py
-spark = SparkSession.builder.appName("crm-orders-silver").getOrCreate()
-# No .remote() — Spark Operator injects cluster config
+# ✏️ BUSINESS LOGIC — inside the editable zone
+df = (
+    raw
+    .dropDuplicates(["order_id"])
+    .dropna(subset=["order_id", "customer_id"])
+)
 ```
+
+**Performance settings baked in** (all jobs get these automatically):
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `spark.sql.adaptive.enabled` | `true` | AQE: auto-optimises join strategies and partition sizes |
+| `spark.sql.shuffle.partitions` | `48` / `96` | Right-sized for bronze/silver workloads |
+| `spark.databricks.delta.optimizeWrite.enabled` | `true` | Coalesces small files on write |
+| `spark.sql.parquet.vorder.enabled` | `true` | V-Order layout — critical for Trino / BI reads on gold |
+
+**Execution model:** Papermill executes notebooks natively on Spark — no `.py` conversion required. `mainApplicationFile` in the `SparkApplication` spec points to a shared `papermill_runner.py`; the notebook path is passed as the `NOTEBOOK_PATH` environment variable.
+
+**tracker.json:** Every run writes a `tracker.json` to the output path (e.g., `silver/nyc_taxi/trips/_tracker/`). This is the authoritative record that a pipeline partition ran — written irrespective of DQ outcome.
 
 ### Phase 3 — Schedule via Airflow DAG
 
 ```python
-# orchestration/airflow/dags/crm_orders_dag.py
+# examples/orchestration/airflow/dags/transformation/crm_orders_silver_dag.py
 SparkKubernetesOperator(
     task_id="crm_orders_silver",
-    application="abfss://code@adlsforgedev.dfs.core.windows.net/jobs/crm_orders_silver.py",
+    application_file=_SILVER_SPEC,   # SparkApplication YAML inline
     ...
 )
+# SparkApplication spec:
+#   mainApplicationFile: "abfss://code@<account>.dfs.core.windows.net/spark/runners/papermill_runner.py"
+#   env NOTEBOOK_PATH:   "abfss://code@<account>.dfs.core.windows.net/spark/notebooks/crm_orders_silver.ipynb"
 ```
 
 ### Phase 4 — PR → CI gates → dev deploy → prod promotion
 
-→ Full detail: [Developer Experience Guide](guides/developer-experience.md) · [Environment Promotion](architecture/environment-promotion.md)
+→ Full detail: [Developer Experience Guide](guides/developer-experience.md) · [Environment Promotion](architecture/14-environment-promotion.md)
 
 ---
 
@@ -305,28 +336,33 @@ SparkKubernetesOperator(
 
 ### 9.1 Networking
 
-- All AKS clusters have **private API server endpoints** — no public Kubernetes API
-- All PaaS services (ADLS, Key Vault, PostgreSQL, ACR) are accessed via **private endpoints only**
-- No public IP on any data plane resource
-- Ingress to Developer Portal and Azure Managed Grafana via **Azure Application Gateway (WAF v2)** + private DNS
+- All AKS clusters have **public API server endpoints** — secured via AAD RBAC; no local accounts
+- All PaaS services (ADLS, Key Vault, ACR) are accessed via **private endpoints only** — no public data plane
+- Outbound SNAT via pre-created static public IPs (S360 NS2.1.1 ipTag compliant)
 - Calico network policies enforce pod-to-pod traffic rules within each cluster
 
-→ Full detail: [Networking Architecture](architecture/networking-architecture.md)
+→ Full detail: [Networking Architecture](architecture/03-networking.md)
 
 ### 9.2 Identity & Secrets
 
 - **No long-lived credentials** — all service-to-service access via Azure Workload Identity (OIDC federation)
 - **No secrets in environment variables or config maps** — all secrets retrieved from Key Vault at runtime via CSI driver
-- **Three identities per environment** — separate blast radii for write path (Spark), read path (Trino/Airflow/Portal/DQ), and image push (CI/CD). A compromised read-only workload cannot overwrite data or push malicious images.
+- **Five dedicated workload identities per environment** — each workload runs with exactly the permissions it needs; a compromised workload cannot escalate to other workloads' data or keys
 - **Managed identities:**
 
-| Identity | Used by | Permissions |
-|----------|---------|-------------|
-| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob **Data Contributor** (bronze, silver, gold, code, checkpoints) · KV Secrets User |
-| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader · **Purview Data Curator** (Purview collection) |
-| `id-forge-build-{env}` | CI/CD pipeline | AcrPush + AcrPull **only** — zero data access |
+| Identity | Used by | Storage permissions | KV |
+|----------|---------|--------------------|----|
+| `id-forge-spark-{alias}-{env}` | Spark Operator pods | **Data Contributor**: bronze, silver, gold, code, checkpoints | Secrets User |
+| `id-forge-trino-{alias}-{env}` | Trino query pods | **Data Reader**: silver, gold | Secrets User |
+| `id-forge-airflow-{alias}-{env}` | Airflow task pods | **Data Contributor**: bronze · **Data Reader**: code | Secrets User |
+| `id-forge-dq-{alias}-{env}` | DQ framework pods | **Data Reader**: bronze, silver, gold | Secrets User |
+| `id-forge-portal-{alias}-{env}` | Developer Portal API | **Data Reader**: gold | Secrets User |
 
-→ Full detail: [Security (S360)](architecture/security-s360.md)
+Plus 4 AKS infrastructure identities (2× control plane, 2× kubelet) — one set per cluster. See [Infrastructure Overview](architecture/01-overview.md) for the full identity inventory.
+
+All storage role assignments are scoped directly to the individual container (not the storage account), providing container-level least privilege without ABAC conditions.
+
+→ Full detail: [Security (S360)](architecture/04-security-s360.md)
 
 ### 9.3 Data Governance
 
@@ -365,7 +401,7 @@ feature/my-pipeline
 | Bicep infra | CD pipeline `az deployment sub create` | ~20 minutes |
 | Image rebuild | CD pipeline build → scan → push → upgrade | ~30 minutes |
 
-→ Full detail: [CI/CD Pipeline](implementation/06-cicd.md) · [Environment Promotion](architecture/environment-promotion.md)
+→ Full detail: [CI/CD Pipeline](implementation/06-cicd.md) · [Environment Promotion](architecture/14-environment-promotion.md)
 
 ---
 
@@ -386,20 +422,22 @@ feature/my-pipeline
 
 ## 12. Deep-Dive Reference Index
 
-| Topic | Document |
-|-------|---------|
-| Full data flow: source → gold | [End-to-End Flow](architecture/end-to-end-flow.md) |
-| Spark Operator, Spark Connect, Trino | [Compute Architecture](architecture/compute-architecture.md) |
-| Airflow executor, DAG patterns, operators | [Orchestration Architecture](architecture/orchestration-architecture.md) |
-| Bronze/silver/gold layers, partitioning, trackers | [Storage Architecture](architecture/storage-architecture.md) |
-| DQ rule types, YAML format, severity gating | [DQ Framework](architecture/dq-framework.md) |
-| OpenLineage, Microsoft Purview, column-level lineage | [Lineage Architecture](architecture/lineage-architecture.md) |
-| Azure Monitor, Grafana, Log Analytics, SLOs | [Observability Architecture](architecture/observability-architecture.md) |
-| VNets, private endpoints, Calico, DNS | [Networking Architecture](architecture/networking-architecture.md) |
-| Workload identity, Key Vault, RBAC, S360 | [Security (S360)](architecture/security-s360.md) |
-| Dev vs prod, Spark Connect vs Operator, PR flow | [Environment Promotion](architecture/environment-promotion.md) |
-| Restatement, backfill, partition recovery | [Restatement Architecture](architecture/restatement-architecture.md) |
-| Developer Portal API and frontend | [Developer Portal Architecture](architecture/developer-portal-architecture.md) |
-| VS Code setup, Spark Connect, DAG authoring | [Developer Experience Guide](guides/developer-experience.md) |
-| ACR, image builds, cluster provisioning | [Implementation Guide](implementation/00-overview.md) |
-| Component versions, upgrade policy | [Components & Versions](implementation/components-versions.md) |
+| # | Topic | Document |
+|---|-------|---------|
+| 1 | Infrastructure reference — resource groups, clusters, networking, identities | [01-overview](architecture/01-overview.md) |
+| 2 | Resource group inventory — every resource, why it exists | [02-rg-inventory](architecture/02-rg-inventory.md) |
+| 3 | VNets, private endpoints, Calico, DNS | [03-networking](architecture/03-networking.md) |
+| 4 | Workload identity, Key Vault, RBAC, S360 | [04-security-s360](architecture/04-security-s360.md) |
+| 5 | Bronze/silver/gold layers, partitioning, trackers | [05-storage](architecture/05-storage.md) |
+| 6 | Spark Operator, Spark Connect, Trino | [06-compute](architecture/06-compute.md) |
+| 7 | Airflow executor, DAG patterns, operators | [07-orchestration](architecture/07-orchestration.md) |
+| 8 | Azure Monitor, Grafana, Log Analytics, SLOs | [08-observability](architecture/08-observability.md) |
+| 9 | DQ rule types, YAML format, severity gating | [09-dq-framework](architecture/09-dq-framework.md) |
+| 10 | OpenLineage, Microsoft Purview, column-level lineage | [10-lineage](architecture/10-lineage.md) |
+| 11 | Developer Portal API and frontend | [11-developer-portal](architecture/11-developer-portal.md) |
+| 12 | Full data flow: source → gold | [12-end-to-end-flow](architecture/12-end-to-end-flow.md) |
+| 13 | Restatement, backfill, partition recovery | [13-restatement](architecture/13-restatement.md) |
+| 14 | Dev vs prod, Spark Connect vs Operator, PR flow | [14-environment-promotion](architecture/14-environment-promotion.md) |
+| — | VS Code setup, cluster connection, DAG authoring | [developer-experience](guides/developer-experience.md) |
+| — | ACR, image builds, cluster provisioning, Helm deploys | [implementation/](implementation/01-acr-setup.md) |
+| — | Component versions, upgrade policy | [components-versions](implementation/components-versions.md) |

@@ -38,7 +38,7 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 var kvSecretsOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
 var kvCryptoOfficerRoleId  = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '14b46e9e-c2b7-41b4-b07b-48a6ebf60603')
-var kvSecretsUserRoleId    = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e0')
+var kvSecretsUserRoleId    = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 
 // ---------------------------------------------------------------------------
 // Key Vault
@@ -156,16 +156,6 @@ resource portalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
-resource lineageSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.lineage, kvSecretsUserRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsUserRoleId
-    principalId: workloadPrincipalIds.lineage
-    principalType: 'ServicePrincipal'
-    description: 'Lineage workload identity — Key Vault Secrets User'
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Private Endpoint

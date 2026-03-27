@@ -8,16 +8,16 @@
 //   2. Pass the ACR resource ID as containerRegistryId parameter.
 //
 // Resource groups created by this template (dev):
-//   - rg-forge-platform-dev  : VNet, NSGs, DNS zones, Bastion, LAW
-//   - rg-forge-compute-dev   : AKS clusters, ADLS, Key Vault, managed identities
+//   - rg-forge-platform-dev  : VNet, NSGs, DNS zones, LAW
+//   - rg-forge-dev           : AKS clusters (compute + orchestration), ADLS, Key Vault, managed identities
 //
 // Deployment order:
 //   1. Resource Groups (parallel)
 //   2. Networking  (→ rg-forge-platform-dev)
-//   3. AKS clusters (compute + orchestration, parallel, both → rg-forge-compute-dev)
-//   4. Storage      (→ rg-forge-compute-dev, depends on networking)
-//   5. Identity     (→ rg-forge-compute-dev, depends on AKS + storage)
-//   6. Key Vault    (→ rg-forge-compute-dev, depends on networking + identity)
+//   3. AKS clusters (compute + orchestration, parallel, both → rg-forge-dev)
+//   4. Storage      (→ rg-forge-dev, depends on networking)
+//   5. Identity     (→ rg-forge-dev, depends on AKS + storage)
+//   6. Key Vault    (→ rg-forge-dev, depends on networking + identity)
 //
 // Deploy:
 //   az deployment sub create \
@@ -34,13 +34,10 @@ targetScope = 'subscription'
 
 @description('Target environment name.')
 @allowed(['dev', 'prod'])
-param environment string = 'dev'
+param environment string
 
 @description('Primary Azure region for all resources.')
-param location string = 'northcentralus'
-
-@description('Azure subscription ID where resources will be deployed.')
-param subscriptionId string
+param location string
 
 @description('Azure AD tenant ID.')
 param tenantId string
@@ -51,13 +48,52 @@ param adminGroupObjectIds array
 @description('Object ID of the platform administrator AAD group for Key Vault access.')
 param platformAdminGroupObjectId string
 
+@description('Owner alias appended to resource names for personal deployment disambiguation (e.g., prproddu01). Leave empty for shared environments.')
+param ownerAlias string
+
 @description('Number of days to retain Log Analytics data. S360 LM requires minimum 90 days.')
 @minValue(90)
 @maxValue(730)
 param logRetentionDays int = 90
 
-@description('Owner alias appended to top-level resource names for personal/shared deployment disambiguation (e.g., prproddu). Leave empty for shared environments.')
-param ownerAlias string = ''
+// Compute cluster sizing
+@description('VM size for the compute system node pool.')
+param computeSystemVmSize string = 'Standard_D4s_v5'
+
+@description('System pool node count for the compute cluster.')
+param computeSystemNodeCount int = 1
+
+@description('VM size for the Spark node pool.')
+param sparkVmSize string = 'Standard_E8s_v5'
+
+@description('Max autoscale nodes for the Spark pool.')
+param sparkMaxNodes int = 10
+
+@description('VM size for the Trino node pool.')
+param trinoVmSize string = 'Standard_D4s_v5'
+
+@description('Max autoscale nodes for the Trino pool.')
+param trinoMaxNodes int = 5
+
+// Orchestration cluster sizing
+@description('VM size for the orchestration system node pool.')
+param orchSystemVmSize string = 'Standard_D4s_v5'
+
+@description('System pool node count for the orchestration cluster.')
+param orchSystemNodeCount int = 1
+
+@description('VM size for the orchestration worker pool (Airflow, DQ, Portal).')
+param orchWorkerVmSize string = 'Standard_D4s_v5'
+
+@description('Max autoscale nodes for the orchestration worker pool.')
+param orchWorkerMaxNodes int = 5
+
+@description('Kubernetes version to deploy on both AKS clusters.')
+param kubernetesVersion string = '1.32'
+
+@description('Storage account replication type. Use LRS for dev (cost), ZRS or GRS for prod (durability).')
+@allowed(['LRS', 'ZRS', 'GRS', 'GZRS', 'RAGRS', 'RAGZRS'])
+param storageReplicationType string = 'LRS'
 
 @description('Resource tags applied to all resources.')
 param tags object = {}
@@ -77,7 +113,7 @@ var keyVaultName       = 'kv-forge${aliasSuffix}-${environment}'
 
 // Resource group names — 2 RGs per environment
 var rgPlatform = 'rg-forge-platform${aliasSuffix}-${environment}'
-var rgCompute  = 'rg-forge-compute${aliasSuffix}-${environment}'
+var rgCompute  = 'rg-forge${aliasSuffix}-${environment}'
 
 // Common tags merged with required platform tags
 var mergedTags = union(tags, {
@@ -131,39 +167,69 @@ module networking '../../modules/networking.bicep' = {
 // Step 1b: ACR Private Endpoint  (→ rg-forge-platform-dev, depends on networking)
 // Attaches the shared ACR to this environment's VNet via a private endpoint.
 // ---------------------------------------------------------------------------
-module acrPrivateEndpoint '../../modules/acr.bicep' = {
+module acrPrivateEndpoint '../../modules/acr-pe.bicep' = {
   name: 'acr-pe-${environment}'
   scope: resourceGroup(rgPlatform)
-  dependsOn: [rgPlatformRes]
   params: {
-    registryName: acrRegistryName
+    acrResourceId: resourceId(subscription().subscriptionId, acrRgName, 'Microsoft.ContainerRegistry/registries', acrRegistryName)
+    privateEndpointName: 'pe-${acrRegistryName}-${environment}'
     location: location
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
     privateDnsZoneAcrId: networking.outputs.privateDnsZoneIds.acr
-    logAnalyticsWorkspaceId: networking.outputs.platformLogAnalyticsWorkspaceId
-    exportPolicyEnabled: false
     tags: mergedTags
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: AKS Clusters  (→ rg-forge-compute-dev, parallel, depend on networking)
+// Step 2: Log Analytics Workspaces  (→ rg-forge-dev)
+// Must deploy before AKS — AKS preflight calls sharedKeys on the workspace
+// during validation, which fails if the workspace doesn't exist yet.
+// ---------------------------------------------------------------------------
+module computeLaw '../../modules/law.bicep' = {
+  name: 'law-compute-${environment}'
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
+  params: {
+    lawName: 'law-forge-compute${aliasSuffix}-${environment}'
+    location: location
+    logRetentionDays: logRetentionDays
+    tags: mergedTags
+  }
+}
+
+module orchLaw '../../modules/law.bicep' = {
+  name: 'law-orchestration-${environment}'
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
+  params: {
+    lawName: 'law-forge-orchestration${aliasSuffix}-${environment}'
+    location: location
+    logRetentionDays: logRetentionDays
+    tags: mergedTags
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 3: AKS Clusters  (→ rg-forge-dev, parallel, depend on LAWs)
 // ---------------------------------------------------------------------------
 module computeCluster '../../modules/aks.bicep' = {
   name: 'aks-compute-${environment}'
   scope: resourceGroup(rgCompute)
-  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
     ownerAlias: ownerAlias
     clusterPurpose: 'compute'
-    kubernetesVersion: '1.32'
-    sparkVmSize: 'Standard_E8s_v5'     // dev: smaller nodes, prod overrides to E96_v5
+    kubernetesVersion: kubernetesVersion
+    systemVmSize: computeSystemVmSize
+    systemNodeCount: computeSystemNodeCount
+    sparkVmSize: sparkVmSize
+    sparkMaxNodes: sparkMaxNodes
+    trinoVmSize: trinoVmSize
+    trinoMaxNodes: trinoMaxNodes
     subnetId: networking.outputs.subnetIds.compute
-    privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
-    logRetentionDays: logRetentionDays
+    logAnalyticsWorkspaceId: computeLaw.outputs.id
     tags: mergedTags
   }
 }
@@ -171,17 +237,19 @@ module computeCluster '../../modules/aks.bicep' = {
 module orchCluster '../../modules/aks.bicep' = {
   name: 'aks-orchestration-${environment}'
   scope: resourceGroup(rgCompute)
-  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
     ownerAlias: ownerAlias
     clusterPurpose: 'orchestration'
-    kubernetesVersion: '1.32'
+    kubernetesVersion: kubernetesVersion
+    systemVmSize: orchSystemVmSize
+    systemNodeCount: orchSystemNodeCount
+    workerVmSize: orchWorkerVmSize
+    workerMaxNodes: orchWorkerMaxNodes
     subnetId: networking.outputs.subnetIds.orchestration
-    privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
-    logRetentionDays: logRetentionDays
+    logAnalyticsWorkspaceId: orchLaw.outputs.id
     tags: mergedTags
   }
 }
@@ -208,9 +276,31 @@ module acrPullOrch '../../modules/rbac-acr-pull.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Storage  (→ rg-forge-compute-dev, depends on networking + orchCluster LAW)
-// The orchestration cluster LAW is used as the primary diagnostic sink for
-// storage so that operational logs are co-located with Airflow / DQ.
+// AKS Network Contributor (cross-RG: AKS control plane → VNet)
+// Required for AKS to manage load balancers and NIC configurations in the VNet.
+// ---------------------------------------------------------------------------
+module aksComputeNetworkRbac '../../modules/rbac-aks-network.bicep' = {
+  name: 'rbac-aks-network-compute-${environment}'
+  scope: resourceGroup(rgPlatform)
+  params: {
+    vnetName: networking.outputs.vnetName
+    controlPlanePrincipalId: computeCluster.outputs.controlPlanePrincipalId
+  }
+}
+
+module aksOrchNetworkRbac '../../modules/rbac-aks-network.bicep' = {
+  name: 'rbac-aks-network-orch-${environment}'
+  scope: resourceGroup(rgPlatform)
+  params: {
+    vnetName: networking.outputs.vnetName
+    controlPlanePrincipalId: orchCluster.outputs.controlPlanePrincipalId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 4: Storage  (→ rg-forge-dev, depends on networking + orchLaw)
+// The orchestration LAW is used as the primary diagnostic sink for storage
+// so that operational logs are co-located with Airflow / DQ.
 // ---------------------------------------------------------------------------
 module storage '../../modules/storage.bicep' = {
   name: 'storage-${environment}'
@@ -219,17 +309,17 @@ module storage '../../modules/storage.bicep' = {
   params: {
     storageAccountName: storageAccountName
     location: location
-    replicationType: 'ZRS'
+    replicationType: storageReplicationType
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
     privateDnsZoneDfsId: networking.outputs.privateDnsZoneIds.dfs
     privateDnsZoneBlobId: networking.outputs.privateDnsZoneIds.blob
-    logAnalyticsWorkspaceId: orchCluster.outputs.logAnalyticsWorkspaceId
+    logAnalyticsWorkspaceId: orchLaw.outputs.id
     tags: mergedTags
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Identity  (→ rg-forge-compute-dev, depends on AKS clusters + storage)
+// Step 5: Identity  (→ rg-forge-dev, depends on AKS clusters + storage)
 // ---------------------------------------------------------------------------
 module identity '../../modules/identity.bicep' = {
   name: 'identity-${environment}'
@@ -249,14 +339,13 @@ module identity '../../modules/identity.bicep' = {
       airflow: { namespace: 'airflow',    serviceAccountName: 'airflow' }
       dq:      { namespace: 'dq',         serviceAccountName: 'dq-runner' }
       portal:  { namespace: 'portal',     serviceAccountName: 'portal-api' }
-      lineage: { namespace: 'lineage',    serviceAccountName: 'purview' }
     }
     tags: mergedTags
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Key Vault  (→ rg-forge-compute-dev, depends on networking + identity)
+// Step 6: Key Vault  (→ rg-forge-dev, depends on networking + identity)
 // ---------------------------------------------------------------------------
 module keyvault '../../modules/keyvault.bicep' = {
   name: 'keyvault-${environment}'
@@ -275,9 +364,8 @@ module keyvault '../../modules/keyvault.bicep' = {
       airflow: identity.outputs.identities.airflow.principalId
       dq:      identity.outputs.identities.dq.principalId
       portal:  identity.outputs.identities.portal.principalId
-      lineage: identity.outputs.identities.lineage.principalId
     }
-    logAnalyticsWorkspaceId: orchCluster.outputs.logAnalyticsWorkspaceId
+    logAnalyticsWorkspaceId: orchLaw.outputs.id
     tags: mergedTags
   }
 }

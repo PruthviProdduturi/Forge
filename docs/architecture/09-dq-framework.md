@@ -54,7 +54,7 @@ Every layer writes its results to a dedicated Delta table stored alongside the d
 
 **Transparent, not a black box.** Every metric, Z-score, mean, and stddev used to reach a DQ verdict is stored in Delta and visible to any engineer with Trino access. There are no proprietary algorithms or vendor-managed scoring models.
 
-**Git-versioned rules.** DQ rules are YAML files committed to the repository at `orchestration/dq/rules/`. A rule exists only if it is in a committed file. Adding, modifying, or deleting a rule goes through a pull request — it is reviewed, attributed, and revertible. Rules travel through environments (dev → staging → prod) with the pipeline they guard.
+**Git-versioned rules.** DQ rules are YAML files committed to the pipeline repository at `orchestration/dq/rules/{dataset}.yaml` (example rules live under `examples/orchestration/dq/rules/`). A rule exists only if it is in a committed file. Adding, modifying, or deleting a rule goes through a pull request — it is reviewed, attributed, and revertible. Rules travel through environments (dev → staging → prod) with the pipeline they guard.
 
 **Pipeline-native enforcement.** DQ is not a post-hoc report run outside the pipeline. Layer 2 rules are blocking gates: a critical failure causes the Airflow task to fail, which blocks all downstream tasks. DQ is a first-class citizen of the DAG, not an optional side-car.
 
@@ -200,11 +200,11 @@ Layer 2 evaluates engineer-defined rules against the written dataset. Rules are 
 ### YAML Schema Reference
 
 ```yaml
-version: "1"
+version: "v1"                           # required; must be exactly "v1"
 dataset: silver/orders_cleaned          # logical dataset path (used as safe_dataset_name base)
 description: "Quality rules for orders silver layer"
 owner: "data-engineering"
-primary_key: [order_id]                 # informational; used by unique_key rules by default
+tags: [crm, silver, daily]              # optional; used for portal filtering
 
 rules:
   - name: <rule_name>                   # unique within the file; appears in DQ result records
@@ -215,7 +215,7 @@ rules:
 
 anomaly_detection:
   enabled: true | false
-  lookback_days: 30
+  lookback_days: 90                     # rolling window for Z-score baseline
   z_score_threshold: 3.0
 ```
 

@@ -37,11 +37,13 @@ Pod (annotated SA)  →  OIDC token  →  Azure AD  →  short-lived access toke
 
 | Workload Identity | Used by | Permissions |
 |-------------------|---------|-------------|
-| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoints) · KV Secrets User |
-| `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ | Storage Blob Data Reader (silver/gold only) · KV Secrets User · Cost Management Reader · **Purview Data Curator** (Purview collection — enables OpenLineage event emission) |
-| `id-forge-build-{env}` | CI/CD pipeline | AcrPush + AcrPull only — no storage or KV access |
+| `id-forge-spark-{alias}-{env}` | Spark Operator pods | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoints) · KV Secrets User |
+| `id-forge-trino-{alias}-{env}` | Trino query pods | Storage Blob Data Reader (silver/gold) · KV Secrets User |
+| `id-forge-airflow-{alias}-{env}` | Airflow task pods | Storage Blob Data Contributor (bronze) · Data Reader (code) · KV Secrets User |
+| `id-forge-dq-{alias}-{env}` | DQ framework pods | Storage Blob Data Reader (bronze/silver/gold) · KV Secrets User |
+| `id-forge-portal-{alias}-{env}` | Developer Portal API | Storage Blob Data Reader (gold) · KV Secrets User |
 
-Each identity has a distinct blast radius. A compromised read-path workload cannot write data or push images. The build identity has zero access to data or secrets.
+Each identity has a distinct blast radius — a compromised workload cannot escalate to another workload's data or keys. See [Infrastructure Overview](01-overview.md) for the full identity inventory including AKS infrastructure identities.
 
 ---
 
@@ -56,17 +58,12 @@ Internet
   │
   │  HTTPS only
   ▼
-Azure Application Gateway (WAF v2)     ← only public ingress point
-  │
-  │  private routing
-  ├──▶ Developer Portal  (orchestration cluster ingress)
-  └──▶ Azure Managed Grafana  (Azure-hosted service, fronted by Application Gateway)
+AKS API server (public endpoint)       ← secured by AAD RBAC; disableLocalAccounts: true
+Azure Application Gateway (WAF v2)     ← portal/grafana ingress
 
-All other traffic:
-  AKS clusters     → private API server endpoint (no public endpoint)
+All data plane traffic:
   ADLS Gen2        → private endpoint only (public network access: DENIED)
   Key Vault        → private endpoint only (public network access: DENIED)
-  PostgreSQL       → private endpoint only (public network access: DENIED)
   ACR              → private endpoint only (public network access: DENIED)
   Azure Monitor    → private endpoint only
 ```
@@ -227,7 +224,7 @@ Image push to ACR
 | S360 Control | Status | Implementation |
 |-------------|--------|---------------|
 | No long-lived credentials | Compliant | Azure Workload Identity (OIDC) |
-| No public endpoints | Compliant | Private endpoints on all PaaS; private AKS |
+| No public data plane endpoints | Compliant | Private endpoints on all PaaS (ADLS, KV, ACR); AKS API server is public but secured by AAD RBAC |
 | Secrets in managed vault | Compliant | Azure Key Vault + CSI driver |
 | Encryption at rest | Compliant | AES-256, platform + optional CMK |
 | Encryption in transit | Compliant | TLS 1.2+ enforced everywhere |

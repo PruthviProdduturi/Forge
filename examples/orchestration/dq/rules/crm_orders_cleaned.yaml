@@ -11,7 +11,7 @@
 # observability without blocking.
 # =============================================================================
 
-version: "1"
+version: "v1"
 dataset: silver/crm/orders_cleaned
 description: "Quality rules for the CRM orders silver layer"
 owner: "data-engineering"

@@ -8,20 +8,93 @@
 
 ## Table of Contents
 
-1. [VS Code Setup](#1-vs-code-setup)
-2. [Spark Connect Development](#2-spark-connect-development)
-3. [Airflow DAG Development](#3-airflow-dag-development)
-4. [DQ Rule Authoring](#4-dq-rule-authoring)
-5. [End-to-End Pipeline Workflow](#5-end-to-end-pipeline-workflow)
-6. [Git Branching Model](#6-git-branching-model)
-7. [Debugging Guide](#7-debugging-guide)
-8. [Environment Parity](#8-environment-parity)
-9. [forge-cli Reference](#9-forge-cli-reference)
-10. [Restatement & Backfill](#10-restatement--backfill)
+1. [Cluster Access Setup (AAD)](#1-cluster-access-setup-aad)
+2. [VS Code Setup](#2-vs-code-setup)
+3. [Spark Connect Development](#3-spark-connect-development)
+4. [Airflow DAG Development](#4-airflow-dag-development)
+5. [DQ Rule Authoring](#5-dq-rule-authoring)
+6. [End-to-End Pipeline Workflow](#6-end-to-end-pipeline-workflow)
+7. [Git Branching Model](#7-git-branching-model)
+8. [Debugging Guide](#8-debugging-guide)
+9. [Environment Parity](#9-environment-parity)
+10. [forge-cli Reference](#10-forge-cli-reference)
+11. [Restatement & Backfill](#11-restatement--backfill)
 
 ---
 
-## 1. VS Code Setup
+## 1. Cluster Access Setup (AAD)
+
+Both AKS clusters use **AAD-managed RBAC** with local accounts disabled. Every engineer authenticates with their corporate identity — there are no shared kubeconfig certificates.
+
+### Prerequisites
+
+```bash
+# Azure CLI
+az --version  # 2.50+
+
+# kubelogin — converts kubeconfig to use AAD token
+winget install Microsoft.Azure.Kubelogin
+# or: az aks install-cli
+```
+
+### One-time setup per cluster
+
+Run once per machine. Tokens are cached automatically after first login.
+
+```bash
+# 1. Pull kubeconfig for both clusters
+az aks get-credentials \
+  --resource-group rg-forge-prproddu-dev \
+  --name aks-forge-compute-prproddu-dev \
+  --context forge-compute-dev
+
+az aks get-credentials \
+  --resource-group rg-forge-prproddu-dev \
+  --name aks-forge-orchestration-prproddu-dev \
+  --context forge-orch-dev
+
+# 2. Convert kubeconfig to use AAD auth (kubelogin)
+kubelogin convert-kubeconfig -l azurecli
+
+# 3. Verify — this will trigger an AAD browser login on first run
+kubectl get nodes --context forge-compute-dev
+kubectl get nodes --context forge-orch-dev
+```
+
+### Switching between clusters
+
+```bash
+kubectl config use-context forge-compute-dev
+kubectl config use-context forge-orch-dev
+
+# Or pass context inline
+kubectl get pods -n spark-jobs --context forge-compute-dev
+```
+
+### Token refresh
+
+AAD tokens expire after ~1 hour. `kubelogin` refreshes them automatically using your `az login` session. If your az session expires, re-authenticate:
+
+```bash
+az login
+# No need to re-run get-credentials or convert-kubeconfig
+```
+
+### Access levels
+
+Access is granted by Azure role assignment on the cluster resource. Your access level depends on which role your AAD account has been assigned:
+
+| Role | What you can do |
+|---|---|
+| `AKS RBAC Cluster Admin` | Full access — platform team only |
+| `AKS RBAC Writer` | Deploy to assigned namespaces |
+| `AKS RBAC Reader` | Read-only `kubectl get/describe` |
+
+Contact the platform team to request access if `kubectl get nodes` returns a 403.
+
+---
+
+## 2. VS Code Setup
 
 ### Recommended Extensions
 
@@ -1907,4 +1980,4 @@ The portal's **Datasets → [dataset] → Restatements tab** shows the same hist
 | Bronze | Bronze has no trackers. To re-ingest bronze data, re-deliver from the source system. |
 | Cancellation | An in-progress restatement can be cancelled. Completed partitions keep their new data; remaining partitions will be reprocessed on the next regular Airflow run. |
 
-See [Restatement Architecture](../architecture/restatement-architecture.md) for the full technical design.
+See [Restatement Architecture](../architecture/13-restatement.md) for the full technical design.

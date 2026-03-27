@@ -40,7 +40,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-04-01' = {
   tags: tags
   kind: 'StorageV2'
   sku: {
-    name: replicationType
+    name: 'Standard_${replicationType}'
   }
   properties: {
     isHnsEnabled: true
@@ -81,22 +81,12 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-04-01'
   parent: storageAccount
   name: 'default'
   properties: {
-    deleteRetentionPolicy: {
-      enabled: true
-      days: 90
-    }
+    // ADLS Gen2 (HNS=true) does not support blob versioning, change feed,
+    // blob soft delete, or restore policy — only container soft delete is supported.
     containerDeleteRetentionPolicy: {
       enabled: true
       days: 90
     }
-    isVersioningEnabled: true
-    changeFeed: {
-      enabled: true
-    }
-    restorePolicy: {
-      enabled: false
-    }
-    automaticSnapshotPolicyEnabled: false
     cors: {
       corsRules: []
     }
@@ -118,23 +108,6 @@ resource containerBronze 'Microsoft.Storage/storageAccounts/blobServices/contain
   }
 }
 
-// ---------------------------------------------------------------------------
-// Immutability Policy — Bronze Container (WORM / append-only)
-// S360: Raw ingestion data must be immutable after write.
-// allowProtectedAppendWrites permits Delta Lake append operations while
-// preventing overwrites and premature deletes.
-// Policy is Unlocked so admins can adjust the period; switch to Locked
-// after initial validation if regulations require it.
-// ---------------------------------------------------------------------------
-resource bronzeImmutabilityPolicy 'Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies@2023-04-01' = {
-  parent: containerBronze
-  name: 'default'
-  properties: {
-    immutabilityPeriodSinceCreationInDays: 1
-    allowProtectedAppendWrites: true
-    allowProtectedAppendWritesAll: false
-  }
-}
 
 resource containerSilver 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' = {
   parent: blobService

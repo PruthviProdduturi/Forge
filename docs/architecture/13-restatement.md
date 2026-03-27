@@ -24,7 +24,7 @@ Two modes exist. Choose based on whether the correction changes the semantic con
 | **Same-version restatement** | Bug fix, corrected source data — schema and semantics unchanged | Delete trackers → trigger Airflow backfill → overwrite partitions in-place. Delta Lake time travel preserves prior state for the configured log retention window. |
 | **New version** | Schema change, semantic change, grain change, or any correction where existing consumers must explicitly migrate | Publish `vN+1` alongside `vN`. Old version continues serving during the 90–180 day deprecation window. Coordinate consumer migrations before retiring `vN`. |
 
-Corrections to historical data must **not** silently overwrite a prior version when the correction changes the contract. In that case a new version is required. See [Storage Architecture — Versioning](./storage-architecture.md#3-data-asset-versioning) for the full versioning rules.
+Corrections to historical data must **not** silently overwrite a prior version when the correction changes the contract. In that case a new version is required. See [Storage Architecture — Versioning](./05-storage.md#3-data-asset-versioning) for the full versioning rules.
 
 Restatement is a first-class operation in Forge. It is triggered from the **Developer Portal**, tracked in the **Restatement Registry**, and fully observable in **Azure Monitor / Grafana**.
 
@@ -54,7 +54,7 @@ silver/
 
 ### 2.2 Tracker Schema
 
-The canonical tracker file schema — all fields, types, and descriptions — is defined in [Storage Architecture §5.3](storage-architecture.md#53-tracker-file-schema).
+The canonical tracker file schema — all fields, types, and descriptions — is defined in [Storage Architecture §5.3](05-storage.md#53-tracker-file-schema).
 
 The `restatement_id` field is the key field for this document: it is `null` on normal writes and set to the UUID of the originating restatement request when the partition was produced by a restatement run. This is how the Restatement Registry identifies which partitions have been corrected and whether a restatement is still in progress.
 

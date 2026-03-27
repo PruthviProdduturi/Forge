@@ -30,7 +30,6 @@ param namespaces object = {
   airflow: { namespace: 'airflow', serviceAccountName: 'airflow' }
   dq: { namespace: 'dq', serviceAccountName: 'dq-runner' }
   portal: { namespace: 'portal', serviceAccountName: 'portal-api' }
-  lineage: { namespace: 'lineage', serviceAccountName: 'purview' }
 }
 
 @description('Resource tags to apply to all resources.')
@@ -41,20 +40,47 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 var storageBlobDataReaderRoleId      = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
-var kvSecretsUserRoleId              = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e0')
-
-// ---------------------------------------------------------------------------
-// Helper: container scope builder
-// ---------------------------------------------------------------------------
-var storageContainerBase = '${storageAccountId}/blobServices/default/containers'
+var kvSecretsUserRoleId              = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 
 // ---------------------------------------------------------------------------
 // Existing resource references
-// S360: Role assignments are scoped directly to the resource rather
-// than the resource group, minimising blast radius per least-privilege.
+// S360: Role assignments are scoped directly to each container rather
+// than the storage account, providing least-privilege without ABAC conditions.
+// This eliminates ABAC condition management and avoids RoleAssignmentExists
+// conflicts caused by immutable role assignment updates across deployments.
 // ---------------------------------------------------------------------------
 resource storageAccountRef 'Microsoft.Storage/storageAccounts@2023-04-01' existing = {
   name: last(split(storageAccountId, '/'))
+}
+
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-04-01' existing = {
+  parent: storageAccountRef
+  name: 'default'
+}
+
+resource cBronze 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
+  parent: blobService
+  name: 'bronze'
+}
+
+resource cSilver 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
+  parent: blobService
+  name: 'silver'
+}
+
+resource cGold 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
+  parent: blobService
+  name: 'gold'
+}
+
+resource cCode 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
+  parent: blobService
+  name: 'code'
+}
+
+resource cCheckpoints 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
+  parent: blobService
+  name: 'checkpoints'
 }
 
 resource keyVaultRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (keyVaultId != '') {
@@ -82,56 +108,61 @@ resource fcSparkCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federa
 
 // Spark runs on the compute cluster only; no orchestration federated credential needed
 
-// RBAC — spark: Contributor on bronze, silver, code, checkpoints
+// RBAC — spark: Contributor on bronze, silver, gold, code, checkpoints
+// Spark produces all medallion layers (bronze→silver→gold transformations).
+// Scoped directly to each container — no ABAC conditions required.
 resource sparkBronzeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idSpark.id, storageBlobDataContributorRoleId, '${storageContainerBase}/bronze')
-  scope: storageAccountRef
+  name: guid(idSpark.id, storageBlobDataContributorRoleId, cBronze.id)
+  scope: cBronze
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Spark — Storage Blob Data Contributor on bronze'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/move/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/runAsSuperUser/action\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'bronze\'))'
   }
 }
 
 resource sparkSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idSpark.id, storageBlobDataContributorRoleId, '${storageContainerBase}/silver')
-  scope: storageAccountRef
+  name: guid(idSpark.id, storageBlobDataContributorRoleId, cSilver.id)
+  scope: cSilver
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Spark — Storage Blob Data Contributor on silver'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/move/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/runAsSuperUser/action\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'silver\'))'
   }
 }
 
 resource sparkCodeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idSpark.id, storageBlobDataContributorRoleId, '${storageContainerBase}/code')
-  scope: storageAccountRef
+  name: guid(idSpark.id, storageBlobDataContributorRoleId, cCode.id)
+  scope: cCode
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Spark — Storage Blob Data Contributor on code'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/move/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/runAsSuperUser/action\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'code\'))'
+  }
+}
+
+resource sparkGoldContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idSpark.id, storageBlobDataContributorRoleId, cGold.id)
+  scope: cGold
+  properties: {
+    roleDefinitionId: storageBlobDataContributorRoleId
+    principalId: idSpark.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Spark — Storage Blob Data Contributor on gold'
   }
 }
 
 resource sparkCheckpointsContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idSpark.id, storageBlobDataContributorRoleId, '${storageContainerBase}/checkpoints')
-  scope: storageAccountRef
+  name: guid(idSpark.id, storageBlobDataContributorRoleId, cCheckpoints.id)
+  scope: cCheckpoints
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idSpark.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Spark — Storage Blob Data Contributor on checkpoints'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/move/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/runAsSuperUser/action\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'checkpoints\'))'
   }
 }
 
@@ -156,28 +187,24 @@ resource fcTrinoCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federa
 
 // RBAC — trino: Reader on silver, gold
 resource trinoSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idTrino.id, storageBlobDataReaderRoleId, '${storageContainerBase}/silver')
-  scope: storageAccountRef
+  name: guid(idTrino.id, storageBlobDataReaderRoleId, cSilver.id)
+  scope: cSilver
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idTrino.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Trino — Storage Blob Data Reader on silver'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'silver\'))'
   }
 }
 
 resource trinoGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idTrino.id, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: storageAccountRef
+  name: guid(idTrino.id, storageBlobDataReaderRoleId, cGold.id)
+  scope: cGold
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idTrino.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Trino — Storage Blob Data Reader on gold'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'gold\'))'
   }
 }
 
@@ -203,6 +230,7 @@ resource fcAirflowCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/fede
 resource fcAirflowOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
   parent: idAirflow
   name: 'fc-airflow-orchestration-${environment}'
+  dependsOn: [fcAirflowCompute]  // Azure requires serial writes per identity
   properties: {
     issuer: orchestrationOidcIssuerUrl
     subject: 'system:serviceaccount:${namespaces.airflow.namespace}:${namespaces.airflow.serviceAccountName}'
@@ -212,15 +240,13 @@ resource fcAirflowOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentitie
 
 // RBAC — airflow: Reader on code
 resource airflowCodeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idAirflow.id, storageBlobDataReaderRoleId, '${storageContainerBase}/code')
-  scope: storageAccountRef
+  name: guid(idAirflow.id, storageBlobDataReaderRoleId, cCode.id)
+  scope: cCode
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idAirflow.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Airflow — Storage Blob Data Reader on code'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'code\'))'
   }
 }
 
@@ -246,6 +272,7 @@ resource fcDqCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federated
 resource fcDqOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
   parent: idDq
   name: 'fc-dq-orchestration-${environment}'
+  dependsOn: [fcDqCompute]
   properties: {
     issuer: orchestrationOidcIssuerUrl
     subject: 'system:serviceaccount:${namespaces.dq.namespace}:${namespaces.dq.serviceAccountName}'
@@ -255,41 +282,35 @@ resource fcDqOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/fed
 
 // RBAC — dq: Contributor on silver; Reader on bronze, gold
 resource dqSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idDq.id, storageBlobDataContributorRoleId, '${storageContainerBase}/silver')
-  scope: storageAccountRef
+  name: guid(idDq.id, storageBlobDataContributorRoleId, cSilver.id)
+  scope: cSilver
   properties: {
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idDq.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'DQ — Storage Blob Data Contributor on silver'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/write\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/delete\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/add/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/move/action\'}) AND !(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/runAsSuperUser/action\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'silver\'))'
   }
 }
 
 resource dqBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idDq.id, storageBlobDataReaderRoleId, '${storageContainerBase}/bronze')
-  scope: storageAccountRef
+  name: guid(idDq.id, storageBlobDataReaderRoleId, cBronze.id)
+  scope: cBronze
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idDq.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'DQ — Storage Blob Data Reader on bronze'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'bronze\'))'
   }
 }
 
 resource dqGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idDq.id, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: storageAccountRef
+  name: guid(idDq.id, storageBlobDataReaderRoleId, cGold.id)
+  scope: cGold
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idDq.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'DQ — Storage Blob Data Reader on gold'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'gold\'))'
   }
 }
 
@@ -315,6 +336,7 @@ resource fcPortalCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/feder
 resource fcPortalOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
   parent: idPortal
   name: 'fc-portal-orchestration-${environment}'
+  dependsOn: [fcPortalCompute]
   properties: {
     issuer: orchestrationOidcIssuerUrl
     subject: 'system:serviceaccount:${namespaces.portal.namespace}:${namespaces.portal.serviceAccountName}'
@@ -324,86 +346,16 @@ resource fcPortalOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities
 
 // RBAC — portal: Reader on gold
 resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idPortal.id, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: storageAccountRef
+  name: guid(idPortal.id, storageBlobDataReaderRoleId, cGold.id)
+  scope: cGold
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idPortal.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Portal — Storage Blob Data Reader on gold'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'gold\'))'
   }
 }
 
-// ---------------------------------------------------------------------------
-// Managed Identity — lineage (Marquez)
-// ---------------------------------------------------------------------------
-resource idLineage 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-lineage-${environment}'
-  location: location
-  tags: tags
-}
-
-resource fcLineageCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
-  parent: idLineage
-  name: 'fc-lineage-compute-${environment}'
-  properties: {
-    issuer: computeOidcIssuerUrl
-    subject: 'system:serviceaccount:${namespaces.lineage.namespace}:${namespaces.lineage.serviceAccountName}'
-    audiences: ['api://AzureADTokenExchange']
-  }
-}
-
-resource fcLineageOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
-  parent: idLineage
-  name: 'fc-lineage-orchestration-${environment}'
-  properties: {
-    issuer: orchestrationOidcIssuerUrl
-    subject: 'system:serviceaccount:${namespaces.lineage.namespace}:${namespaces.lineage.serviceAccountName}'
-    audiences: ['api://AzureADTokenExchange']
-  }
-}
-
-// RBAC — lineage: Reader on bronze, silver, gold
-resource lineageBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idLineage.id, storageBlobDataReaderRoleId, '${storageContainerBase}/bronze')
-  scope: storageAccountRef
-  properties: {
-    roleDefinitionId: storageBlobDataReaderRoleId
-    principalId: idLineage.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'Lineage — Storage Blob Data Reader on bronze'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'bronze\'))'
-  }
-}
-
-resource lineageSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idLineage.id, storageBlobDataReaderRoleId, '${storageContainerBase}/silver')
-  scope: storageAccountRef
-  properties: {
-    roleDefinitionId: storageBlobDataReaderRoleId
-    principalId: idLineage.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'Lineage — Storage Blob Data Reader on silver'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'silver\'))'
-  }
-}
-
-resource lineageGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idLineage.id, storageBlobDataReaderRoleId, '${storageContainerBase}/gold')
-  scope: storageAccountRef
-  properties: {
-    roleDefinitionId: storageBlobDataReaderRoleId
-    principalId: idLineage.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'Lineage — Storage Blob Data Reader on gold'
-    conditionVersion: '2.0'
-    condition: '((!(ActionMatches{\'Microsoft.Storage/storageAccounts/blobServices/containers/blobs/read\'})) OR (@Resource[Microsoft.Storage/storageAccounts/blobServices/containers:name] StringEquals \'gold\'))'
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Key Vault role assignments — conditional on keyVaultId being provided
@@ -464,17 +416,6 @@ resource kvPortalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
-resource kvLineageSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
-  name: guid(idLineage.id, kvSecretsUserRoleId, keyVaultId)
-  scope: keyVaultRef
-  properties: {
-    roleDefinitionId: kvSecretsUserRoleId
-    principalId: idLineage.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'Lineage — Key Vault Secrets User'
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
@@ -503,10 +444,5 @@ output identities object = {
     id: idPortal.id
     clientId: idPortal.properties.clientId
     principalId: idPortal.properties.principalId
-  }
-  lineage: {
-    id: idLineage.id
-    clientId: idLineage.properties.clientId
-    principalId: idLineage.properties.principalId
   }
 }

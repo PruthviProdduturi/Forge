@@ -39,9 +39,6 @@ param environment string = 'prod'
 @description('Primary Azure region for all resources.')
 param location string = 'northcentralus'
 
-@description('Azure subscription ID where resources will be deployed.')
-param subscriptionId string
-
 @description('Azure AD tenant ID.')
 param tenantId string
 
@@ -129,29 +126,55 @@ module networking '../../modules/networking.bicep' = {
 // ---------------------------------------------------------------------------
 // Step 1b: ACR Private Endpoint  (→ rg-forge-platform-prod, depends on networking)
 // ---------------------------------------------------------------------------
-module acrPrivateEndpoint '../../modules/acr.bicep' = {
+module acrPrivateEndpoint '../../modules/acr-pe.bicep' = {
   name: 'acr-pe-${environment}'
   scope: resourceGroup(rgPlatform)
-  dependsOn: [rgPlatformRes]
   params: {
-    registryName: acrRegistryName
+    acrResourceId: resourceId(subscription().subscriptionId, acrRgName, 'Microsoft.ContainerRegistry/registries', acrRegistryName)
+    privateEndpointName: 'pe-${acrRegistryName}-${environment}'
     location: location
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
     privateDnsZoneAcrId: networking.outputs.privateDnsZoneIds.acr
-    logAnalyticsWorkspaceId: networking.outputs.platformLogAnalyticsWorkspaceId
-    exportPolicyEnabled: false
     tags: mergedTags
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 2: AKS Clusters  (→ rg-forge-compute-prod, parallel, depend on networking)
+// Step 2: Log Analytics Workspaces  (→ rg-forge-compute-prod)
+// Must deploy before AKS — AKS preflight calls sharedKeys on the workspace
+// during validation, which fails if the workspace doesn't exist yet.
+// ---------------------------------------------------------------------------
+module computeLaw '../../modules/law.bicep' = {
+  name: 'law-compute-${environment}'
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
+  params: {
+    lawName: 'law-forge-compute${aliasSuffix}-${environment}'
+    location: location
+    logRetentionDays: logRetentionDays
+    tags: mergedTags
+  }
+}
+
+module orchLaw '../../modules/law.bicep' = {
+  name: 'law-orchestration-${environment}'
+  scope: resourceGroup(rgCompute)
+  dependsOn: [rgComputeRes]
+  params: {
+    lawName: 'law-forge-orchestration${aliasSuffix}-${environment}'
+    location: location
+    logRetentionDays: logRetentionDays
+    tags: mergedTags
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 3: AKS Clusters  (→ rg-forge-compute-prod, parallel, depend on LAWs)
 // Prod uses larger VM SKUs and higher min/max counts than dev.
 // ---------------------------------------------------------------------------
 module computeCluster '../../modules/aks.bicep' = {
   name: 'aks-compute-${environment}'
   scope: resourceGroup(rgCompute)
-  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
@@ -162,7 +185,7 @@ module computeCluster '../../modules/aks.bicep' = {
     subnetId: networking.outputs.subnetIds.compute
     privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
-    logRetentionDays: logRetentionDays
+    logAnalyticsWorkspaceId: computeLaw.outputs.id
     tags: mergedTags
   }
 }
@@ -170,7 +193,6 @@ module computeCluster '../../modules/aks.bicep' = {
 module orchCluster '../../modules/aks.bicep' = {
   name: 'aks-orchestration-${environment}'
   scope: resourceGroup(rgCompute)
-  dependsOn: [rgComputeRes]
   params: {
     environment: environment
     location: location
@@ -180,7 +202,7 @@ module orchCluster '../../modules/aks.bicep' = {
     subnetId: networking.outputs.subnetIds.orchestration
     privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
-    logRetentionDays: logRetentionDays
+    logAnalyticsWorkspaceId: orchLaw.outputs.id
     tags: mergedTags
   }
 }
@@ -207,7 +229,29 @@ module acrPullOrch '../../modules/rbac-acr-pull.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Step 3: Storage  (→ rg-forge-compute-prod, GZRS for cross-zone + cross-region)
+// AKS Network Contributor (cross-RG: AKS control plane → VNet)
+// Required for AKS to manage load balancers and NIC configurations in the VNet.
+// ---------------------------------------------------------------------------
+module aksComputeNetworkRbac '../../modules/rbac-aks-network.bicep' = {
+  name: 'rbac-aks-network-compute-${environment}'
+  scope: resourceGroup(rgPlatform)
+  params: {
+    vnetName: networking.outputs.vnetName
+    controlPlanePrincipalId: computeCluster.outputs.controlPlanePrincipalId
+  }
+}
+
+module aksOrchNetworkRbac '../../modules/rbac-aks-network.bicep' = {
+  name: 'rbac-aks-network-orch-${environment}'
+  scope: resourceGroup(rgPlatform)
+  params: {
+    vnetName: networking.outputs.vnetName
+    controlPlanePrincipalId: orchCluster.outputs.controlPlanePrincipalId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step 4: Storage  (→ rg-forge-compute-prod, GZRS for cross-zone + cross-region)
 // ---------------------------------------------------------------------------
 module storage '../../modules/storage.bicep' = {
   name: 'storage-${environment}'
@@ -220,13 +264,13 @@ module storage '../../modules/storage.bicep' = {
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
     privateDnsZoneDfsId: networking.outputs.privateDnsZoneIds.dfs
     privateDnsZoneBlobId: networking.outputs.privateDnsZoneIds.blob
-    logAnalyticsWorkspaceId: orchCluster.outputs.logAnalyticsWorkspaceId
+    logAnalyticsWorkspaceId: orchLaw.outputs.id
     tags: mergedTags
   }
 }
 
 // ---------------------------------------------------------------------------
-// Step 4: Identity  (→ rg-forge-compute-prod, depends on AKS clusters + storage)
+// Step 5: Identity  (→ rg-forge-compute-prod, depends on AKS clusters + storage)
 // ---------------------------------------------------------------------------
 module identity '../../modules/identity.bicep' = {
   name: 'identity-${environment}'
@@ -254,7 +298,7 @@ module identity '../../modules/identity.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
-// Step 5: Key Vault  (→ rg-forge-compute-prod, depends on networking + identity)
+// Step 6: Key Vault  (→ rg-forge-compute-prod, depends on networking + identity)
 // ---------------------------------------------------------------------------
 module keyvault '../../modules/keyvault.bicep' = {
   name: 'keyvault-${environment}'
@@ -275,7 +319,7 @@ module keyvault '../../modules/keyvault.bicep' = {
       portal:  identity.outputs.identities.portal.principalId
       lineage: identity.outputs.identities.lineage.principalId
     }
-    logAnalyticsWorkspaceId: orchCluster.outputs.logAnalyticsWorkspaceId
+    logAnalyticsWorkspaceId: orchLaw.outputs.id
     tags: mergedTags
   }
 }

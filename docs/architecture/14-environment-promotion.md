@@ -345,4 +345,4 @@ If you change a `Dockerfile` (Spark base image, Airflow base image, portal image
 | Bad Spark job logic | Revert the commit → CD pipeline re-uploads previous job file to ADLS; next Airflow run uses it |
 | Bad image deployed to prod | `helm upgrade` with previous image tag (`{version}-{previous-sha}`) — no Git change needed |
 | Bad infra change (Bicep) | Re-run `az deployment sub create` with the previous parameter file from Git history |
-| Data written to wrong partition | Restatement job — see [Restatement Architecture](restatement-architecture.md) |
+| Data written to wrong partition | Restatement job — see [Restatement Architecture](13-restatement.md) |

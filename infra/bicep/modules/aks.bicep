@@ -2,6 +2,9 @@
 // Forge Data Platform — AKS Module
 // Provisions a private AKS cluster with workload identity, OIDC issuer,
 // diagnostics, and purpose-specific node pools.
+// The Log Analytics Workspace must be deployed BEFORE this module via the
+// law.bicep module, as AKS preflight validation calls sharedKeys on the
+// workspace during deployment validation.
 // =============================================================================
 
 @description('Target environment name (dev or prod).')
@@ -21,22 +24,38 @@ param kubernetesVersion string = '1.32'
 @description('Resource ID of the subnet to place the AKS nodes in.')
 param subnetId string
 
-@description('Resource ID of the private DNS zone for AKS private cluster. Empty string uses system-managed zone.')
-param privateDnsZoneId string = ''
-
 @description('AAD group object IDs to grant cluster-admin access via Azure RBAC.')
 param adminGroupObjectIds array
 
-@description('Number of days to retain Log Analytics data. S360 LM requires minimum 90 days.')
-@minValue(90)
-@maxValue(730)
-param logRetentionDays int = 90
+@description('Resource ID of the Log Analytics workspace for OMS addon, Defender, and diagnostics. Must exist before this module deploys.')
+param logAnalyticsWorkspaceId string
 
 @description('Owner alias appended to resource names for personal/shared deployment disambiguation (e.g., prproddu). Leave empty for shared environments.')
 param ownerAlias string = ''
 
-@description('VM size for the Spark node pool. E96_v5 for prod, E8s_v5 for dev.')
+@description('VM size for the system node pool.')
+param systemVmSize string = 'Standard_D4s_v5'
+
+@description('System node pool initial and minimum node count.')
+param systemNodeCount int = 1
+
+@description('VM size for the Spark node pool (compute cluster only).')
 param sparkVmSize string = 'Standard_E8s_v5'
+
+@description('Maximum autoscale node count for the Spark pool (compute cluster only).')
+param sparkMaxNodes int = 10
+
+@description('VM size for the Trino node pool (compute cluster only).')
+param trinoVmSize string = 'Standard_D4s_v5'
+
+@description('Maximum autoscale node count for the Trino pool (compute cluster only).')
+param trinoMaxNodes int = 5
+
+@description('VM size for the orchestration worker pool.')
+param workerVmSize string = 'Standard_D4s_v5'
+
+@description('Maximum autoscale node count for the orchestration worker pool.')
+param workerMaxNodes int = 5
 
 @description('Resource tags to apply to all resources.')
 param tags object = {}
@@ -45,35 +64,41 @@ param tags object = {}
 // Derived variables
 // ---------------------------------------------------------------------------
 var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
+var purposeShort = clusterPurpose == 'orchestration' ? 'orch' : clusterPurpose
 var clusterName = 'aks-forge-${clusterPurpose}${aliasSuffix}-${environment}'
 var kubeletIdentityName = 'id-aks-kubelet-${clusterPurpose}${aliasSuffix}-${environment}'
-var lawName = 'law-forge-${clusterPurpose}${aliasSuffix}-${environment}'
+// Explicit node RG name — AKS auto-generates MC_{rg}_{cluster}_{region} which
+// can exceed 80 chars. rg-mc-{purpose}-{alias}-{env} stays well under the limit.
+var nodeResourceGroupName = 'rg-mc-${purposeShort}${aliasSuffix}-${environment}'
 
 // Network CIDRs differ per cluster to avoid overlap
 var podCidr = clusterPurpose == 'compute' ? '10.100.0.0/16' : '10.101.0.0/16'
 var serviceCidr = clusterPurpose == 'compute' ? '10.200.0.0/16' : '10.201.0.0/16'
 var dnsServiceIP = clusterPurpose == 'compute' ? '10.200.0.10' : '10.201.0.10'
 
-// Resolve private DNS zone: 'system' tells AKS to auto-manage the zone
-var resolvedPrivateDnsZone = privateDnsZoneId == '' ? 'system' : privateDnsZoneId
 
 // ---------------------------------------------------------------------------
-// Log Analytics Workspace
+// Outbound public IP for AKS load balancer (SNAT egress)
+// Pre-created so we control ipTags — required for S360 NS2.1.1 compliance.
+// ipTags classify the IP as /NonProd (dev) or /Prod (prod) for Microsoft's
+// service tag system. AKS-auto-created IPs cannot have ipTags set post hoc.
 // ---------------------------------------------------------------------------
-resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: lawName
+resource outboundPublicIp 'Microsoft.Network/publicIPAddresses@2023-06-01' = {
+  name: 'pip-${clusterName}-outbound'
   location: location
   tags: tags
+  sku: {
+    name: 'Standard'
+    tier: 'Regional'
+  }
   properties: {
-    sku: {
-      name: 'PerGB2018'
-    }
-    retentionInDays: logRetentionDays
-    features: {
-      enableLogAccessUsingOnlyResourcePermissions: true
-    }
-    publicNetworkAccessForIngestion: 'Disabled'
-    publicNetworkAccessForQuery: 'Disabled'
+    publicIPAllocationMethod: 'Static'
+    ipTags: [
+      {
+        ipTagType: 'FirstPartyUsage'
+        tag: environment == 'prod' ? '/Prod' : '/NonProd'
+      }
+    ]
   }
 }
 
@@ -91,6 +116,20 @@ resource aksControlPlaneIdentity 'Microsoft.ManagedIdentity/userAssignedIdentiti
   name: 'id-aks-controlplane-${clusterPurpose}${aliasSuffix}-${environment}'
   location: location
   tags: tags
+}
+
+// Control plane identity must have Managed Identity Operator on the kubelet
+// identity so AKS can assign it to nodes during cluster creation.
+var managedIdentityOperatorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'f1a07417-d97a-45cb-824c-7a7467783830')
+
+resource controlPlaneKubeletRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(aksControlPlaneIdentity.id, managedIdentityOperatorRoleId, kubeletIdentity.id)
+  scope: kubeletIdentity
+  properties: {
+    roleDefinitionId: managedIdentityOperatorRoleId
+    principalId: aksControlPlaneIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +152,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
   properties: {
     dnsPrefix: 'forge-${clusterPurpose}-${environment}'
     kubernetesVersion: kubernetesVersion
+    nodeResourceGroup: nodeResourceGroupName
     disableLocalAccounts: true
 
     // AAD / RBAC
@@ -126,10 +166,10 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
     agentPoolProfiles: [
       {
         name: 'systempool'
-        vmSize: 'Standard_D4s_v5'
-        count: environment == 'dev' ? 1 : 2
-        minCount: environment == 'dev' ? 1 : 2
-        maxCount: environment == 'dev' ? 2 : 4
+        vmSize: systemVmSize
+        count: systemNodeCount
+        minCount: systemNodeCount
+        maxCount: systemNodeCount * 2
         enableAutoScaling: true
         osType: 'Linux'
         osSKU: 'AzureLinux'
@@ -152,15 +192,23 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       podCidr: podCidr
       serviceCidr: serviceCidr
       dnsServiceIP: dnsServiceIP
-      outboundType: 'userDefinedRouting'
+      // loadBalancer: pre-created public IP with S360 ipTags is used for SNAT
+      // egress so nodes can reach Ubuntu/k8s apt repos during provisioning.
+      // Switch to userDefinedRouting when Azure Firewall is deployed in prod.
+      outboundType: 'loadBalancer'
       loadBalancerSku: 'standard'
+      loadBalancerProfile: {
+        outboundIPs: {
+          publicIPs: [
+            { id: outboundPublicIp.id }
+          ]
+        }
+      }
     }
 
-    // Private cluster configuration
+    // API server access — public cluster, kubectl works from anywhere
     apiServerAccessProfile: {
-      enablePrivateCluster: true
-      privateDNSZone: resolvedPrivateDnsZone
-      enablePrivateClusterPublicFQDN: false
+      enablePrivateCluster: false
     }
 
     // Kubelet identity (user-assigned)
@@ -188,7 +236,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       }
       // S360: Microsoft Defender for Containers — runtime threat detection
       defender: {
-        logAnalyticsWorkspaceResourceId: law.id
+        logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceId
         securityMonitoring: {
           enabled: true
         }
@@ -207,7 +255,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       omsagent: {
         enabled: true
         config: {
-          logAnalyticsWorkspaceResourceID: law.id
+          logAnalyticsWorkspaceResourceID: logAnalyticsWorkspaceId
           useAADAuth: 'true'
         }
       }
@@ -231,12 +279,6 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
   }
 }
 
-// Maintenance configuration is a separate child resource of type
-// Microsoft.ContainerService/managedClusters/maintenanceConfigurations.
-// It is omitted here as it is environment-specific and can be applied post-deploy
-// via: az aks maintenanceconfiguration add --cluster-name ... --name default
-// with a notAllowedTime window covering business hours.
-
 // ---------------------------------------------------------------------------
 // Additional node pools — compute cluster
 // ---------------------------------------------------------------------------
@@ -251,7 +293,7 @@ resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
     vmSize: sparkVmSize
     count: 0
     minCount: 0
-    maxCount: environment == 'dev' ? 3 : 100
+    maxCount: sparkMaxNodes
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'
@@ -273,10 +315,10 @@ resource trinoPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
   parent: aksCluster
   name: 'trinopool'
   properties: {
-    vmSize: environment == 'dev' ? 'Standard_D4s_v5' : 'Standard_D8s_v5'
+    vmSize: trinoVmSize
     count: 0
     minCount: 0
-    maxCount: environment == 'dev' ? 3 : 10
+    maxCount: trinoMaxNodes
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'
@@ -301,10 +343,10 @@ resource workerPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-
   parent: aksCluster
   name: 'workerpool'
   properties: {
-    vmSize: 'Standard_D4s_v5'
-    count: environment == 'dev' ? 1 : 2
-    minCount: environment == 'dev' ? 1 : 2
-    maxCount: environment == 'dev' ? 4 : 10
+    vmSize: workerVmSize
+    count: systemNodeCount
+    minCount: systemNodeCount
+    maxCount: workerMaxNodes
     enableAutoScaling: true
     osType: 'Linux'
     osSKU: 'AzureLinux'
@@ -328,7 +370,7 @@ resource aksDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previe
   name: 'diag-${clusterName}'
   scope: aksCluster
   properties: {
-    workspaceId: law.id
+    workspaceId: logAnalyticsWorkspaceId
     logs: [
       {
         category: 'kube-apiserver'
@@ -373,8 +415,9 @@ resource aksDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previe
 // ---------------------------------------------------------------------------
 output clusterId string = aksCluster.id
 output clusterName string = aksCluster.name
-output clusterFqdn string = aksCluster.properties.privateFQDN
+output clusterFqdn string = aksCluster.properties.fqdn
 output oidcIssuerUrl string = aksCluster.properties.oidcIssuerProfile.issuerURL
 output kubeletIdentityObjectId string = kubeletIdentity.properties.principalId
 output kubeletIdentityClientId string = kubeletIdentity.properties.clientId
-output logAnalyticsWorkspaceId string = law.id
+output logAnalyticsWorkspaceId string = logAnalyticsWorkspaceId
+output controlPlanePrincipalId string = aksControlPlaneIdentity.properties.principalId

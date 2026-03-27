@@ -1,6 +1,6 @@
 <div align="center">
 
-![Forge](docs/forge-logo.png)
+![Forge](docs/reference/forge-logo.png)
 
 ### **The Core Data Platform**
 
@@ -20,11 +20,11 @@
 
 | Document | What it covers |
 |----------|----------------|
-| [**Platform Design Reference**](docs/DESIGN.md) | Principles, two-cluster model, all layers, developer workflow, delivery lifecycle — start here |
-| [**Architecture**](ARCHITECTURE.md) | Component diagrams, ADRs, data flow, security, networking deep-dive |
-| [**Implementation Guides**](docs/implementation/00-overview.md) | Step-by-step provisioning from zero |
-| [**Architecture Deep-Dives**](docs/README.md) | Per-component architecture docs (compute, orchestration, storage, DQ, lineage, observability) |
-| [**Developer Experience Guide**](docs/guides/developer-experience.md) | VS Code + Spark Connect setup, DAG authoring, DQ rules |
+| [**Platform Brief**](docs/platform-brief.md) | One-page summary — what Forge is, what it solves, all components, security posture, where to start |
+| [**Platform Design Reference**](docs/DESIGN.md) | Principles, two-cluster model, all layers, developer workflow, delivery lifecycle |
+| [**Architecture Deep-Dives**](docs/README.md) | 14 numbered docs covering every component (infra, networking, security, compute, DQ, lineage, observability…) |
+| [**Implementation Guides**](docs/implementation/01-acr-setup.md) | Step-by-step provisioning from zero |
+| [**Developer Experience Guide**](docs/guides/developer-experience.md) | Cluster access (AAD), VS Code + Spark Connect setup, DAG authoring, DQ rules |
 
 ---
 

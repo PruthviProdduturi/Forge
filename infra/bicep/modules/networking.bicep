@@ -167,6 +167,22 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
+        // Required for AKS node bootstrapping: nodes must reach Ubuntu/Kubernetes
+        // apt repos and pull container images during initial provisioning.
+        // Long-term: replace with Azure Firewall + UDR and allowlist specific FQDNs.
+        name: 'AllowInternetOutbound'
+        properties: {
+          priority: 130
+          direction: 'Outbound'
+          access: 'Allow'
+          protocol: '*'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'Internet'
+          destinationPortRange: '*'
+        }
+      }
+      {
         name: 'DenyAllOtherOutbound'
         properties: {
           priority: 4096
@@ -299,6 +315,22 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
         }
       }
       {
+        // Required for AKS node bootstrapping: nodes must reach Ubuntu/Kubernetes
+        // apt repos and pull container images during initial provisioning.
+        // Long-term: replace with Azure Firewall + UDR and allowlist specific FQDNs.
+        name: 'AllowInternetOutbound'
+        properties: {
+          priority: 130
+          direction: 'Outbound'
+          access: 'Allow'
+          protocol: '*'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: 'Internet'
+          destinationPortRange: '*'
+        }
+      }
+      {
         name: 'DenyAllOtherOutbound'
         properties: {
           priority: 4096
@@ -409,6 +441,30 @@ resource nsgPrivateEndpoints 'Microsoft.Network/networkSecurityGroups@2023-11-01
 
 
 // ---------------------------------------------------------------------------
+// Route Tables — pre-created stubs for future Azure Firewall UDR migration.
+// Currently empty (Azure default system routes apply). When Azure Firewall is
+// deployed, add a 0.0.0.0/0 → Firewall IP route here and switch AKS clusters
+// to outboundType: 'userDefinedRouting' to eliminate AllowInternetOutbound NSG.
+// ---------------------------------------------------------------------------
+resource rtCompute 'Microsoft.Network/routeTables@2023-11-01' = {
+  name: 'rt-forge-compute-${environment}'
+  location: location
+  tags: tags
+  properties: {
+    disableBgpRoutePropagation: false
+  }
+}
+
+resource rtOrchestration 'Microsoft.Network/routeTables@2023-11-01' = {
+  name: 'rt-forge-orchestration-${environment}'
+  location: location
+  tags: tags
+  properties: {
+    disableBgpRoutePropagation: false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Virtual Network with all subnets
 // ---------------------------------------------------------------------------
 resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
@@ -427,6 +483,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
           networkSecurityGroup: {
             id: nsgCompute.id
           }
+          routeTable: {
+            id: rtCompute.id
+          }
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
         }
@@ -437,6 +496,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
           addressPrefix: addressPrefixes.orchestration
           networkSecurityGroup: {
             id: nsgOrchestration.id
+          }
+          routeTable: {
+            id: rtOrchestration.id
           }
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
@@ -461,15 +523,15 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
 // ---------------------------------------------------------------------------
 // Private DNS Zones
 // ---------------------------------------------------------------------------
-#disable-next-line no-hardcoded-env-urls
 resource dnsZoneDfs 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  #disable-next-line no-hardcoded-env-urls
   name: 'privatelink.dfs.core.windows.net'
   location: 'global'
   tags: tags
 }
 
-#disable-next-line no-hardcoded-env-urls
 resource dnsZoneBlob 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  #disable-next-line no-hardcoded-env-urls
   name: 'privatelink.blob.core.windows.net'
   location: 'global'
   tags: tags
@@ -517,11 +579,6 @@ resource dnsZoneAgentsvc 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   tags: tags
 }
 
-resource dnsZonePurview 'Microsoft.Network/privateDnsZones@2020-06-01' = {
-  name: 'privatelink.purview.azure.com'
-  location: 'global'
-  tags: tags
-}
 
 // ---------------------------------------------------------------------------
 // Private DNS Zone — VNet Links
@@ -634,20 +691,13 @@ resource vnetLinkAgentsvc 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
   }
 }
 
-resource vnetLinkPurview 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
-  parent: dnsZonePurview
-  name: 'link-purview-${environment}'
-  location: 'global'
-  properties: {
-    virtualNetwork: {
-      id: vnet.id
-    }
-    registrationEnabled: false
-  }
-}
 
 // ---------------------------------------------------------------------------
 // NSG Diagnostic Settings — S360: audit all allow/deny decisions
+// Note: NSG Flow Logs (per-connection traffic metadata, S360 NS2.1.1) are not
+// configured here — they require a Storage Account and optionally Traffic
+// Analytics. Add post-deploy via:
+//   az network watcher flow-log create --nsg <nsg-id> --storage-account <id>
 // ---------------------------------------------------------------------------
 resource nsgComputeDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name: 'diag-nsg-compute-${environment}'
@@ -727,7 +777,6 @@ output privateDnsZoneIds object = {
   oms: dnsZoneOms.id
   ods: dnsZoneOds.id
   agentsvc: dnsZoneAgentsvc.id
-  purview: dnsZonePurview.id
 }
 
 output platformLogAnalyticsWorkspaceId string = platformLaw.id

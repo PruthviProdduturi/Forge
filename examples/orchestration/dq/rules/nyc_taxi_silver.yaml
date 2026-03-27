@@ -1,0 +1,151 @@
+# DQ rules for silver/nyc_taxi/trips
+# Applied by @track decorator inside NycTaxiSilver.run()
+# Critical rules fail the Spark job; warning rules log and continue.
+
+version: "v1"
+dataset: silver/nyc_taxi/trips
+description: "Quality rules for the unified NYC TLC taxi silver layer"
+owner: data-engineering
+tags: [nyc-taxi, silver, monthly]
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Completeness
+  # ---------------------------------------------------------------------------
+  - name: pickup_datetime_not_null
+    type: not_null
+    column: pickup_datetime
+    severity: critical
+    description: Every trip must have a pickup timestamp.
+
+  - name: dropoff_datetime_not_null
+    type: not_null
+    column: dropoff_datetime
+    severity: critical
+    description: Every trip must have a dropoff timestamp.
+
+  - name: pickup_location_not_null
+    type: not_null
+    column: pickup_location_id
+    severity: critical
+    description: Trips without a pickup zone cannot be mapped.
+
+  - name: trip_id_not_null
+    type: not_null
+    column: trip_id
+    severity: critical
+    description: Surrogate key must always be populated.
+
+  # ---------------------------------------------------------------------------
+  # Uniqueness
+  # ---------------------------------------------------------------------------
+  - name: trip_id_unique
+    type: unique_key
+    columns: [trip_id]
+    severity: critical
+    description: Duplicate trip_ids indicate a dedup failure.
+
+  # ---------------------------------------------------------------------------
+  # Validity — ranges
+  # ---------------------------------------------------------------------------
+  - name: pickup_location_valid_range
+    type: value_range
+    column: pickup_location_id
+    min: 1
+    max: 265
+    severity: critical
+    description: TLC zone IDs are 1–265. Anything outside is a data quality issue.
+
+  - name: dropoff_location_valid_range
+    type: value_range
+    column: dropoff_location_id
+    min: 1
+    max: 265
+    severity: critical
+    description: TLC zone IDs are 1–265.
+
+  - name: fare_amount_non_negative
+    type: value_range
+    column: fare_amount
+    min: 0
+    severity: critical
+    filter: "fare_amount IS NOT NULL"
+    description: Fares cannot be negative (excluding null for FHV/HVFHV).
+
+  - name: trip_distance_non_negative
+    type: value_range
+    column: trip_distance
+    min: 0
+    severity: warning
+    filter: "trip_distance IS NOT NULL"
+    description: Negative distances indicate a sensor or data entry error.
+
+  - name: tip_amount_non_negative
+    type: value_range
+    column: tip_amount
+    min: 0
+    severity: warning
+    filter: "tip_amount IS NOT NULL"
+    description: Negative tips are physically impossible.
+
+  # ---------------------------------------------------------------------------
+  # Temporal consistency
+  # ---------------------------------------------------------------------------
+  - name: dropoff_after_pickup
+    type: custom_sql
+    sql: >
+      SELECT COUNT(*) FROM {table}
+      WHERE dropoff_datetime <= pickup_datetime
+    expected: 0
+    severity: critical
+    description: A trip cannot end before it starts.
+
+  - name: trip_duration_reasonable
+    type: custom_sql
+    sql: >
+      SELECT COUNT(*) FROM {table}
+      WHERE (UNIX_TIMESTAMP(dropoff_datetime) - UNIX_TIMESTAMP(pickup_datetime)) > 86400
+    expected: 0
+    severity: warning
+    description: Trips longer than 24 hours are almost certainly data errors.
+
+  # ---------------------------------------------------------------------------
+  # Volume — alert if a month has suspiciously few rows
+  # ---------------------------------------------------------------------------
+  - name: minimum_monthly_volume
+    type: row_count_delta
+    min: 1000000
+    max_drop_pct: 30
+    lookback_runs: 3
+    severity: warning
+    description: >
+      NYC taxis generate ~3–5 M metered trips per month in normal operation.
+      A count below 1 M likely indicates a partial ingest.
+
+  # ---------------------------------------------------------------------------
+  # Taxi type distribution — each type should be present
+  # ---------------------------------------------------------------------------
+  - name: all_taxi_types_present
+    type: accepted_values
+    column: taxi_type
+    values: [yellow, green, fhv, hvfhv]
+    severity: warning
+    description: >
+      All four taxi types should be present after the bronze → silver merge.
+      Missing types suggest a failed bronze task.
+
+# =============================================================================
+# Anomaly Detection
+#
+# Uses Z-score (Statistical Process Control) to flag unusual metric values.
+# Requires at least 7 historical runs before producing results.
+# =============================================================================
+
+anomaly_detection:
+  enabled: true
+  lookback_days: 90        # Monthly cadence — 90 days = last 3 months
+  z_score_threshold: 3.0  # |Z| > 3 → ~0.27% false-positive rate (three-sigma)
+  # Metrics monitored automatically by forge_dq:
+  #   rows_written          — total row count per run
+  #   null_rate per column  — null fraction per column per run

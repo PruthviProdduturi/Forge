@@ -27,7 +27,7 @@
 #   info     - Informational check; never blocks the pipeline
 # =============================================================================
 
-version: "1"
+version: "v1"
 dataset: silver/orders_cleaned
 description: "Quality rules for the orders silver layer"
 owner: "data-engineering"
