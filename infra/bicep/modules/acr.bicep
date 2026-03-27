@@ -43,20 +43,11 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     networkRuleBypassOptions: 'AzureServices'
     zoneRedundancy: 'Disabled'
     policies: {
-      quarantinePolicy: {
-        status: 'enabled'
-      }
-      trustPolicy: {
-        type: 'Notary'
-        status: 'enabled'
-      }
       retentionPolicy: {
         days: 30
         status: 'enabled'
       }
       exportPolicy: {
-        // S360: Set to 'disabled' after private endpoint is in place.
-        // Must remain 'enabled' during initial bootstrap (ACR Tasks need it).
         status: exportPolicyEnabled ? 'enabled' : 'disabled'
       }
     }
