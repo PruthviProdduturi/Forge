@@ -9,10 +9,6 @@
 @maxLength(24)
 param keyVaultName string
 
-@description('Target environment name (dev or prod).')
-@allowed(['dev', 'prod'])
-param environment string
-
 @description('Azure region for all resources.')
 param location string
 

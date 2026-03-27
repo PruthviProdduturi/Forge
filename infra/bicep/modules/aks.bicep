@@ -27,9 +27,6 @@ param privateDnsZoneId string = ''
 @description('AAD group object IDs to grant cluster-admin access via Azure RBAC.')
 param adminGroupObjectIds array
 
-@description('Resource ID of the Azure Container Registry to grant pull access.')
-param containerRegistryId string
-
 @description('Number of days to retain Log Analytics data. S360 LM requires minimum 90 days.')
 @minValue(90)
 @maxValue(730)
@@ -59,16 +56,6 @@ var dnsServiceIP = clusterPurpose == 'compute' ? '10.200.0.10' : '10.201.0.10'
 
 // Resolve private DNS zone: 'system' tells AKS to auto-manage the zone
 var resolvedPrivateDnsZone = privateDnsZoneId == '' ? 'system' : privateDnsZoneId
-
-// ACR pull role definition ID (AcrPull)
-var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-
-// Reference the ACR as an existing resource so the role assignment can be
-// scoped directly to it (ACR may be in a different resource group).
-resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
-  name: last(split(containerRegistryId, '/'))
-  scope: resourceGroup(split(containerRegistryId, '/')[2], split(containerRegistryId, '/')[4])
-}
 
 // ---------------------------------------------------------------------------
 // Log Analytics Workspace
@@ -331,20 +318,6 @@ resource workerPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-
     upgradeSettings: {
       maxSurge: '33%'
     }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ACR Pull role assignment for kubelet identity
-// ---------------------------------------------------------------------------
-resource acrPullAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kubeletIdentity.properties.principalId, acrPullRoleId, containerRegistryId)
-  scope: containerRegistry
-  properties: {
-    roleDefinitionId: acrPullRoleId
-    principalId: kubeletIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'Allow AKS kubelet identity to pull images from ACR for ${clusterName}'
   }
 }
 

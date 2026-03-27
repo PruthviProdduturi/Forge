@@ -9,10 +9,6 @@
 @maxLength(24)
 param storageAccountName string
 
-@description('Target environment name (dev or prod).')
-@allowed(['dev', 'prod'])
-param environment string
-
 @description('Azure region for all resources.')
 param location string
 
@@ -54,7 +50,6 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-04-01' = {
     publicNetworkAccess: 'Disabled'
     defaultToOAuthAuthentication: true
     supportsHttpsTrafficOnly: true
-    requireInfrastructureEncryption: true
     networkAcls: {
       defaultAction: 'Deny'
       bypass: 'AzureServices'

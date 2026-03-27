@@ -51,9 +51,6 @@ param adminGroupObjectIds array
 @description('Object ID of the platform administrator AAD group for Key Vault access.')
 param platformAdminGroupObjectId string
 
-@description('Corporate IP address range used in NSG inbound rules.')
-param corporateIpRange string = '10.0.0.0/8'
-
 @description('Number of days to retain Log Analytics data. S360 LM requires minimum 90 days.')
 @minValue(90)
 @maxValue(730)
@@ -71,9 +68,8 @@ param tags object = {}
 var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
 
 // Shared ACR resource ID — derived from ownerAlias to match shared/main.bicep naming
-var acrRegistryName     = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr'
-var acrRgName           = ownerAlias != '' ? 'rg-forge-acr-${ownerAlias}' : 'rg-forge-acr'
-var containerRegistryId = '/subscriptions/${subscriptionId}/resourceGroups/${acrRgName}/providers/Microsoft.ContainerRegistry/registries/${acrRegistryName}'
+var acrRegistryName = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr'
+var acrRgName       = ownerAlias != '' ? 'rg-forge-acr-${ownerAlias}' : 'rg-forge-acr'
 
 var storageAccountName = 'forgeadls${ownerAlias}${environment}'
 var keyVaultName       = 'kv-forge${aliasSuffix}-${environment}'
@@ -126,7 +122,6 @@ module networking '../../modules/networking.bicep' = {
   params: {
     environment: environment
     location: location
-    corporateIpRange: corporateIpRange
     tags: mergedTags
   }
 }
@@ -167,7 +162,6 @@ module computeCluster '../../modules/aks.bicep' = {
     subnetId: networking.outputs.subnetIds.compute
     privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
-    containerRegistryId: containerRegistryId
     logRetentionDays: logRetentionDays
     tags: mergedTags
   }
@@ -186,9 +180,29 @@ module orchCluster '../../modules/aks.bicep' = {
     subnetId: networking.outputs.subnetIds.orchestration
     privateDnsZoneId: ''
     adminGroupObjectIds: adminGroupObjectIds
-    containerRegistryId: containerRegistryId
     logRetentionDays: logRetentionDays
     tags: mergedTags
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ACR Pull role assignments (cross-RG: AKS kubelet → shared ACR)
+// ---------------------------------------------------------------------------
+module acrPullCompute '../../modules/rbac-acr-pull.bicep' = {
+  name: 'acr-pull-compute-${environment}'
+  scope: resourceGroup(acrRgName)
+  params: {
+    registryName: acrRegistryName
+    principalId: computeCluster.outputs.kubeletIdentityObjectId
+  }
+}
+
+module acrPullOrch '../../modules/rbac-acr-pull.bicep' = {
+  name: 'acr-pull-orch-${environment}'
+  scope: resourceGroup(acrRgName)
+  params: {
+    registryName: acrRegistryName
+    principalId: orchCluster.outputs.kubeletIdentityObjectId
   }
 }
 
@@ -201,7 +215,6 @@ module storage '../../modules/storage.bicep' = {
   dependsOn: [rgComputeRes]
   params: {
     storageAccountName: storageAccountName
-    environment: environment
     location: location
     replicationType: 'GZRS'
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
@@ -249,7 +262,6 @@ module keyvault '../../modules/keyvault.bicep' = {
   dependsOn: [rgComputeRes]
   params: {
     keyVaultName: keyVaultName
-    environment: environment
     location: location
     tenantId: tenantId
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints

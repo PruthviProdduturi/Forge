@@ -10,9 +10,6 @@ param environment string
 @description('Azure region for all resources.')
 param location string
 
-@description('Corporate IP range used for inbound allow rules.')
-param corporateIpRange string = '10.0.0.0/8'
-
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
@@ -464,12 +461,14 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
 // ---------------------------------------------------------------------------
 // Private DNS Zones
 // ---------------------------------------------------------------------------
+#disable-next-line no-hardcoded-env-urls
 resource dnsZoneDfs 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.dfs.core.windows.net'
   location: 'global'
   tags: tags
 }
 
+#disable-next-line no-hardcoded-env-urls
 resource dnsZoneBlob 'Microsoft.Network/privateDnsZones@2020-06-01' = {
   name: 'privatelink.blob.core.windows.net'
   location: 'global'
