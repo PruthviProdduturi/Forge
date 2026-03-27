@@ -26,7 +26,7 @@
       "value": "prproddu"
     },
     "logRetentionDays": {
-      "value": 30
+      "value": 90
     },
     "tags": {
       "value": {
