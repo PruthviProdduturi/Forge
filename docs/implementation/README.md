@@ -57,7 +57,7 @@ For personal dev deployments, set `ownerAlias` (e.g. `prproddu`) — it is appen
 | ACR name | `forgeacrprproddu` | `forgeacr` |
 | `rg-forge-acr` | `rg-forge-acr-prproddu` | `rg-forge-acr` |
 | `rg-forge-platform-{env}` | `rg-forge-platform-prproddu-dev` | `rg-forge-platform-prod` |
-| `rg-forge-compute-{env}` | `rg-forge-compute-prproddu-dev` | `rg-forge-compute-prod` |
+| `rg-forge-{env}` | `rg-forge-prproddu-dev` | `rg-forge-prod` |
 | `{compute_cluster}` | `aks-forge-compute-prproddu-dev` | `aks-forge-compute-prod` |
 | `{orch_cluster}` | `aks-forge-orch-prproddu-dev` | `aks-forge-orch-prod` |
 | `{adls_account}` | `forgeadlsprproddudev` | `forgeadlsprod` |

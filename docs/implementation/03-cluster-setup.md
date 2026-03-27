@@ -24,62 +24,24 @@
 
 ### 1.1 Azure CLI Extensions
 
-Install the extensions required for private AKS clusters, workload identity, and image integrity enforcement. Run these on any machine used to interact with the clusters (developer workstation, build agent, jump VM).
-
 ```bash
 # Update CLI itself first
 az upgrade --yes
 
-# Add or upgrade all required extensions
-az extension add --name aks-preview --upgrade
+# k8s-extension is needed for Container Insights and Azure Policy add-ons
 az extension add --name k8s-extension --upgrade
 
-# Verify installed versions
-az extension list --query "[?name=='aks-preview' || name=='k8s-extension'].{name:name, version:version}" -o table
+# Verify
+az extension list --query "[?name=='k8s-extension'].{name:name, version:version}" -o table
 ```
 
-Expected minimum versions: `aks-preview >= 3.0.0b6`
+> **Note:** Do NOT install `aks-preview`. It has a known bug where `az aks command invoke` returns
+> `Operation returned an invalid status 'OK'` and breaks other AKS commands. The clusters are public
+> — no preview features are required.
 
-### 1.2 Feature Flag Registration
+### 1.2 Provider Registration
 
-Several AKS capabilities used by Forge are controlled by subscription-level feature flags. Register all of them now. Registration is asynchronous and can take 15–60 minutes per flag.
-
-```bash
-# Workload Identity (OIDC federation for pods)
-az feature register \
-  --namespace Microsoft.ContainerService \
-  --name EnableWorkloadIdentityPreview
-
-# Private cluster with managed identity (avoids service principal on private API server)
-az feature register \
-  --namespace Microsoft.ContainerService \
-  --name AKS-EnableManagedIdentityPrivateCluster
-
-# Image Integrity (Notary v2 enforcement at admission)
-az feature register \
-  --namespace Microsoft.ContainerService \
-  --name EnableImageIntegrityPreview
-
-# Node auto-provisioning (NAP) — registered even if not yet used, to avoid re-registration later
-az feature register \
-  --namespace Microsoft.ContainerService \
-  --name NodeAutoProvisioningPreview
-```
-
-### 1.3 Check Feature Registration Status
-
-```bash
-az feature list \
-  --namespace Microsoft.ContainerService \
-  --query "[?name=='Microsoft.ContainerService/EnableWorkloadIdentityPreview' || \
-            name=='Microsoft.ContainerService/AKS-EnableManagedIdentityPrivateCluster' || \
-            name=='Microsoft.ContainerService/EnableImageIntegrityPreview' || \
-            name=='Microsoft.ContainerService/NodeAutoProvisioningPreview'].\
-            {name:name, state:properties.state}" \
-  -o table
-```
-
-Wait until all flags show `Registered` before proceeding. Re-run the command every few minutes. Once all are registered, propagate to the provider:
+Register the required resource providers. This is a one-time operation per subscription.
 
 ```bash
 az provider register --namespace Microsoft.ContainerService
@@ -89,7 +51,7 @@ az provider register --namespace Microsoft.KeyVault
 az provider register --namespace Microsoft.ManagedIdentity
 ```
 
-### 1.4 Subscription-Level vCPU Quota Verification
+### 1.3 Subscription-Level vCPU Quota Verification
 
 The Forge clusters use `Standard_E8s_v5` (Spark node pool) and `Standard_E16s_v5` (Trino node pool) in the primary region. Verify the subscription has sufficient quota before attempting cluster creation — insufficient quota causes silent failures or partial scale-up.
 
@@ -119,11 +81,10 @@ az vm list-usage \
 
 | VM Family | Node Pool | Max nodes | vCPUs/node | vCPUs required |
 |-----------|-----------|-----------|------------|----------------|
-| Standard_E8s_v5 | spark (compute) | 20 | 8 | 160 |
-| Standard_E16s_v5 | trino (compute) | 8 | 16 | 128 |
-| Standard_D4s_v5 | system (both clusters) | 6 | 4 | 24 |
-| Standard_D8s_v5 | airflow (orch) | 10 | 8 | 80 |
-| Standard_D4s_v5 | platform (orch) | 4 | 4 | 16 |
+| Standard_E8s_v5 | sparkpool (compute) | 5 (dev) / 20 (prod) | 8 | 40 dev / 160 prod |
+| Standard_D4s_v5 | trinopool (compute) | 3 (dev) / 10 (prod) | 4 | 12 dev / 40 prod |
+| Standard_D4s_v5 | systempool (both clusters) | 2 per cluster | 4 | 16 |
+| Standard_D4s_v5 | workerpool (orch) | 3 (dev) / 10 (prod) | 4 | 12 dev / 40 prod |
 
 Total: approximately 408 vCPUs in `StandardESv5Family` + `StandardDSv5Family` combined, plus buffer.
 
@@ -144,13 +105,13 @@ az support tickets create \
   --contact-timezone "Pacific Standard Time"
 ```
 
-### 1.5 Tool Versions on the Operator Workstation
+### 1.4 Tool Versions on the Operator Workstation
 
 ```bash
 # Verify all tools are present
 kubectl version --client  # >= 1.29
-helm version           # >= 3.14
-kubelogin --version    # >= 0.1.3 (needed for private AKS clusters with AAD)
+helm version              # >= 3.14
+kubelogin --version       # >= 0.1.3 (required for AAD auth on AKS)
 ```
 
 Install `kubelogin` if missing:
@@ -172,10 +133,10 @@ infra/bicep/
 ├── environments/
 │   ├── dev/
 │   │   ├── main.bicep
-│   │   └── main.bicepparam
+│   │   └── dev.parameters.json
 │   └── prod/
 │       ├── main.bicep
-│       └── main.bicepparam
+│       └── dev.parameters.json
 └── modules/
     ├── networking.bicep
     ├── identity.bicep
@@ -188,24 +149,34 @@ The root template (`main.bicep`) is subscription-scoped and orchestrates all mod
 
 ### 2.2 Parameter File
 
-Edit `infra/bicep/environments/{env}/main.bicepparam` with your environment values:
+Edit `infra/bicep/environments/{env}/dev.parameters.json` with your values. All parameters are in this single file — `main.bicep` has no hardcoded environment values.
 
-```bicep
-using './main.bicep'
-
-param environment = '{env}'
-param location = 'northcentralus'
-param subscriptionId = '<your-subscription-id>'
-param tenantId = '<your-tenant-id>'
-param adminGroupObjectIds = ['<your-aks-admin-group-object-id>']
-param platformAdminGroupObjectId = '<your-platform-admin-group-object-id>'
-param corporateIpRange = '10.0.0.0/12'     // dev VNet range; use '10.16.0.0/12' for prod
-param containerRegistryId = '/subscriptions/<sub-id>/resourceGroups/rg-forge-acr/providers/Microsoft.ContainerRegistry/registries/forgeacr'
-param logRetentionDays = 30
-param tags = {
-  environment: '{env}'
-  platform: 'forge'
-  managedBy: 'bicep'
+```json
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environment":                { "value": "dev" },
+    "location":                   { "value": "northcentralus" },
+    "tenantId":                   { "value": "<your-tenant-id>" },
+    "adminGroupObjectIds":        { "value": ["<aks-admin-group-object-id>"] },
+    "platformAdminGroupObjectId": { "value": "<platform-admin-group-object-id>" },
+    "ownerAlias":                 { "value": "<your-alias>" },
+    "logRetentionDays":           { "value": 90 },
+    "kubernetesVersion":          { "value": "1.32" },
+    "storageReplicationType":     { "value": "LRS" },
+    "tags":                       { "value": { "owner": "platform-team" } },
+    "computeSystemVmSize":        { "value": "Standard_D4s_v5" },
+    "computeSystemNodeCount":     { "value": 1 },
+    "sparkVmSize":                { "value": "Standard_E8s_v5" },
+    "sparkMaxNodes":              { "value": 5 },
+    "trinoVmSize":                { "value": "Standard_D4s_v5" },
+    "trinoMaxNodes":              { "value": 3 },
+    "orchSystemVmSize":           { "value": "Standard_D4s_v5" },
+    "orchSystemNodeCount":        { "value": 1 },
+    "orchWorkerVmSize":           { "value": "Standard_D4s_v5" },
+    "orchWorkerMaxNodes":         { "value": 3 }
+  }
 }
 ```
 
@@ -229,7 +200,7 @@ Run a what-if to see exactly what will be created or modified:
 az deployment sub what-if \
   --location northcentralus \
   --template-file infra/bicep/environments/${ENV}/main.bicep \
-  --parameters @infra/bicep/environments/${ENV}/main.bicepparam \
+  --parameters @infra/bicep/environments/${ENV}/dev.parameters.json \
   --name forge-${ENV}
 ```
 
@@ -243,7 +214,7 @@ Before approving the output, review:
 
 **Key Vault** — confirm purge protection enabled, soft-delete retention 90 days, default action Deny.
 
-**AKS clusters** — confirm private cluster enabled, workload identity enabled, OIDC issuer enabled, node pool VM sizes and counts match the architecture document.
+**AKS clusters** — confirm public cluster (`enablePrivateCluster: false`), workload identity enabled, OIDC issuer enabled, node pool VM sizes and counts match the architecture document. Note: `enablePrivateCluster` is immutable — if it needs changing, the cluster must be deleted and recreated.
 
 ### 2.5 Deploy
 
@@ -253,12 +224,12 @@ A single command deploys all resources. Bicep resolves inter-module dependencies
 az deployment sub create \
   --location northcentralus \
   --template-file infra/bicep/environments/${ENV}/main.bicep \
-  --parameters @infra/bicep/environments/${ENV}/main.bicepparam \
+  --parameters @infra/bicep/environments/${ENV}/dev.parameters.json \
   --name forge-${ENV} \
   --verbose
 ```
 
-This step takes 20–30 minutes. AKS private cluster provisioning is the longest step.
+This step takes 20–30 minutes. AKS cluster provisioning is the longest step.
 
 If a module fails mid-deployment, re-run the same command after fixing the problem. Bicep deployments are idempotent — resources that already exist in the expected state are skipped.
 
@@ -279,7 +250,7 @@ computeClusterName:
 computeOidcIssuerUrl:
   value: https://northcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id>/
 orchClusterName:
-  value: aks-forge-orch-prod
+  value: aks-forge-orchestration-prod
 orchOidcIssuerUrl:
   value: https://northcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id-2>/
 storageAccountName:
@@ -311,13 +282,15 @@ All commands in this section target the **compute cluster** (`aks-forge-compute-
 ```bash
 ENV="prod"
 
+ALIAS="prproddu"   # set to your ownerAlias, or empty for shared envs
+
 az aks get-credentials \
-  --name "aks-forge-compute-${ENV}" \
-  --resource-group "rg-forge-compute-${ENV}" \
+  --name "aks-forge-compute-${ALIAS}-${ENV}" \
+  --resource-group "rg-forge-${ALIAS}-${ENV}" \
   --context "forge-compute-${ENV}" \
   --overwrite-existing
 
-# Convert to kubelogin format (required for private AKS + AAD)
+# Convert to kubelogin format (required for AAD auth on AKS)
 kubelogin convert-kubeconfig \
   --login azurecli \
   --context "forge-compute-${ENV}"
@@ -333,8 +306,8 @@ Expected output shows nodes in `Ready` state:
 
 ```
 NAME                              STATUS   ROLES    AGE   VERSION    INTERNAL-IP   OS-IMAGE
-aks-system-00000000-vmss000000    Ready    <none>   8m    v1.29.2    10.1.1.4      Ubuntu 22.04.4 LTS
-aks-system-00000000-vmss000001    Ready    <none>   8m    v1.29.2    10.1.1.5      Ubuntu 22.04.4 LTS
+aks-systempool-00000000-vmss000000    Ready    <none>   8m    v1.32.x    10.1.1.4      Azure Linux
+aks-systempool-00000000-vmss000001    Ready    <none>   8m    v1.32.x    10.1.1.5      Azure Linux
 ```
 
 The spark and trino node pools start with 0 nodes (autoscaler manages them) so only system pool nodes appear initially.
@@ -523,44 +496,34 @@ SPARK_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
 TRINO_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
   --query "properties.outputs.workloadIdentities.value.trino.clientId" -o tsv)
 
-# Spark driver ServiceAccount (spark-jobs namespace)
+# Service account names MUST match what is registered in the federated credential in identity.bicep.
+# The names below are exactly what Bicep registers — do not change them.
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# Spark — spark-jobs namespace, service account "spark"
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: spark-driver-sa
+  name: spark
   namespace: spark-jobs
   annotations:
     azure.workload.identity/client-id: "${SPARK_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "$(az account show --query tenantId -o tsv)"
+    azure.workload.identity/tenant-id: "${TENANT_ID}"
   labels:
     azure.workload.identity/use: "true"
 EOF
 
-# Spark operator ServiceAccount (spark-system namespace, for operator itself)
+# Trino — trino namespace, service account "trino"
 cat <<EOF | kubectl apply -f -
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: spark-operator-sa
-  namespace: spark-system
-  annotations:
-    azure.workload.identity/client-id: "${SPARK_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "$(az account show --query tenantId -o tsv)"
-  labels:
-    azure.workload.identity/use: "true"
-EOF
-
-# Trino ServiceAccount
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: trino-sa
+  name: trino
   namespace: trino
   annotations:
     azure.workload.identity/client-id: "${TRINO_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "$(az account show --query tenantId -o tsv)"
+    azure.workload.identity/tenant-id: "${TENANT_ID}"
   labels:
     azure.workload.identity/use: "true"
 EOF
@@ -674,7 +637,7 @@ metadata:
   labels:
     azure.workload.identity/use: "true"
 spec:
-  serviceAccountName: spark-driver-sa
+  serviceAccountName: spark
   containers:
   - name: test
     image: "forgeacr${ALIAS}.azurecr.io/spark:4.1.1"
@@ -727,7 +690,7 @@ kubectl delete pod wi-test-spark -n spark-jobs
 
 Expected log output ends with `WORKLOAD IDENTITY TEST: PASSED`. If the test fails:
 - Check the federated credential on the managed identity matches this cluster's OIDC issuer URL
-- Check the ServiceAccount name and namespace match the federated credential subject (`system:serviceaccount:spark-jobs:spark-driver-sa`)
+- Check the ServiceAccount name and namespace match the federated credential subject (`system:serviceaccount:spark-jobs:spark`)
 - Check the managed identity has `Storage Blob Data Contributor` on the ADLS account
 
 ### 3.11 Install Spark Operator
@@ -753,9 +716,9 @@ helm upgrade --install spark-operator \
   --set metrics.endpoint=/metrics \
   --set metrics.prefix=forge_spark \
   --set sparkJobNamespace=spark-jobs \
-  --set serviceAccounts.spark.name=spark-driver-sa \
+  --set serviceAccounts.spark.name=spark \
   --set serviceAccounts.spark.create=false \
-  --set serviceAccounts.sparkoperator.name=spark-operator-sa \
+  --set serviceAccounts.sparkoperator.name=spark-operator \
   --set serviceAccounts.sparkoperator.create=false \
   --set controllerThreads=10 \
   --set resyncInterval=30 \
@@ -768,7 +731,7 @@ helm upgrade --install spark-operator \
 **Key values explained:**
 
 - `sparkJobNamespace=spark-jobs` — Operator only watches for SparkApplication CRDs in this namespace. Jobs submitted to other namespaces are ignored.
-- `serviceAccounts.spark.create=false` — We created `spark-driver-sa` manually with workload identity annotations. If the operator creates a new SA without those annotations, workload identity will not work.
+- `serviceAccounts.spark.create=false` — We created `spark` manually with workload identity annotations. If the operator creates a new SA without those annotations, workload identity will not work.
 - `metrics.enable=true` — Exposes a Prometheus-compatible `/metrics` endpoint. The Azure Monitor Agent (AMA) scrapes this endpoint via the custom scrape ConfigMap.
 - `webhook.enable=true` — Required for the operator to mutate SparkApplication specs (injecting node affinity, tolerations, and workload identity annotations on driver/executor pods).
 
@@ -794,7 +757,7 @@ kubectl get mutatingwebhookconfigurations \
 ### 3.13 Apply Calico Network Policies for Compute Cluster
 
 ```bash
-# Allow spark-jobs pods to egress to ADLS, Key Vault, and ACR private endpoints only
+# Allow spark-jobs pods to egress to ADLS, Key Vault, and ACR via private endpoints
 cat <<'EOF' | kubectl apply -f -
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -821,7 +784,7 @@ spec:
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: spark-jobs
-  # Allow to Kubernetes API server (private endpoint)
+  # Allow to Kubernetes API server (public endpoint)
   - to:
     - ipBlock:
         cidr: 10.3.0.11/32
@@ -882,14 +845,14 @@ EOF
 
 ## Part 4 — Orchestration Cluster Bootstrap
 
-All commands in this section target the **orchestration cluster** (`aks-forge-orch-{env}`).
+All commands in this section target the **orchestration cluster** (`aks-forge-orchestration-{alias}-{env}`).
 
 ### 4.1 Get kubeconfig
 
 ```bash
 az aks get-credentials \
-  --name "aks-forge-orch-${ENV}" \
-  --resource-group "rg-forge-compute-${ENV}" \
+  --name "aks-forge-orchestration-${ALIAS}-${ENV}" \
+  --resource-group "rg-forge-${ALIAS}-${ENV}" \
   --context "forge-orch-${ENV}" \
   --overwrite-existing
 
@@ -1094,13 +1057,12 @@ Airflow uses the `SparkKubernetesOperator` to submit `SparkApplication` CRDs to 
 ```bash
 # Get the compute cluster kubeconfig (not the kubelogin-converted one — the raw one)
 az aks get-credentials \
-  --name "aks-forge-compute-${ENV}" \
-  --resource-group "rg-forge-compute-${ENV}" \
+  --name "aks-forge-compute-${ALIAS}-${ENV}" \
+  --resource-group "rg-forge-${ALIAS}-${ENV}" \
   --file /tmp/compute-kubeconfig.yaml \
   --overwrite-existing
 
-# The kubeconfig references the private API server FQDN.
-# Verify it points to an internal IP (the private endpoint):
+# Verify it points to the public API server FQDN:
 cat /tmp/compute-kubeconfig.yaml | grep server
 
 # Store in Key Vault
@@ -1128,14 +1090,14 @@ The Container Insights add-on installs the Azure Monitor Agent (AMA) as a Daemon
 ```bash
 # Enable Container Insights on the orchestration cluster
 az aks enable-addons \
-  --resource-group rg-forge-compute-prod \
-  --name aks-forge-orch-prod \
+  --resource-group rg-forge-prod \
+  --name aks-forge-orchestration-prod \
   --addons monitoring \
   --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
 
 # Enable Container Insights on the compute cluster
 az aks enable-addons \
-  --resource-group rg-forge-compute-prod \
+  --resource-group rg-forge-prod \
   --name aks-forge-compute-prod \
   --addons monitoring \
   --workspace-resource-id "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-prod/providers/Microsoft.OperationalInsights/workspaces/law-forge-prod"
@@ -1176,7 +1138,7 @@ kubectl get pods -n kube-system -l component=ama-metrics
 
 # Verify metrics are flowing to Azure Monitor
 az monitor metrics list \
-  --resource "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-compute-prod/providers/Microsoft.ContainerService/managedClusters/aks-forge-orch-prod" \
+  --resource "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-prod/providers/Microsoft.ContainerService/managedClusters/aks-forge-orchestration-prod" \
   --metric "node_cpu_usage_percentage" \
   --output table
 ```
@@ -1469,7 +1431,7 @@ spec:
   driver:
     cores: 1
     memory: "1g"
-    serviceAccount: spark-driver-sa
+    serviceAccount: spark
     annotations:
       azure.workload.identity/use: "true"
     nodeSelector:
@@ -1663,7 +1625,7 @@ ContainerLogV2
 
 Expected: recent log lines from the Airflow scheduler. If no logs appear, check:
 - AMA DaemonSet pods are Running on all nodes: `kubectl get pods -n kube-system -l component=ama-logs`
-- Container Insights add-on is enabled: `az aks show --name aks-forge-orch-prod --resource-group rg-forge-compute-prod --query "addonProfiles.omsagent.enabled"`
+- Container Insights add-on is enabled: `az aks show --name aks-forge-orchestration-prod --resource-group rg-forge-prod --query "addonProfiles.omsagent.enabled"`
 
 ### 5.4 Full Green-Light Checklist
 
@@ -1679,8 +1641,8 @@ Do not declare the platform ready for pipeline onboarding until every item below
 - [ ] `nslookup forgeacr${ALIAS}.azurecr.io` from any cluster pod returns a private IP
 - [ ] `nslookup ${ADLS_ACCOUNT}.dfs.core.windows.net` returns a private IP
 - [ ] `nslookup ${KV_NAME}.vault.azure.net` returns a private IP
-- [ ] Compute cluster API server is reachable only via private endpoint
-- [ ] Orchestration cluster API server is reachable only via private endpoint
+- [ ] Compute cluster API server is reachable (public endpoint, AAD-gated)
+- [ ] Orchestration cluster API server is reachable (public endpoint, AAD-gated)
 
 **Compute Cluster**
 - [ ] All system node pool nodes are `Ready`
@@ -1689,7 +1651,7 @@ Do not declare the platform ready for pipeline onboarding until every item below
 - [ ] CSI Secrets Store Driver pods are Running
 - [ ] Workload identity webhook pods are Running
 - [ ] Calico network policies are installed
-- [ ] `spark-driver-sa` ServiceAccount exists in `spark-jobs` with correct workload identity annotation
+- [ ] `spark` ServiceAccount exists in `spark-jobs` with correct workload identity annotation
 - [ ] `trino-sa` ServiceAccount exists in `trino` with correct workload identity annotation
 - [ ] Workload identity test pod (Section 3.10) passed
 - [ ] Spark Operator pods are Running
