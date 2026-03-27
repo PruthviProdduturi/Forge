@@ -1,0 +1,22 @@
+# =============================================================================
+# Orchestration Cluster Bootstrap — Values
+#
+# Creates all namespaces and workload identity service accounts.
+# Apply once after AKS cluster is provisioned.
+#
+#   $IDS = az deployment sub show --name forge-dev `
+#     --query properties.outputs.workloadIdentities.value -o json | ConvertFrom-Json
+#
+#   helm upgrade --install cluster-bootstrap infra/helm/orchestration/cluster-bootstrap `
+#     --set workloadIdentity.airflow.clientId=$IDS.airflow.clientId `
+#     --set workloadIdentity.dq.clientId=$IDS.dq.clientId `
+#     --set workloadIdentity.portal.clientId=$IDS.portal.clientId
+# =============================================================================
+
+workloadIdentity:
+  airflow:
+    clientId: ""    # id-forge-airflow-{env}
+  dq:
+    clientId: ""    # id-forge-dq-{env}
+  portal:
+    clientId: ""    # id-forge-portal-{env}

@@ -408,32 +408,26 @@ kubectl apply -f \
 kubectl rollout status daemonset/calico-node -n kube-system --timeout=120s
 ```
 
-### 3.6 Create Namespaces
+### 3.6 Bootstrap Namespaces and Service Accounts
+
+All namespaces and workload identity service accounts are created by the `cluster-bootstrap` Helm chart. This is idempotent — safe to re-run.
 
 ```bash
-kubectl create namespace spark-system
-kubectl create namespace spark-jobs
-kubectl create namespace trino
-kubectl create namespace monitoring
+# Retrieve workload identity client IDs from Bicep deployment outputs
+$IDS = az deployment sub show --name forge-${ENV} `
+  --query properties.outputs.workloadIdentities.value -o json | ConvertFrom-Json
 
-# Label namespaces for workload identity and network policy targeting
-kubectl label namespace spark-system \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}"
+helm upgrade --install cluster-bootstrap infra/helm/compute/cluster-bootstrap `
+  --create-namespace --namespace kube-system `
+  --set workloadIdentity.spark.clientId=$IDS.spark.clientId `
+  --set workloadIdentity.trino.clientId=$IDS.trino.clientId `
+  --set workloadIdentity.hms.clientId=$IDS.hms.clientId
 
-kubectl label namespace spark-jobs \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}" \
-  workload=spark
-
-kubectl label namespace trino \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}" \
-  workload=trino
-
-kubectl label namespace monitoring \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}"
+# Verify
+kubectl get namespaces | grep -E "spark|trino|hive"
+kubectl get serviceaccounts -n spark-jobs
+kubectl get serviceaccounts -n trino
+kubectl get serviceaccounts -n hive-metastore
 ```
 
 ### 3.7 Apply ResourceQuota and LimitRange for spark-jobs
@@ -485,49 +479,9 @@ spec:
 EOF
 ```
 
-### 3.8 Create ServiceAccounts with Workload Identity Annotations
+### 3.8 Service Accounts
 
-Each workload needs a Kubernetes ServiceAccount annotated with its Azure managed identity client ID. The workload identity webhook uses this annotation to project the correct OIDC token into pods.
-
-```bash
-# Retrieve client IDs from Bicep deployment outputs
-SPARK_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
-  --query "properties.outputs.workloadIdentities.value.spark.clientId" -o tsv)
-TRINO_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
-  --query "properties.outputs.workloadIdentities.value.trino.clientId" -o tsv)
-
-# Service account names MUST match what is registered in the federated credential in identity.bicep.
-# The names below are exactly what Bicep registers — do not change them.
-TENANT_ID=$(az account show --query tenantId -o tsv)
-
-# Spark — spark-jobs namespace, service account "spark"
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: spark
-  namespace: spark-jobs
-  annotations:
-    azure.workload.identity/client-id: "${SPARK_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "${TENANT_ID}"
-  labels:
-    azure.workload.identity/use: "true"
-EOF
-
-# Trino — trino namespace, service account "trino"
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: trino
-  namespace: trino
-  annotations:
-    azure.workload.identity/client-id: "${TRINO_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "${TENANT_ID}"
-  labels:
-    azure.workload.identity/use: "true"
-EOF
-```
+Service accounts are created by the `cluster-bootstrap` Helm chart in §3.6 above — no manual step required.
 
 ### 3.9 Create SecretProviderClass for Each Workload
 
@@ -901,66 +855,27 @@ helm upgrade --install workload-identity-webhook \
   --wait
 ```
 
-### 4.3 Create Namespaces
+### 4.3 Bootstrap Namespaces and Service Accounts
 
 ```bash
-kubectl create namespace airflow
-kubectl create namespace lineage
-kubectl create namespace monitoring
-kubectl create namespace portal
+$IDS = az deployment sub show --name forge-${ENV} `
+  --query properties.outputs.workloadIdentities.value -o json | ConvertFrom-Json
 
-kubectl label namespace airflow \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}" \
-  workload=airflow
+helm upgrade --install cluster-bootstrap infra/helm/orchestration/cluster-bootstrap `
+  --create-namespace --namespace kube-system `
+  --set workloadIdentity.airflow.clientId=$IDS.airflow.clientId `
+  --set workloadIdentity.dq.clientId=$IDS.dq.clientId `
+  --set workloadIdentity.portal.clientId=$IDS.portal.clientId
 
-kubectl label namespace monitoring \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}"
-
-kubectl label namespace portal \
-  app.kubernetes.io/part-of=forge \
-  environment="${ENV}" \
-  workload=portal
+# Verify
+kubectl get namespaces | grep -E "airflow|dq|portal|monitoring"
+kubectl get serviceaccounts -n airflow
+kubectl get serviceaccounts -n portal
 ```
 
-### 4.4 Create ServiceAccounts
+### 4.4 Service Accounts
 
-```bash
-AIRFLOW_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
-  --query "properties.outputs.workloadIdentities.value.airflow.clientId" -o tsv)
-PORTAL_MI_CLIENT_ID=$(az deployment sub show --name forge-${ENV} \
-  --query "properties.outputs.workloadIdentities.value.portal.clientId" -o tsv)
-TENANT_ID=$(az account show --query tenantId -o tsv)
-
-# Airflow
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: airflow-sa
-  namespace: airflow
-  annotations:
-    azure.workload.identity/client-id: "${AIRFLOW_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "${TENANT_ID}"
-  labels:
-    azure.workload.identity/use: "true"
-EOF
-
-# Portal
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: portal-sa
-  namespace: portal
-  annotations:
-    azure.workload.identity/client-id: "${PORTAL_MI_CLIENT_ID}"
-    azure.workload.identity/tenant-id: "${TENANT_ID}"
-  labels:
-    azure.workload.identity/use: "true"
-EOF
-```
+Service accounts are created by the `cluster-bootstrap` Helm chart in §4.3 above — no manual step required.
 
 ### 4.5 Create SecretProviderClasses
 

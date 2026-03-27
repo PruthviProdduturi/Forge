@@ -1,0 +1,24 @@
+# =============================================================================
+# Compute Cluster Bootstrap — Values
+#
+# Creates all namespaces and workload identity service accounts.
+# Apply once after AKS cluster is provisioned.
+#
+# All clientIds are set at deploy time from the Bicep deployment outputs:
+#
+#   $IDS = az deployment sub show --name forge-dev `
+#     --query properties.outputs.workloadIdentities.value -o json | ConvertFrom-Json
+#
+#   helm upgrade --install cluster-bootstrap infra/helm/compute/cluster-bootstrap `
+#     --set workloadIdentity.spark.clientId=$IDS.spark.clientId `
+#     --set workloadIdentity.trino.clientId=$IDS.trino.clientId `
+#     --set workloadIdentity.hms.clientId=$IDS.hms.clientId
+# =============================================================================
+
+workloadIdentity:
+  spark:
+    clientId: ""    # id-forge-spark-{env}
+  trino:
+    clientId: ""    # id-forge-trino-{env}
+  hms:
+    clientId: ""    # id-forge-hms-{env}
