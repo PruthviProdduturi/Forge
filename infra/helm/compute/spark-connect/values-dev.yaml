@@ -1,0 +1,41 @@
+# =============================================================================
+# Spark Connect — Dev Environment Overrides
+#
+# Apply on top of values.yaml for dev cluster deployments:
+#
+#   helm upgrade --install spark-connect-a infra/helm/compute/spark-connect \
+#     --namespace spark-system \
+#     --set nameOverride=spark-connect-a \
+#     --values infra/helm/compute/spark-connect/values.yaml \
+#     --values infra/helm/compute/spark-connect/values-dev.yaml \
+#     --set adls.account=forgeadls{alias}dev
+#
+# Dev cluster uses smaller nodes (D16s_v5: 16 vCPUs / 64 GiB) — executors
+# sized to fit. Purpose: VS Code exploration and DAG development/testing.
+# Production batch throughput is NOT a concern in dev.
+# =============================================================================
+
+driver:
+  cores: 2
+  memory: "4g"
+  resources:
+    requests:
+      cpu: "2"
+      memory: "6Gi"
+    limits:
+      cpu: "4"
+      memory: "8Gi"
+
+executor:
+  cores: 2
+  memory: "8g"
+  instances:
+    min: 1
+    max: 4
+  resources:
+    requests:
+      cpu: "2"
+      memory: "10Gi"
+    limits:
+      cpu: "2"
+      memory: "10Gi"

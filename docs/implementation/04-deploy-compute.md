@@ -9,12 +9,21 @@
 
 ## Overview
 
-The compute cluster hosts Spark (Operator + Connect server) and Trino. This step deploys them in order:
+The compute cluster hosts Spark (Operator + Connect server) and Trino. Both environments deploy the same components — the difference is scale:
+
+| Component | Dev | Prod |
+|---|---|---|
+| **Spark Connect** | VS Code exploration, DAG dev/testing | VS Code exploration by platform team |
+| **Spark Operator** | Airflow dev DAG testing | All production Airflow batch jobs |
+| **Node type** | D16s_v5 (16 vCPUs / 64 GiB) | Standard_E96_v5 (96 vCPUs / 672 GiB) |
+| **Node pool** | 2–5 nodes | 10–100 nodes (autoscale) |
+
+Deploy in order:
 
 ```
 1. Hive Metastore          ← required by Trino and Spark for Delta catalog
 2. Spark Operator          ← CRD controller that manages SparkApplication resources
-3. Spark Connect Server    ← persistent server for interactive development
+3. Spark Connect Server    ← persistent gRPC endpoint for VS Code PySpark extension
 4. Trino                   ← federated SQL engine
 ```
 
@@ -162,20 +171,45 @@ kubectl delete sparkapplication spark-pi-test -n spark-jobs
 
 ## 4.3 Spark Connect Server
 
-The Spark Connect server provides a persistent gRPC endpoint for remote PySpark development via VS Code.
+The Spark Connect server provides a persistent gRPC endpoint for remote PySpark development via the VS Code PySpark extension. It runs in both environments — dev for daily development workflow, prod for platform-team exploration against live data.
 
-**Capacity planning (team of 15, Standard_E96_v5 nodes):**
-- Each driver supports ~10 concurrent active sessions
-- Deploy **2 instances**: `spark-connect-a` (primary) and `spark-connect-b` (overflow)
-- Executors: 8 cores / 48 GiB each — up to 20 executors per instance (dynamic allocation)
-- E96_v5 (96 vCPUs / 672 GiB RAM) fits ~8 executors per node — executors scale across the pool
+**Capacity planning:**
 
-### Deploy
+| | Dev | Prod |
+|---|---|---|
+| Instances | 1 (`spark-connect-a`) | 2 (`spark-connect-a` + `spark-connect-b`) |
+| Driver | 2 cores / 4g | 8 cores / 28g |
+| Executor | 2 cores / 8g | 8 cores / 48g (fits 8 per E96_v5 node) |
+| Max executors | 4 | 20 per instance |
+| Values file | `values.yaml` + `values-dev.yaml` | `values.yaml` only |
+
+### Deploy (dev)
 
 ```bash
 WI_CLIENT_ID=$(az identity show \
-  -g rg-forge-platform-{alias}-{env} \
-  -n id-forge-compute-{alias}-{env} \
+  -g rg-forge-platform-{alias}-dev \
+  -n id-forge-compute-{alias}-dev \
+  --query clientId -o tsv)
+
+helm upgrade --install spark-connect-a \
+  infra/helm/compute/spark-connect \
+  --namespace spark-system \
+  --set nameOverride=spark-connect-a \
+  --values infra/helm/compute/spark-connect/values.yaml \
+  --values infra/helm/compute/spark-connect/values-dev.yaml \
+  --set image.repository=forgeacr{alias}.azurecr.io/spark \
+  --set image.tag=4.1.1 \
+  --set adls.account=forgeadls{alias}dev \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
+  --wait --timeout 5m
+```
+
+### Deploy (prod)
+
+```bash
+WI_CLIENT_ID=$(az identity show \
+  -g rg-forge-platform-{alias}-prod \
+  -n id-forge-compute-{alias}-prod \
   --query clientId -o tsv)
 
 # Primary instance
@@ -183,20 +217,22 @@ helm upgrade --install spark-connect-a \
   infra/helm/compute/spark-connect \
   --namespace spark-system \
   --set nameOverride=spark-connect-a \
+  --values infra/helm/compute/spark-connect/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/spark \
   --set image.tag=4.1.1 \
-  --set adls.account=forgeadls{alias}{env} \
+  --set adls.account=forgeadls{alias}prod \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 5m
 
-# Overflow / standby instance
+# Overflow instance
 helm upgrade --install spark-connect-b \
   infra/helm/compute/spark-connect \
   --namespace spark-system \
   --set nameOverride=spark-connect-b \
+  --values infra/helm/compute/spark-connect/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/spark \
   --set image.tag=4.1.1 \
-  --set adls.account=forgeadls{alias}{env} \
+  --set adls.account=forgeadls{alias}prod \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 5m
 ```
