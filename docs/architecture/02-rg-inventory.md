@@ -73,6 +73,7 @@ All compute, storage, identity, and observability resources. Deployed after the 
 | 9 | Managed Identity | `id-forge-airflow-prproddu-dev` | Airflow DAGs write raw data to bronze and read job scripts from code. Does not need access to silver/gold — it orchestrates the jobs that do. Federated to the `airflow` service account in the `airflow` namespace. | Airflow task pods — ADLS Contributor on bronze, Reader on code, KV Secrets User |
 | 10 | Managed Identity | `id-forge-dq-prproddu-dev` | DQ runner reads from bronze, silver, and gold to validate data quality at each layer transition. Read-only — it validates, not transforms. Federated to `dq-runner` in `dq` namespace. | DQ framework pods — ADLS Reader on bronze/silver/gold, KV Secrets User |
 | 11 | Managed Identity | `id-forge-portal-prproddu-dev` | Developer Portal API serves data from the gold layer to the UI. Read-only — the portal is a consumer, not a producer. Federated to `portal-api` in `portal` namespace. | Portal API pods — ADLS Reader on gold, KV Secrets User |
+| 12 | Managed Identity | `id-forge-hms-prproddu-dev` | Hive Metastore authenticates against Azure Database for PostgreSQL using AAD token exchange — no password stored anywhere. Federated to `hive-metastore` service account in `hive-metastore` namespace on the compute cluster. | HMS pod — PostgreSQL AAD admin (JDBC token auth via azure-identity-extensions) |
 
 ### Public IPs (deployed before AKS clusters)
 

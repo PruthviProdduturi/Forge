@@ -25,11 +25,12 @@ param keyVaultId string = ''
 
 @description('Kubernetes namespace and service account mappings for each workload.')
 param namespaces object = {
-  spark: { namespace: 'spark-jobs', serviceAccountName: 'spark' }
-  trino: { namespace: 'trino', serviceAccountName: 'trino' }
-  airflow: { namespace: 'airflow', serviceAccountName: 'airflow' }
-  dq: { namespace: 'dq', serviceAccountName: 'dq-runner' }
-  portal: { namespace: 'portal', serviceAccountName: 'portal-api' }
+  spark:   { namespace: 'spark-jobs',     serviceAccountName: 'spark' }
+  trino:   { namespace: 'trino',          serviceAccountName: 'trino' }
+  airflow: { namespace: 'airflow',        serviceAccountName: 'airflow' }
+  dq:      { namespace: 'dq',            serviceAccountName: 'dq-runner' }
+  portal:  { namespace: 'portal',        serviceAccountName: 'portal-api' }
+  hms:     { namespace: 'hive-metastore', serviceAccountName: 'hive-metastore' }
 }
 
 @description('Resource tags to apply to all resources.')
@@ -358,6 +359,28 @@ resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 
 
 // ---------------------------------------------------------------------------
+// Managed Identity — hms (Hive Metastore)
+// HMS uses workload identity to authenticate against PostgreSQL via AAD —
+// no password stored anywhere. Compute cluster only (HMS runs on compute).
+// No storage RBAC: HMS does not read/write ADLS data directly.
+// ---------------------------------------------------------------------------
+resource idHms 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-forge-hms-${environment}'
+  location: location
+  tags: tags
+}
+
+resource fcHmsCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
+  parent: idHms
+  name: 'fc-hms-compute-${environment}'
+  properties: {
+    issuer: computeOidcIssuerUrl
+    subject: 'system:serviceaccount:${namespaces.hms.namespace}:${namespaces.hms.serviceAccountName}'
+    audiences: ['api://AzureADTokenExchange']
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Key Vault role assignments — conditional on keyVaultId being provided
 // All 6 workloads get Key Vault Secrets User
 // ---------------------------------------------------------------------------
@@ -444,5 +467,11 @@ output identities object = {
     id: idPortal.id
     clientId: idPortal.properties.clientId
     principalId: idPortal.properties.principalId
+  }
+  hms: {
+    id: idHms.id
+    clientId: idHms.properties.clientId
+    principalId: idHms.properties.principalId
+    name: idHms.name
   }
 }

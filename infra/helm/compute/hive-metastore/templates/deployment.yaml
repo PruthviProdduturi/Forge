@@ -15,7 +15,9 @@ spec:
     metadata:
       labels:
         app: hive-metastore
+        azure.workload.identity/use: "true"
     spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       initContainers:
@@ -30,20 +32,9 @@ spec:
                 --verbose || true
           env:
             - name: DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: hive-metastore-db
-                  key: db-host
+              value: {{ .Values.db.host | quote }}
             - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: hive-metastore-db
-                  key: db-user
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: hive-metastore-db
-                  key: db-password
+              value: {{ .Values.db.user | quote }}
           volumeMounts:
             - name: config
               mountPath: /opt/hive/conf/metastore-site.xml
@@ -62,20 +53,9 @@ spec:
               protocol: TCP
           env:
             - name: DB_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: hive-metastore-db
-                  key: db-host
+              value: {{ .Values.db.host | quote }}
             - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: hive-metastore-db
-                  key: db-user
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: hive-metastore-db
-                  key: db-password
+              value: {{ .Values.db.user | quote }}
           volumeMounts:
             - name: config
               mountPath: /opt/hive/conf/metastore-site.xml

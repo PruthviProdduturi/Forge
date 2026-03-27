@@ -46,12 +46,19 @@ Trino and Spark both use the Hive Metastore (HMS) to look up Delta table schemas
 
 ### Deploy
 
+HMS uses AAD authentication — no password. The HMS managed identity (`id-forge-hms-{env}`) authenticates against PostgreSQL via workload identity token exchange.
+
 ```bash
 kubectl create namespace hive-metastore --dry-run=client -o yaml | kubectl apply -f -
 
-HMS_HOST=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-host --query value -o tsv)
-HMS_USER=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-user --query value -o tsv)
-HMS_PASS=$(az keyvault secret show --vault-name kv-forge-{alias}-{env} --name hms-postgres-password --query value -o tsv)
+HMS_HOST=$(az keyvault secret show \
+  --vault-name kv-forge-{alias}-{env} \
+  --name hms-postgres-host --query value -o tsv)
+
+WI_CLIENT_ID=$(az identity show \
+  -g rg-forge-{alias}-{env} \
+  -n id-forge-hms-{env} \
+  --query clientId -o tsv)
 
 helm upgrade --install hive-metastore \
   infra/helm/compute/hive-metastore \
@@ -59,9 +66,9 @@ helm upgrade --install hive-metastore \
   --set image.repository=forgeacr{alias}.azurecr.io/hive-metastore \
   --set image.tag=3.1.3 \
   --set db.host="${HMS_HOST}" \
-  --set db.user="${HMS_USER}" \
-  --set db.password="${HMS_PASS}" \
+  --set db.user="id-forge-hms-{env}" \
   --set adls.account=forgeadls{alias}{env} \
+  --set serviceAccount.annotations."azure\.workload\.identity/client-id"="${WI_CLIENT_ID}" \
   --wait --timeout 5m
 ```
 

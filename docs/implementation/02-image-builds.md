@@ -21,6 +21,7 @@
    - [airflow:3.1.8](#53-airflow318)
    - [portal-api](#54-portal-api)
    - [portal-web](#55-portal-web)
+   - [hive-metastore:3.1.3](#56-hive-metastore313)
 6. [Third-Party Image Import](#6-third-party-image-import)
 7. [Helm Chart Import](#7-helm-chart-import)
 8. [Lock ACR Back Down](#8-lock-acr-back-down)
@@ -103,6 +104,7 @@ Custom images have a Dockerfile in `infra/docker/<name>/`. Each image uses `az a
 | `airflow` | `3.1.8` | `infra/docker/airflow/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |
+| `hive-metastore` | `3.1.3` | `infra/docker/hive-metastore/Dockerfile` |
 
 ---
 
@@ -249,6 +251,25 @@ az acr build \
   portal/frontend/
 ```
 
+### 5.6 hive-metastore:3.1.3
+
+**Purpose:** Hive Metastore standalone server. Provides the Thrift catalog endpoint used by both Spark (`DeltaCatalog`) and Trino (`delta_lake` connector) to resolve table names to ADLS paths.
+
+**Why custom (not a third-party import):** The upstream `apache/hive` image does not include the `azure-identity-extensions` JDBC plugin. This plugin is required for AAD token-based authentication against Azure Database for PostgreSQL — no password is stored anywhere.
+
+**What's added on top of the upstream HMS distribution:**
+- `azure-identity-extensions` JAR — JDBC AAD token exchange
+- `postgresql` JDBC driver — PostgreSQL backend
+- Guava version aligned with Hadoop 3.x (replaces bundled version)
+
+```bash
+az acr build \
+  --registry $ACR \
+  --image "hive-metastore:3.1.3" \
+  --file infra/docker/hive-metastore/Dockerfile \
+  .
+```
+
 ---
 
 ## 6. Third-Party Image Import
@@ -261,12 +282,6 @@ az acr import \
   --name $ACR \
   --source ghcr.io/kubeflow/spark-operator:v2.1.1 \
   --image spark-operator:2.1.1
-
-# Hive Metastore
-az acr import \
-  --name $ACR \
-  --source apache/hive:3.1.3 \
-  --image hive-metastore:3.1.3
 ```
 
 ### Third-party image version matrix
@@ -274,7 +289,6 @@ az acr import \
 | Image | Upstream Source | ACR tag |
 |-------|----------------|---------|
 | `spark-operator` | `ghcr.io/kubeflow/spark-operator:v2.1.1` | `spark-operator:2.1.1` |
-| `hive-metastore` | `apache/hive:3.1.3` | `hive-metastore:3.1.3` |
 
 ---
 

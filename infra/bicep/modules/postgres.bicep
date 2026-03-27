@@ -3,12 +3,15 @@
 //
 // Provisions Azure Database for PostgreSQL Flexible Server for Hive Metastore.
 // Uses VNet Integration (subnet delegation) — no public network access.
-// Stores connection secrets in Key Vault for HMS helm chart consumption.
+// Uses AAD-only authentication — no password stored anywhere (S360 compliant).
+// The HMS managed identity is registered as the AAD admin; HMS pods authenticate
+// via workload identity token exchange (azure-identity-extensions JDBC plugin).
 //
 // S360:
 //   - Public network access disabled (network.publicNetworkAccess: Disabled)
 //   - VNet Integration provides network isolation (no public IP)
-//   - TLS enforced (requireSecureTransport: ON is the default for Flex Server)
+//   - Password authentication disabled — AAD only
+//   - TLS enforced (Flex Server default: requireSecureTransport ON)
 //   - Backups enabled (7 days dev / 35 days prod)
 // =============================================================================
 
@@ -28,15 +31,14 @@ param subnetId string
 @description('Private DNS Zone resource ID for privatelink.postgres.database.azure.com.')
 param privateDnsZoneId string
 
-@description('Key Vault resource ID — HMS connection secrets are written here after server creation.')
+@description('Key Vault resource ID — hms-postgres-host secret is written here after server creation.')
 param keyVaultId string
 
-@description('HMS PostgreSQL admin username.')
-param adminUsername string = 'hmsadmin'
+@description('Principal ID (object ID) of the HMS managed identity — registered as the PostgreSQL AAD admin.')
+param hmsManagedIdentityPrincipalId string
 
-@secure()
-@description('HMS PostgreSQL admin password. Pass on CLI — do not store in parameters file.')
-param adminPassword string
+@description('Display name of the HMS managed identity — used as the PostgreSQL AAD principal name.')
+param hmsManagedIdentityName string
 
 @description('Resource tags to apply to all resources.')
 param tags object = {}
@@ -52,12 +54,12 @@ var sku = environment == 'dev' ? {
   tier: 'GeneralPurpose'
 }
 
-var storageSizeGB         = environment == 'dev' ? 32  : 64
-var backupRetentionDays   = environment == 'dev' ? 7   : 35
-var geoRedundantBackup    = environment == 'dev' ? 'Disabled' : 'Enabled'
+var storageSizeGB       = environment == 'dev' ? 32  : 64
+var backupRetentionDays = environment == 'dev' ? 7   : 35
+var geoRedundantBackup  = environment == 'dev' ? 'Disabled' : 'Enabled'
 
 // ---------------------------------------------------------------------------
-// PostgreSQL Flexible Server
+// PostgreSQL Flexible Server — AAD-only auth, VNet integration
 // ---------------------------------------------------------------------------
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: serverName
@@ -65,8 +67,6 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
   tags: tags
   sku: sku
   properties: {
-    administratorLogin: adminUsername
-    administratorLoginPassword: adminPassword
     version: '16'
     storage: {
       storageSizeGB: storageSizeGB
@@ -85,9 +85,25 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
       publicNetworkAccess: 'Disabled'
     }
     authConfig: {
-      activeDirectoryAuth: 'Disabled'
-      passwordAuth: 'Enabled'
+      activeDirectoryAuth: 'Enabled'
+      passwordAuth: 'Disabled'
+      tenantId: tenant().tenantId
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HMS AAD administrator
+// HMS managed identity authenticates via JDBC AAD token exchange.
+// The name must be the object ID (principal ID) of the AAD principal.
+// ---------------------------------------------------------------------------
+resource hmsAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
+  parent: postgresServer
+  name: hmsManagedIdentityPrincipalId
+  properties: {
+    principalType: 'ServicePrincipal'
+    principalName: hmsManagedIdentityName
+    tenantId: tenant().tenantId
   }
 }
 
@@ -104,7 +120,8 @@ resource hmsDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-1
 }
 
 // ---------------------------------------------------------------------------
-// Key Vault secrets — consumed by HMS helm chart via az keyvault secret show
+// Key Vault secret — HMS server hostname (read by platform engineers at deploy time)
+// No password or user secrets — HMS uses AAD token auth
 // ---------------------------------------------------------------------------
 resource kvRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: last(split(keyVaultId, '/'))
@@ -115,22 +132,6 @@ resource secretHost 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'hms-postgres-host'
   properties: {
     value: postgresServer.properties.fullyQualifiedDomainName
-  }
-}
-
-resource secretUser 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kvRef
-  name: 'hms-postgres-user'
-  properties: {
-    value: adminUsername
-  }
-}
-
-resource secretPassword 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
-  parent: kvRef
-  name: 'hms-postgres-password'
-  properties: {
-    value: adminPassword
   }
 }
 

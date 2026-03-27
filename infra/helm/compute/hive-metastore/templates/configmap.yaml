@@ -10,10 +10,10 @@ data:
   metastore-site.xml: |
     <?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <configuration>
-      <!-- PostgreSQL backend -->
+      <!-- PostgreSQL backend — AAD token authentication via workload identity -->
       <property>
         <name>javax.jdo.option.ConnectionURL</name>
-        <value>jdbc:postgresql://$(DB_HOST):{{ .Values.db.port }}/{{ .Values.db.name }}?ssl=require&amp;sslmode=require</value>
+        <value>jdbc:postgresql://$(DB_HOST):{{ .Values.db.port }}/{{ .Values.db.name }}?sslmode=require&amp;authenticationPluginClassName=com.azure.identity.extensions.jdbc.postgresql.AzurePostgresqlAuthenticationPlugin</value>
       </property>
       <property>
         <name>javax.jdo.option.ConnectionDriverName</name>
@@ -23,12 +23,9 @@ data:
         <name>javax.jdo.option.ConnectionUserName</name>
         <value>$(DB_USER)</value>
       </property>
-      <property>
-        <name>javax.jdo.option.ConnectionPassword</name>
-        <value>$(DB_PASSWORD)</value>
-      </property>
+      <!-- No ConnectionPassword — AAD plugin handles token exchange using AZURE_CLIENT_ID -->
 
-      <!-- Schema management — init on first start, upgrade on version mismatch -->
+      <!-- Schema management -->
       <property>
         <name>datanucleus.schema.autoCreateAll</name>
         <value>false</value>
@@ -48,7 +45,7 @@ data:
         <value>{{ .Values.service.port }}</value>
       </property>
 
-      <!-- Default warehouse on ADLS (path pointer only — data is written by Spark/Trino) -->
+      <!-- Default warehouse on ADLS (path pointer only) -->
       <property>
         <name>hive.metastore.warehouse.dir</name>
         <value>abfss://silver@{{ .Values.adls.account }}.dfs.core.windows.net/</value>

@@ -99,9 +99,6 @@ param storageReplicationType string = 'LRS'
 @description('Resource tags applied to all resources.')
 param tags object = {}
 
-@secure()
-@description('Admin password for the HMS PostgreSQL Flexible Server. Pass on CLI: --parameters hmsAdminPassword=<password>')
-param hmsAdminPassword string
 
 // ---------------------------------------------------------------------------
 // Generated name variables
@@ -342,11 +339,12 @@ module identity '../../modules/identity.bicep' = {
     // Key Vault ID is empty here; KV role assignments are managed in keyvault.bicep.
     keyVaultId: ''
     namespaces: {
-      spark:   { namespace: 'spark-jobs', serviceAccountName: 'spark' }
-      trino:   { namespace: 'trino',      serviceAccountName: 'trino' }
-      airflow: { namespace: 'airflow',    serviceAccountName: 'airflow' }
-      dq:      { namespace: 'dq',         serviceAccountName: 'dq-runner' }
-      portal:  { namespace: 'portal',     serviceAccountName: 'portal-api' }
+      spark:   { namespace: 'spark-jobs',     serviceAccountName: 'spark' }
+      trino:   { namespace: 'trino',          serviceAccountName: 'trino' }
+      airflow: { namespace: 'airflow',        serviceAccountName: 'airflow' }
+      dq:      { namespace: 'dq',            serviceAccountName: 'dq-runner' }
+      portal:  { namespace: 'portal',        serviceAccountName: 'portal-api' }
+      hms:     { namespace: 'hive-metastore', serviceAccountName: 'hive-metastore' }
     }
     tags: mergedTags
   }
@@ -385,7 +383,6 @@ module keyvault '../../modules/keyvault.bicep' = {
 module postgres '../../modules/postgres.bicep' = {
   name: 'postgres-${environment}'
   scope: resourceGroup(rgCompute)
-  dependsOn: [rgComputeRes, keyvault]
   params: {
     environment: environment
     location: location
@@ -393,7 +390,8 @@ module postgres '../../modules/postgres.bicep' = {
     subnetId: networking.outputs.subnetIds.postgres
     privateDnsZoneId: networking.outputs.privateDnsZoneIds.postgres
     keyVaultId: keyvault.outputs.keyVaultId
-    adminPassword: hmsAdminPassword
+    hmsManagedIdentityPrincipalId: identity.outputs.identities.hms.principalId
+    hmsManagedIdentityName: identity.outputs.identities.hms.name
     tags: mergedTags
   }
 }
