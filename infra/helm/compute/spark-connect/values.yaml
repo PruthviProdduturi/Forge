@@ -1,28 +1,25 @@
 # =============================================================================
 # Spark Connect — Helm Values
 #
-# Deploys a named Spark Connect server instance for interactive PySpark
-# development. Each instance is an independent driver process with its own
-# executor pool — engineers connect via VS Code PySpark extension.
+# Single shared Spark Connect server for the entire team.
+# All engineers connect to the same driver via VS Code PySpark extension.
+# Executors are shared and scale dynamically with actual query load.
 #
-# Node type: Standard_E96_v5 (96 vCPUs / 672 GiB RAM per node)
+# Node type (prod): Standard_E96_v5 (96 vCPUs / 672 GiB RAM per node)
+# Executor sizing 4c/28g is the exact fit for E96_v5:
+#   96 ÷ 4 = 24 by CPU, 672 ÷ 28 = 24 by RAM → ~22 executors per node after
+#   system reserve.
 #
-# Team of 15 (single team) — deploy 2 instances:
-#   spark-connect-a  →  primary   (all 15 engineers)
-#   spark-connect-b  →  standby   (overflow / heavy batch sessions)
-#
-# Each driver supports ~10 concurrent active sessions at the settings below.
-# Executors are shared across sessions and scale dynamically with actual load.
-#
-# Usage (deploy each instance separately):
-#   helm upgrade --install spark-connect-a infra/helm/compute/spark-connect \
+# Usage:
+#   helm upgrade --install spark-connect infra/helm/compute/spark-connect \
 #     --namespace spark-system \
-#     --set nameOverride=spark-connect-a \
 #     --values infra/helm/compute/spark-connect/values.yaml \
-#     --set adls.account=forgeadls{alias}dev
+#     --set adls.account=forgeadls{alias}{env}
+#
+#   Dev: append --values infra/helm/compute/spark-connect/values-dev.yaml
 # =============================================================================
 
-# Instance name — override per deployment (spark-connect-a, spark-connect-b)
+# Single shared instance — all 15 engineers connect to the same server
 nameOverride: spark-connect
 
 image:

@@ -171,17 +171,15 @@ kubectl delete sparkapplication spark-pi-test -n spark-jobs
 
 ## 4.3 Spark Connect Server
 
-The Spark Connect server provides a persistent gRPC endpoint for remote PySpark development via the VS Code PySpark extension. It runs in both environments — dev for daily development workflow, prod for platform-team exploration against live data.
-
-**Capacity planning:**
+One shared Spark Connect server per environment. The entire team connects to the same driver. Executors are shared and scale dynamically with actual query load.
 
 | | Dev | Prod |
 |---|---|---|
-| Instances | 1 (`spark-connect-a`) | 2 (`spark-connect-a` + `spark-connect-b`) |
 | Driver | 2 cores / 4g | 8 cores / 28g |
-| Executor | 2 cores / 8g | 4 cores / 28g (fits 22 per E96_v5 node) |
-| Max executors | 4 | 40 per instance |
-| Values file | `values.yaml` + `values-dev.yaml` | `values.yaml` only |
+| Executor | 2 cores / 8g | 4 cores / 28g |
+| Max executors | 4 | 40 |
+| Node fit | — | 22 executors per E96_v5 node |
+| Values file | `values.yaml` + `values-dev.yaml` | `values.yaml` |
 
 ### Deploy (dev)
 
@@ -191,10 +189,9 @@ WI_CLIENT_ID=$(az identity show \
   -n id-forge-compute-{alias}-dev \
   --query clientId -o tsv)
 
-helm upgrade --install spark-connect-a \
+helm upgrade --install spark-connect \
   infra/helm/compute/spark-connect \
   --namespace spark-system \
-  --set nameOverride=spark-connect-a \
   --values infra/helm/compute/spark-connect/values.yaml \
   --values infra/helm/compute/spark-connect/values-dev.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/spark \
@@ -212,23 +209,9 @@ WI_CLIENT_ID=$(az identity show \
   -n id-forge-compute-{alias}-prod \
   --query clientId -o tsv)
 
-# Primary instance
-helm upgrade --install spark-connect-a \
+helm upgrade --install spark-connect \
   infra/helm/compute/spark-connect \
   --namespace spark-system \
-  --set nameOverride=spark-connect-a \
-  --values infra/helm/compute/spark-connect/values.yaml \
-  --set image.repository=forgeacr{alias}.azurecr.io/spark \
-  --set image.tag=4.1.1 \
-  --set adls.account=forgeadls{alias}prod \
-  --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
-  --wait --timeout 5m
-
-# Overflow instance
-helm upgrade --install spark-connect-b \
-  infra/helm/compute/spark-connect \
-  --namespace spark-system \
-  --set nameOverride=spark-connect-b \
   --values infra/helm/compute/spark-connect/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/spark \
   --set image.tag=4.1.1 \
@@ -237,31 +220,24 @@ helm upgrade --install spark-connect-b \
   --wait --timeout 5m
 ```
 
-### Get the Spark Connect Endpoints
+### Get the Spark Connect Endpoint
 
-Each instance gets its own internal Azure Load Balancer IP (VNet / VPN only):
+Exposed on an internal Azure Load Balancer (VNet / VPN only):
 
 ```bash
-kubectl get svc -n spark-system -l app.kubernetes.io/managed-by=Helm
-# NAME                  TYPE           CLUSTER-IP    EXTERNAL-IP    PORT(S)
-# spark-connect-a-lb    LoadBalancer   10.100.1.50   10.4.0.10      15002:...
-# spark-connect-b-lb    LoadBalancer   10.100.1.51   10.4.0.11      15002:...
+kubectl get svc -n spark-system spark-connect-lb
+# NAME                TYPE           CLUSTER-IP    EXTERNAL-IP   PORT(S)
+# spark-connect-lb    LoadBalancer   10.100.1.50   10.4.0.10     15002:...
 
-SC_A=$(kubectl get svc -n spark-system spark-connect-a-lb \
+SC_HOST=$(kubectl get svc -n spark-system spark-connect-lb \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-SC_B=$(kubectl get svc -n spark-system spark-connect-b-lb \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-
-echo "Primary:  sc://${SC_A}:15002"
-echo "Overflow: sc://${SC_B}:15002"
+echo "sc://${SC_HOST}:15002"
 ```
 
 Store in Key Vault for developer distribution:
 ```bash
 az keyvault secret set --vault-name kv-forge-{alias}-{env} \
-  --name spark-connect-primary   --value "sc://${SC_A}:15002"
-az keyvault secret set --vault-name kv-forge-{alias}-{env} \
-  --name spark-connect-overflow  --value "sc://${SC_B}:15002"
+  --name spark-connect-endpoint --value "sc://${SC_HOST}:15002"
 ```
 
 ### Verify from VS Code / Notebook
@@ -386,8 +362,8 @@ Before proceeding to Step 05:
 [ ] Spark Operator pod Running:             kubectl get pods -n spark-system
 [ ] Spark CRDs installed:                   kubectl get crd | grep spark
 [ ] spark-pi-test SparkApplication COMPLETED (ran and cleaned up)
-[ ] Spark Connect a+b LB IPs assigned:      kubectl get svc -n spark-system
-[ ] Spark Connect endpoints in Key Vault:   az keyvault secret show --name spark-connect-primary
+[ ] Spark Connect LB IP assigned:           kubectl get svc -n spark-system spark-connect-lb
+[ ] Spark Connect endpoint in Key Vault:    az keyvault secret show --name spark-connect-endpoint
 [ ] Trino coordinator + 2 workers Running:  kubectl get pods -n trino
 [ ] Trino test query returns results:       curl port-forward test above
 [ ] Workload identity test passed:          test pod reads from ADLS bronze/ container
