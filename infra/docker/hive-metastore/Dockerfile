@@ -26,14 +26,14 @@ ARG AZURE_IDENTITY_EXTENSIONS_VERSION=1.1.5
 USER root
 
 # Add PostgreSQL JDBC driver
-RUN wget -q \
+RUN curl -fsSL \
     "https://jdbc.postgresql.org/download/postgresql-${POSTGRES_JDBC_VERSION}.jar" \
-    -O /opt/hive/lib/postgresql-${POSTGRES_JDBC_VERSION}.jar
+    -o /opt/hive/lib/postgresql-${POSTGRES_JDBC_VERSION}.jar
 
 # Add Azure Identity Extensions — enables AAD token auth for PostgreSQL JDBC
-RUN wget -q \
+RUN curl -fsSL \
     "https://repo1.maven.org/maven2/com/azure/azure-identity-extensions/${AZURE_IDENTITY_EXTENSIONS_VERSION}/azure-identity-extensions-${AZURE_IDENTITY_EXTENSIONS_VERSION}.jar" \
-    -O /opt/hive/lib/azure-identity-extensions-${AZURE_IDENTITY_EXTENSIONS_VERSION}.jar
+    -o /opt/hive/lib/azure-identity-extensions-${AZURE_IDENTITY_EXTENSIONS_VERSION}.jar
 
 USER hive
 
