@@ -774,6 +774,14 @@ resource pipBastion 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
   properties: {
     publicIPAllocationMethod: 'Static'
     publicIPAddressVersion: 'IPv4'
+    // S360 NS2.1.1: FirstPartyUsage ipTag required on all public IPs.
+    // Resolves "Existing IPs with no Tag" KPI violation without disabling the IP.
+    ipTags: [
+      {
+        ipTagType: 'FirstPartyUsage'
+        tag: environment == 'prod' ? '/Prod' : '/NonProd'
+      }
+    ]
   }
 }
 
