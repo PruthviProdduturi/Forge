@@ -25,14 +25,12 @@ var addressPrefixes = environment == 'dev' ? {
   orchestration:    '10.2.0.0/16'
   privateEndpoints: '10.3.0.0/24'
   appgw:            '10.4.0.0/24'
-  bastion:          '10.5.0.0/24'
 } : {
   vnet:             '10.16.0.0/12'
   compute:          '10.17.0.0/16'
   orchestration:    '10.18.0.0/16'
   privateEndpoints: '10.19.0.0/24'
   appgw:            '10.20.0.0/24'
-  bastion:          '10.21.0.0/24'
 }
 
 // ---------------------------------------------------------------------------
@@ -517,176 +515,6 @@ resource nsgAppGw 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
   }
 }
 
-// ---------------------------------------------------------------------------
-// NSG — Azure Bastion Subnet
-// ---------------------------------------------------------------------------
-resource nsgBastion 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
-  name: 'nsg-forge-bastion-${environment}'
-  location: location
-  tags: tags
-  properties: {
-    securityRules: [
-      // Inbound rules required by Azure Bastion
-      {
-        name: 'AllowHttpsFromInternet'
-        properties: {
-          priority: 100
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: 'Internet'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'AllowGatewayManager443'
-        properties: {
-          priority: 110
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: 'GatewayManager'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'AllowAzureLoadBalancerInbound'
-        properties: {
-          priority: 120
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: 'AzureLoadBalancer'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'AllowBastionHostCommunication8080'
-        properties: {
-          priority: 130
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: 'VirtualNetwork'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRange: '8080'
-        }
-      }
-      {
-        name: 'AllowBastionHostCommunication5701'
-        properties: {
-          priority: 140
-          direction: 'Inbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: 'VirtualNetwork'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRange: '5701'
-        }
-      }
-      {
-        name: 'DenyAllOtherInbound'
-        properties: {
-          priority: 4096
-          direction: 'Inbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-      // Outbound rules required by Azure Bastion
-      {
-        name: 'AllowSshRdpOutbound'
-        properties: {
-          priority: 100
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRanges: ['22', '3389']
-        }
-      }
-      {
-        name: 'AllowAzureCloudOutbound'
-        properties: {
-          priority: 110
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: 'Tcp'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'AzureCloud'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'AllowBastionCommunication8080Outbound'
-        properties: {
-          priority: 120
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: 'VirtualNetwork'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRange: '8080'
-        }
-      }
-      {
-        name: 'AllowBastionCommunication5701Outbound'
-        properties: {
-          priority: 130
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: 'VirtualNetwork'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'VirtualNetwork'
-          destinationPortRange: '5701'
-        }
-      }
-      {
-        name: 'AllowGetSessionInformation'
-        properties: {
-          priority: 140
-          direction: 'Outbound'
-          access: 'Allow'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: 'Internet'
-          destinationPortRange: '80'
-        }
-      }
-      {
-        name: 'DenyAllOtherOutbound'
-        properties: {
-          priority: 4096
-          direction: 'Outbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-    ]
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Virtual Network with all subnets
@@ -744,74 +572,10 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
           privateLinkServiceNetworkPolicies: 'Enabled'
         }
       }
-      {
-        // Must be named exactly AzureBastionSubnet for the Bastion service
-        name: 'AzureBastionSubnet'
-        properties: {
-          addressPrefix: addressPrefixes.bastion
-          networkSecurityGroup: {
-            id: nsgBastion.id
-          }
-          privateEndpointNetworkPolicies: 'Enabled'
-          privateLinkServiceNetworkPolicies: 'Enabled'
-        }
-      }
     ]
   }
 }
 
-// ---------------------------------------------------------------------------
-// Azure Bastion — Standard SKU with tunneling
-// ---------------------------------------------------------------------------
-resource pipBastion 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
-  name: 'pip-bastion-forge-${environment}'
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard'
-    tier: 'Regional'
-  }
-  properties: {
-    publicIPAllocationMethod: 'Static'
-    publicIPAddressVersion: 'IPv4'
-    // S360 NS2.1.1: FirstPartyUsage ipTag required on all public IPs.
-    // Resolves "Existing IPs with no Tag" KPI violation without disabling the IP.
-    ipTags: [
-      {
-        ipTagType: 'FirstPartyUsage'
-        tag: environment == 'prod' ? '/Prod' : '/NonProd'
-      }
-    ]
-  }
-}
-
-resource bastion 'Microsoft.Network/bastionHosts@2023-11-01' = {
-  name: 'bastion-forge-${environment}'
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard'
-  }
-  properties: {
-    enableTunneling: true
-    enableIpConnect: true
-    enableShareableLink: false
-    enableFileCopy: true
-    ipConfigurations: [
-      {
-        name: 'ipconfig1'
-        properties: {
-          publicIPAddress: {
-            id: pipBastion.id
-          }
-          subnet: {
-            id: '${vnet.id}/subnets/AzureBastionSubnet'
-          }
-        }
-      }
-    ]
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Private DNS Zones
@@ -1074,23 +838,6 @@ resource nsgAppGwDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-p
   }
 }
 
-resource nsgBastionDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-nsg-bastion-${environment}'
-  scope: nsgBastion
-  properties: {
-    workspaceId: platformLaw.id
-    logs: [
-      {
-        category: 'NetworkSecurityGroupEvent'
-        enabled: true
-      }
-      {
-        category: 'NetworkSecurityGroupRuleCounter'
-        enabled: true
-      }
-    ]
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Outputs
@@ -1103,7 +850,6 @@ output subnetIds object = {
   orchestration: '${vnet.id}/subnets/snet-forge-orchestration-${environment}'
   privateEndpoints: '${vnet.id}/subnets/snet-forge-private-endpoints-${environment}'
   appgw: '${vnet.id}/subnets/snet-forge-appgw-${environment}'
-  bastion: '${vnet.id}/subnets/AzureBastionSubnet'
 }
 
 output privateDnsZoneIds object = {
@@ -1119,5 +865,4 @@ output privateDnsZoneIds object = {
   purview: dnsZonePurview.id
 }
 
-output bastionId string = bastion.id
 output platformLogAnalyticsWorkspaceId string = platformLaw.id

@@ -277,7 +277,6 @@ output vnetId string = networking.outputs.vnetId
 output vnetName string = networking.outputs.vnetName
 output subnetIds object = networking.outputs.subnetIds
 output privateDnsZoneIds object = networking.outputs.privateDnsZoneIds
-output bastionId string = networking.outputs.bastionId
 
 // Storage
 output storageAccountId string = storage.outputs.storageAccountId
