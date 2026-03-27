@@ -55,22 +55,24 @@ driver:
 
 # ----------------------------------------------------------------------------
 # Dynamic executor allocation
-# E96_v5 (96 vCPUs / 672 GiB) — 8 cores / 48g fits ~8 executors per node.
+# E96_v5 (96 vCPUs / 672 GiB) — 4 cores / 28g is the natural fit:
+#   96 vCPUs ÷ 4 = 24 by CPU, 672 GiB ÷ 28 = 24 by RAM → zero waste per node.
+#   After system reserve (~4 vCPUs / 16 GiB): ~22 executors per node.
 # Executors scale with actual query load — idle executors are released.
 # ----------------------------------------------------------------------------
 executor:
-  cores: 8
-  memory: "48g"
+  cores: 4
+  memory: "28g"
   instances:
     min: 2
-    max: 20
+    max: 40
   resources:
     requests:
-      cpu: "8"
-      memory: "52Gi"
+      cpu: "4"
+      memory: "30Gi"
     limits:
-      cpu: "8"
-      memory: "52Gi"
+      cpu: "4"
+      memory: "30Gi"
   nodeSelector:
     workload: spark
   tolerations:
@@ -107,7 +109,7 @@ sparkConf:
   spark.dynamicAllocation.enabled: "true"
   spark.dynamicAllocation.shuffleTracking.enabled: "true"
   spark.dynamicAllocation.minExecutors: "2"
-  spark.dynamicAllocation.maxExecutors: "20"
+  spark.dynamicAllocation.maxExecutors: "40"
   spark.dynamicAllocation.executorIdleTimeout: "120s"
 
   # OpenLineage — lineage from interactive sessions too

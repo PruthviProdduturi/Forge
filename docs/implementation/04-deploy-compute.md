@@ -179,8 +179,8 @@ The Spark Connect server provides a persistent gRPC endpoint for remote PySpark 
 |---|---|---|
 | Instances | 1 (`spark-connect-a`) | 2 (`spark-connect-a` + `spark-connect-b`) |
 | Driver | 2 cores / 4g | 8 cores / 28g |
-| Executor | 2 cores / 8g | 8 cores / 48g (fits 8 per E96_v5 node) |
-| Max executors | 4 | 20 per instance |
+| Executor | 2 cores / 8g | 4 cores / 28g (fits 22 per E96_v5 node) |
+| Max executors | 4 | 40 per instance |
 | Values file | `values.yaml` + `values-dev.yaml` | `values.yaml` only |
 
 ### Deploy (dev)
