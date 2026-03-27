@@ -48,7 +48,7 @@ No cluster node ever pulls from a public registry. This eliminates:
 | **Apache Spark** | 4.1.1 | `eclipse-temurin:17-jre-jammy` | `forgeacr/spark:4.1.1` | Custom image — see below |
 | **Spark Operator** | 2.1.1 | `ghcr.io/kubeflow/spark-operator:v2.1.1` | `forgeacr/spark-operator:2.1.1` | Imported, not modified |
 | **Trino** | 438 | `trinodb/trino:438` | `forgeacr/trino:438` | Custom image (catalog-discovery plugin) |
-| **Hive Metastore** | 3.1.3 | `apache/hive:3.1.3` | `forgeacr/hive-metastore:3.1.3` | Imported, not modified |
+| **Hive Metastore** | 3.1.3 | `eclipse-temurin:17-jre-jammy` | `forgeacr/hive-metastore:3.1.3` | Custom image — adds `azure-identity-extensions` for AAD PostgreSQL auth |
 | **Delta Lake** | 4.1.0 | — | — | Bundled in Spark image as JAR; no separate container |
 | **Apache Iceberg** | 1.10.1 | — | — | Bundled in Spark image as JAR (`iceberg-spark-runtime-4.0_2.13`) |
 
