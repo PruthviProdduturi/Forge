@@ -30,11 +30,17 @@ az deployment sub create `
   --name forge-shared
 ```
 
-Wait for `provisioningState: Succeeded` before proceeding.
+**Verify:**
+```powershell
+az acr show --name forgeacrprproddu --query provisioningState -o tsv
+# Expected: Succeeded
+```
 
 ---
 
 ## Step 2 — Deploy Everything Else
+
+> Steps 3–7 (ACR image builds) can run in a second terminal while this is in progress.
 
 ```powershell
 az deployment sub create `
@@ -46,14 +52,35 @@ az deployment sub create `
 
 This takes 20–30 minutes. Creates: networking, AKS clusters, ADLS, managed identities, Key Vault, PostgreSQL.
 
+**Verify:**
+```powershell
+az deployment sub show --name forge-dev --query properties.provisioningState -o tsv
+# Expected: Succeeded
+
+# Confirm all key resources exist
+az aks show --resource-group rg-forge-prproddu-dev --name aks-forge-compute-prproddu-dev --query provisioningState -o tsv
+az aks show --resource-group rg-forge-prproddu-dev --name aks-forge-orchestration-prproddu-dev --query provisioningState -o tsv
+az storage account show --resource-group rg-forge-prproddu-dev --name forgeadlsprproddudev --query provisioningState -o tsv
+az postgres flexible-server show --resource-group rg-forge-prproddu-dev --name psql-forge-prproddu-dev --query state -o tsv
+# Expected: Succeeded / Ready
+```
+
 ---
 
 ## Step 3 — Enable ACR Public Access for Builds
+
+> Run in parallel with Step 2 once Step 1 is complete.
 
 ```powershell
 $ACR = "forgeacrprproddu"
 az acr update --name $ACR --allow-exports true
 az acr update --name $ACR --public-network-enabled true
+```
+
+**Verify:**
+```powershell
+az acr show --name $ACR --query publicNetworkAccess -o tsv
+# Expected: Enabled
 ```
 
 ---
@@ -74,12 +101,24 @@ az acr build --registry $ACR --image "trino:438" --file infra/docker/trino/Docke
 az acr build --registry $ACR --image "airflow:3.1.8" --file infra/docker/airflow/Dockerfile infra/docker/airflow/
 ```
 
+**Verify:**
+```powershell
+az acr repository list --name $ACR -o table
+# Expected: airflow, hive-metastore, spark, trino all listed
+```
+
 ---
 
 ## Step 5 — Import Third-Party Images
 
 ```powershell
 az acr import --name $ACR --source ghcr.io/kubeflow/spark-operator:v2.1.1 --image spark-operator:2.1.1
+```
+
+**Verify:**
+```powershell
+az acr repository show-tags --name $ACR --repository spark-operator -o table
+# Expected: 2.1.1
 ```
 
 ---
@@ -101,6 +140,12 @@ helm push airflow-1.15.0.tgz       oci://${ACR}.azurecr.io/helm
 Remove-Item spark-operator-*.tgz, trino-*.tgz, airflow-*.tgz
 ```
 
+**Verify:**
+```powershell
+az acr repository list --name $ACR -o table
+# Expected: helm/spark-operator, helm/trino, helm/airflow listed
+```
+
 ---
 
 ## Step 7 — Lock ACR Back Down
@@ -110,9 +155,17 @@ az acr update --name $ACR --public-network-enabled false
 az acr update --name $ACR --allow-exports false
 ```
 
+**Verify:**
+```powershell
+az acr show --name $ACR --query publicNetworkAccess -o tsv
+# Expected: Disabled
+```
+
 ---
 
 ## Step 8 — Get AKS Credentials
+
+> Requires Step 2 complete.
 
 ```powershell
 az aks get-credentials `
@@ -128,6 +181,13 @@ az aks get-credentials `
   --overwrite-existing
 
 kubelogin convert-kubeconfig --login azurecli
+```
+
+**Verify:**
+```powershell
+kubectl get nodes --context forge-compute-dev
+kubectl get nodes --context forge-orch-dev
+# Expected: all nodes in Ready state
 ```
 
 ---
@@ -147,6 +207,15 @@ $SPARK_CLIENT_ID = $IDS.spark.clientId
 $TRINO_CLIENT_ID = $IDS.trino.clientId
 ```
 
+**Verify:**
+```powershell
+Write-Host "POSTGRES_HOST: $POSTGRES_HOST"
+Write-Host "ADLS_ACCOUNT:  $ADLS_ACCOUNT"
+Write-Host "HMS_NAME:      $HMS_NAME"
+Write-Host "HMS_CLIENT_ID: $HMS_CLIENT_ID"
+# Expected: all values non-empty
+```
+
 ---
 
 ## Step 10 — Bootstrap Compute Cluster
@@ -162,10 +231,13 @@ helm upgrade --install cluster-bootstrap infra/helm/compute/cluster-bootstrap `
   --kube-context forge-compute-dev
 ```
 
-Verify:
+**Verify:**
 ```powershell
 kubectl get namespaces --context forge-compute-dev
+# Expected: spark-jobs, spark-system, trino, hive-metastore all present
+
 kubectl get serviceaccounts -A --context forge-compute-dev | Select-String "spark|trino|hive"
+# Expected: spark (spark-jobs), trino (trino), hive-metastore (hive-metastore)
 ```
 
 ---
@@ -181,10 +253,13 @@ helm upgrade --install cluster-bootstrap infra/helm/orchestration/cluster-bootst
   --kube-context forge-orch-dev
 ```
 
-Verify:
+**Verify:**
 ```powershell
 kubectl get namespaces --context forge-orch-dev
+# Expected: airflow, dq, portal, monitoring all present
+
 kubectl get serviceaccounts -A --context forge-orch-dev | Select-String "airflow|dq|portal"
+# Expected: airflow (airflow), dq-runner (dq), portal-api (portal)
 ```
 
 ---
@@ -203,10 +278,15 @@ helm upgrade --install hive-metastore infra/helm/compute/hive-metastore `
   --kube-context forge-compute-dev
 ```
 
-Verify:
+**Verify:**
 ```powershell
-kubectl get pods -n hive-metastore --context forge-compute-dev -w
+kubectl get pods -n hive-metastore --context forge-compute-dev
 # Expected: 1/1 Running
+
+# Confirm HMS is accepting Thrift connections on port 9083
+kubectl exec -n hive-metastore deploy/hive-metastore --context forge-compute-dev -- `
+  /opt/hive/bin/hive --service metatool -listFSRoot
+# Expected: prints warehouse root path, no errors
 ```
 
 ---
@@ -224,10 +304,45 @@ helm upgrade --install spark-operator `
   --kube-context forge-compute-dev
 ```
 
-Verify:
+**Verify:**
 ```powershell
 kubectl get pods -n spark-system --context forge-compute-dev
+# Expected: spark-operator-xxx 1/1 Running
+
 kubectl get crd --context forge-compute-dev | Select-String "spark"
+# Expected: sparkapplications, scheduledsparkapplications
+
+# Submit a quick test job
+kubectl apply --context forge-compute-dev -f - @"
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: spark-pi-test
+  namespace: spark-jobs
+spec:
+  type: Python
+  pythonVersion: "3"
+  mode: cluster
+  image: "${ACR}.azurecr.io/spark:4.1.1"
+  imagePullPolicy: Always
+  mainApplicationFile: "local:///opt/spark/examples/src/main/python/pi.py"
+  sparkVersion: "4.1.1"
+  restartPolicy:
+    type: Never
+  driver:
+    cores: 1
+    memory: "512m"
+    serviceAccount: spark
+  executor:
+    cores: 1
+    instances: 1
+    memory: "512m"
+"@
+
+kubectl get sparkapplication spark-pi-test -n spark-jobs --context forge-compute-dev -w
+# Expected final state: COMPLETED
+
+kubectl delete sparkapplication spark-pi-test -n spark-jobs --context forge-compute-dev
 ```
 
 ---
@@ -246,10 +361,24 @@ helm upgrade --install spark-connect infra/helm/compute/spark-connect `
   --kube-context forge-compute-dev
 ```
 
-Verify:
+**Verify:**
 ```powershell
 kubectl get pods -n spark-system --context forge-compute-dev
-kubectl get svc -n spark-system --context forge-compute-dev
+# Expected: spark-connect-xxx 1/1 Running
+
+kubectl get svc spark-connect-lb -n spark-system --context forge-compute-dev
+# Expected: LoadBalancer with an EXTERNAL-IP assigned
+
+# Test connection via port-forward (open a second terminal and leave running)
+kubectl port-forward svc/spark-connect-lb 15002:15002 -n spark-system --context forge-compute-dev
+```
+
+Then in Python / notebook:
+```python
+from pyspark.sql import SparkSession
+spark = SparkSession.builder.remote("sc://localhost:15002").getOrCreate()
+spark.sql("SELECT 1 AS test").show()
+# Expected: prints table with value 1
 ```
 
 ---
@@ -268,25 +397,39 @@ helm upgrade --install trino `
   --kube-context forge-compute-dev
 ```
 
-Verify:
+**Verify:**
 ```powershell
 kubectl get pods -n trino --context forge-compute-dev
 # Expected: coordinator 1/1 Running, 2x worker 1/1 Running
+
+# Port-forward and run a test query
+kubectl port-forward svc/trino 8080:8080 -n trino --context forge-compute-dev &
+Start-Sleep 3
+
+curl -s -X POST http://localhost:8080/v1/statement `
+  -H "X-Trino-User: platform-test" `
+  -H "X-Trino-Catalog: tpch" `
+  -H "X-Trino-Schema: tiny" `
+  -d "SELECT count(*) FROM orders"
+# Expected: JSON response with queryId and data rows
 ```
 
 ---
 
 ## Readiness Checklist
 
-Before proceeding to Step 05 (orchestration workloads):
+Before proceeding to orchestration workloads (Airflow, DQ, Portal):
 
 ```
-[ ] forge-shared deployment: Succeeded
-[ ] forge-dev deployment:    Succeeded
-[ ] All ACR images present:  az acr repository list --name forgeacrprproddu -o table
-[ ] HMS pod:                 kubectl get pods -n hive-metastore --context forge-compute-dev
-[ ] Spark Operator pod:      kubectl get pods -n spark-system --context forge-compute-dev
-[ ] Spark CRDs installed:    kubectl get crd --context forge-compute-dev | Select-String spark
-[ ] Spark Connect pod:       kubectl get pods -n spark-system --context forge-compute-dev
-[ ] Trino coordinator+workers running
+[ ] forge-shared: Succeeded
+[ ] forge-dev: Succeeded
+[ ] All 5 custom images in ACR: hive-metastore, spark, trino, airflow, spark-operator
+[ ] All 3 Helm charts in ACR: helm/spark-operator, helm/trino, helm/airflow
+[ ] Both AKS clusters: all nodes Ready
+[ ] Compute bootstrap: spark-jobs, spark-system, trino, hive-metastore namespaces present
+[ ] Orch bootstrap: airflow, dq, portal, monitoring namespaces present
+[ ] HMS pod: 1/1 Running, metatool listFSRoot succeeds
+[ ] Spark Operator: Running, CRDs installed, spark-pi-test COMPLETED
+[ ] Spark Connect: Running, port-forward SELECT 1 returns result
+[ ] Trino: coordinator + 2 workers Running, tpch count(*) returns result
 ```
