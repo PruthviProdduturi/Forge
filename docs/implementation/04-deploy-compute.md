@@ -292,12 +292,12 @@ WI_CLIENT_ID=$(az identity show \
 
 helm upgrade --install trino \
   oci://forgeacr{alias}.azurecr.io/helm/trino \
-  --version 1.42.1 \
+  --version 1.36.0 \
   --namespace trino \
   --create-namespace \
   --values infra/helm/compute/trino/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/trino \
-  --set image.tag=479 \
+  --set image.tag=468 \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 10m
 ```

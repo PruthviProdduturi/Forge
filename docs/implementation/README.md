@@ -101,7 +101,7 @@ Quick reference for custom images:
 | Image | Version | Dockerfile |
 |-------|---------|-----------|
 | `spark` | `4.1.1` | `infra/docker/spark/Dockerfile` |
-| `trino` | `479` | `infra/docker/trino/Dockerfile` |
+| `trino` | `468` | `infra/docker/trino/Dockerfile` |
 | `airflow` | `3.1.8` | `infra/docker/airflow/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |

@@ -4,11 +4,11 @@
 # Chart is pulled from ACR OCI registry (imported in Step 02):
 #   helm upgrade --install trino \
 #     oci://forgeacr{alias}.azurecr.io/helm/trino \
-#     --version 1.42.1 \
+#     --version 1.36.0 \
 #     --namespace trino --create-namespace \
 #     --values infra/helm/compute/trino/values.yaml \
 #     --set image.repository=forgeacr{alias}.azurecr.io/trino \
-#     --set image.tag=479 \
+#     --set image.tag=468 \
 #     --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID}
 #
 # WI_CLIENT_ID is the clientId of id-forge-trino-{env} managed identity.
@@ -16,7 +16,7 @@
 
 image:
   repository: forgeacr.azurecr.io/trino
-  tag: "479"
+  tag: "468"
   pullPolicy: IfNotPresent
 
 # ----------------------------------------------------------------------------

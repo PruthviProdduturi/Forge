@@ -95,7 +95,7 @@ az acr build --registry $ACR --image "hive-metastore:3.1.3" --file infra/docker/
 az acr build --registry $ACR --image "spark:4.1.1" --file infra/docker/spark/Dockerfile .
 
 # Trino
-az acr build --registry $ACR --image "trino:479" --file infra/docker/trino/Dockerfile infra/docker/trino/
+az acr build --registry $ACR --image "trino:468" --file infra/docker/trino/Dockerfile infra/docker/trino/
 
 # Airflow
 az acr build --registry $ACR --image "airflow:3.1.8" --file infra/docker/airflow/Dockerfile infra/docker/airflow/
@@ -130,11 +130,11 @@ $TOKEN = az acr login --name $ACR --expose-token --output tsv --query accessToke
 $TOKEN | helm registry login "${ACR}.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
 helm pull spark-operator/spark-operator --version 2.5.0
-helm pull trino/trino                   --version 1.42.1
+helm pull trino/trino                   --version 1.36.0
 helm pull apache-airflow/airflow        --version 1.20.0
 
 helm push spark-operator-2.5.0.tgz oci://${ACR}.azurecr.io/helm
-helm push trino-1.42.1.tgz          oci://${ACR}.azurecr.io/helm
+helm push trino-1.36.0.tgz          oci://${ACR}.azurecr.io/helm
 helm push airflow-1.20.0.tgz        oci://${ACR}.azurecr.io/helm
 
 Remove-Item spark-operator-*.tgz, trino-*.tgz, airflow-*.tgz
@@ -388,11 +388,11 @@ spark.sql("SELECT 1 AS test").show()
 ```powershell
 helm upgrade --install trino `
   oci://${ACR}.azurecr.io/helm/trino `
-  --version 1.42.1 `
+  --version 1.36.0 `
   --namespace trino `
   --values infra/helm/compute/trino/values.yaml `
   --set image.repository=${ACR}.azurecr.io/trino `
-  --set image.tag=479 `
+  --set image.tag=468 `
   --set "serviceAccount.annotations.azure\.workload\.identity/client-id=$TRINO_CLIENT_ID" `
   --kube-context forge-compute-dev
 ```
