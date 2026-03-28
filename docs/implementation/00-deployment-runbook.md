@@ -112,13 +112,13 @@ az acr repository list --name $ACR -o table
 ## Step 5 — Import Third-Party Images
 
 ```powershell
-az acr import --name $ACR --source ghcr.io/kubeflow/spark-operator:v2.1.1 --image spark-operator:2.1.1
+az acr import --name $ACR --source ghcr.io/kubeflow/spark-operator:2.5.0 --image spark-operator:2.5.0
 ```
 
 **Verify:**
 ```powershell
 az acr repository show-tags --name $ACR --repository spark-operator -o table
-# Expected: 2.1.1
+# Expected: 2.5.0
 ```
 
 ---
@@ -129,13 +129,13 @@ az acr repository show-tags --name $ACR --repository spark-operator -o table
 $TOKEN = az acr login --name $ACR --expose-token --output tsv --query accessToken
 $TOKEN | helm registry login "${ACR}.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
-helm pull spark-operator/spark-operator --version 2.1.1  --repo https://kubeflow.github.io/spark-operator
-helm pull trino/trino                   --version 0.31.0 --repo https://trinodb.github.io/charts
-helm pull apache-airflow/airflow        --version 1.15.0 --repo https://airflow.apache.org
+helm pull spark-operator/spark-operator --version 2.5.0
+helm pull trino/trino                   --version 1.42.1
+helm pull apache-airflow/airflow        --version 1.20.0
 
-helm push spark-operator-2.1.1.tgz oci://${ACR}.azurecr.io/helm
-helm push trino-0.31.0.tgz         oci://${ACR}.azurecr.io/helm
-helm push airflow-1.15.0.tgz       oci://${ACR}.azurecr.io/helm
+helm push spark-operator-2.5.0.tgz oci://${ACR}.azurecr.io/helm
+helm push trino-1.42.1.tgz          oci://${ACR}.azurecr.io/helm
+helm push airflow-1.20.0.tgz        oci://${ACR}.azurecr.io/helm
 
 Remove-Item spark-operator-*.tgz, trino-*.tgz, airflow-*.tgz
 ```
@@ -296,11 +296,11 @@ kubectl exec -n hive-metastore deploy/hive-metastore --context forge-compute-dev
 ```powershell
 helm upgrade --install spark-operator `
   oci://${ACR}.azurecr.io/helm/spark-operator `
-  --version 2.1.1 `
+  --version 2.5.0 `
   --namespace spark-system `
   --values infra/helm/compute/spark-operator/values.yaml `
   --set image.repository=${ACR}.azurecr.io/spark-operator `
-  --set image.tag=2.1.1 `
+  --set image.tag=2.5.0 `
   --kube-context forge-compute-dev
 ```
 
@@ -388,11 +388,11 @@ spark.sql("SELECT 1 AS test").show()
 ```powershell
 helm upgrade --install trino `
   oci://${ACR}.azurecr.io/helm/trino `
-  --version 0.31.0 `
+  --version 1.42.1 `
   --namespace trino `
   --values infra/helm/compute/trino/values.yaml `
   --set image.repository=${ACR}.azurecr.io/trino `
-  --set image.tag=438 `
+  --set image.tag=479 `
   --set "serviceAccount.annotations.azure\.workload\.identity/client-id=$TRINO_CLIENT_ID" `
   --kube-context forge-compute-dev
 ```
