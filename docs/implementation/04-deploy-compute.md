@@ -96,12 +96,12 @@ The Spark Operator watches the `spark-jobs` namespace for `SparkApplication` CRD
 # Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install spark-operator \
   oci://forgeacr{alias}.azurecr.io/helm/spark-operator \
-  --version 1.4.6 \
+  --version 2.5.0 \
   --namespace spark-system \
   --create-namespace \
   --values infra/helm/compute/spark-operator/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/spark-operator \
-  --set image.tag=1.4.6 \
+  --set image.tag=2.5.0 \
   --wait --timeout 5m
 ```
 
@@ -292,12 +292,12 @@ WI_CLIENT_ID=$(az identity show \
 
 helm upgrade --install trino \
   oci://forgeacr{alias}.azurecr.io/helm/trino \
-  --version 0.31.0 \
+  --version 1.42.1 \
   --namespace trino \
   --create-namespace \
   --values infra/helm/compute/trino/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/trino \
-  --set image.tag=438 \
+  --set image.tag=479 \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 10m
 ```

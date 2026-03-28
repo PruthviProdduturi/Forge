@@ -17,7 +17,7 @@
 4. [Enabling ACR Tasks (public access)](#4-enabling-acr-tasks-public-access)
 5. [Custom Images](#5-custom-images)
    - [spark:4.1.1](#51-spark411)
-   - [trino:438](#52-trino438)
+   - [trino:479](#52-trino479)
    - [airflow:3.1.8](#53-airflow318)
    - [portal-api](#54-portal-api)
    - [portal-web](#55-portal-web)
@@ -99,7 +99,7 @@ Custom images have a Dockerfile in `infra/docker/<name>/`. Each image uses `az a
 | Image | Version | Dockerfile |
 |-------|---------|-----------|
 | `spark` | `4.1.1` | `infra/docker/spark/Dockerfile` |
-| `trino` | `438` | `infra/docker/trino/Dockerfile` |
+| `trino` | `479` | `infra/docker/trino/Dockerfile` |
 | `airflow` | `3.1.8` | `infra/docker/airflow/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |
@@ -147,12 +147,12 @@ az acr build \
 
 ---
 
-### 5.2 trino:438
+### 5.2 trino:479
 
 **Purpose:** Trino coordinator and worker pods for ad-hoc SQL queries against Delta tables in the Silver and Gold layers.
 
 **What is included:**
-- Official `trinodb/trino:438` base (includes Delta Lake connector)
+- Official `trinodb/trino:479` base (includes Delta Lake connector)
 - Custom `catalog-discovery` plugin — dynamic per-tenant catalog registration without static property files (Forge-built JAR; build context includes a `.gitkeep` placeholder if not yet built)
 - Proper file ownership on plugin directories for the `trino` user
 - Shell access removed for the `trino` user (`/sbin/nologin`) — security hardening
@@ -164,7 +164,7 @@ interactive SQL queries — meaningful lineage is captured upstream at the Spark
 ```bash
 az acr build \
   --registry $ACR \
-  --image trino:438 \
+  --image trino:479 \
   --file infra/docker/trino/Dockerfile \
   infra/docker/trino/
 ```
@@ -279,15 +279,15 @@ Third-party images are not modified — they are imported directly into ACR usin
 # Spark Operator
 az acr import \
   --name $ACR \
-  --source ghcr.io/kubeflow/spark-operator:v2.1.1 \
-  --image spark-operator:2.1.1
+  --source ghcr.io/kubeflow/spark-operator:v2.5.0 \
+  --image spark-operator:2.5.0
 ```
 
 ### Third-party image version matrix
 
 | Image | Upstream Source | ACR tag |
 |-------|----------------|---------|
-| `spark-operator` | `ghcr.io/kubeflow/spark-operator:v2.1.1` | `spark-operator:2.1.1` |
+| `spark-operator` | `ghcr.io/kubeflow/spark-operator:v2.5.0` | `spark-operator:2.5.0` |
 
 ---
 
@@ -303,14 +303,14 @@ TOKEN=$(az acr login --name $ACR --expose-token --output tsv --query accessToken
 echo $TOKEN | helm registry login ${ACR}.azurecr.io --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
 # Pull charts from public repos
-helm pull spark-operator/spark-operator --version 2.1.1  --repo https://kubeflow.github.io/spark-operator
-helm pull trino/trino                   --version 0.31.0 --repo https://trinodb.github.io/charts
-helm pull apache-airflow/airflow        --version 1.15.0 --repo https://airflow.apache.org
+helm pull spark-operator/spark-operator --version 2.5.0  --repo https://kubeflow.github.io/spark-operator
+helm pull trino/trino                   --version 1.42.1 --repo https://trinodb.github.io/charts
+helm pull apache-airflow/airflow        --version 1.20.0 --repo https://airflow.apache.org
 
 # Push to ACR
-helm push spark-operator-2.1.1.tgz  oci://${ACR}.azurecr.io/helm
-helm push trino-0.31.0.tgz          oci://${ACR}.azurecr.io/helm
-helm push airflow-1.15.0.tgz        oci://${ACR}.azurecr.io/helm
+helm push spark-operator-2.5.0.tgz  oci://${ACR}.azurecr.io/helm
+helm push trino-1.42.1.tgz          oci://${ACR}.azurecr.io/helm
+helm push airflow-1.20.0.tgz        oci://${ACR}.azurecr.io/helm
 
 # Clean up local tarballs
 rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
@@ -320,9 +320,9 @@ rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
 
 | Chart | Chart Version | App Version | ACR path |
 |-------|--------------|-------------|----------|
-| `spark-operator` | `2.1.1` | Spark Operator 2.1.1 | `oci://{acr}.azurecr.io/helm/spark-operator:2.1.1` |
-| `trino` | `0.31.0` | Trino 438 | `oci://{acr}.azurecr.io/helm/trino:0.31.0` |
-| `airflow` | `1.15.0` | Airflow 3.1.8 | `oci://{acr}.azurecr.io/helm/airflow:1.15.0` |
+| `spark-operator` | `2.5.0` | Spark Operator 2.5.0 | `oci://{acr}.azurecr.io/helm/spark-operator:2.5.0` |
+| `trino` | `1.42.1` | Trino 479 | `oci://{acr}.azurecr.io/helm/trino:1.42.1` |
+| `airflow` | `1.20.0` | Airflow 3.1.8 | `oci://{acr}.azurecr.io/helm/airflow:1.20.0` |
 
 ---
 

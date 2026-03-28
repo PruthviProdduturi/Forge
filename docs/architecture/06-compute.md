@@ -29,7 +29,7 @@
 
 ### Overview
 
-The Spark Operator (version 1.4.6, deployed to namespace `spark-system` on the `forge-compute` AKS cluster) implements the Kubernetes operator pattern for Apache Spark. It introduces a Custom Resource Definition (CRD) called `SparkApplication` into the `sparkoperator.k8s.io/v1beta2` API group. Instead of using `spark-submit` directly, every Spark job in Forge is described as a `SparkApplication` manifest and applied to the cluster. The operator handles the entire lifecycle from that point: launching pods, monitoring progress, handling retries, and cleaning up.
+The Spark Operator (version 2.5.0, deployed to namespace `spark-system` on the `forge-compute` AKS cluster) implements the Kubernetes operator pattern for Apache Spark. It introduces a Custom Resource Definition (CRD) called `SparkApplication` into the `sparkoperator.k8s.io/v1beta2` API group. Instead of using `spark-submit` directly, every Spark job in Forge is described as a `SparkApplication` manifest and applied to the cluster. The operator handles the entire lifecycle from that point: launching pods, monitoring progress, handling retries, and cleaning up.
 
 ### SparkApplication CRD
 
@@ -779,7 +779,7 @@ Forge uses these connectors:
 
 | Connector | Catalog Name | Data Source | Notes |
 |-----------|--------------|-------------|-------|
-| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 438; reads Delta log |
+| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 479; reads Delta log |
 | `hive` | `bronze` | bronze/ Delta files | Legacy Hive-compatible for Bronze layer |
 | `tpch` | `tpch` | In-memory benchmark data | Benchmarking and query testing only |
 

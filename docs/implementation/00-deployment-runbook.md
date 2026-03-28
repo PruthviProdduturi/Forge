@@ -95,7 +95,7 @@ az acr build --registry $ACR --image "hive-metastore:3.1.3" --file infra/docker/
 az acr build --registry $ACR --image "spark:4.1.1" --file infra/docker/spark/Dockerfile .
 
 # Trino
-az acr build --registry $ACR --image "trino:438" --file infra/docker/trino/Dockerfile infra/docker/trino/
+az acr build --registry $ACR --image "trino:479" --file infra/docker/trino/Dockerfile infra/docker/trino/
 
 # Airflow
 az acr build --registry $ACR --image "airflow:3.1.8" --file infra/docker/airflow/Dockerfile infra/docker/airflow/

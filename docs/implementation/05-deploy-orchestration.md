@@ -238,7 +238,7 @@ kubectl create namespace airflow --dry-run=client -o yaml | kubectl apply -f -
 # Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
 helm upgrade --install airflow \
   oci://forgeacr{alias}.azurecr.io/helm/airflow \
-  --version 1.15.0 \
+  --version 1.20.0 \
   --namespace airflow \
   --values infra/helm/orchestration/airflow/values.yaml \
   --set images.airflow.repository=forgeacr{alias}.azurecr.io/airflow \

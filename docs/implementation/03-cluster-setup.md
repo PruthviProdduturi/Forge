@@ -660,9 +660,9 @@ helm upgrade --install spark-operator \
   spark-operator/spark-operator \
   --namespace spark-system \
   --create-namespace \
-  --version 1.4.6 \
+  --version 2.5.0 \
   --set image.repository="${ACR_SERVER}/spark-operator" \
-  --set image.tag="1.4.6" \
+  --set image.tag="2.5.0" \
   --set webhook.enable=true \
   --set webhook.port=8080 \
   --set metrics.enable=true \

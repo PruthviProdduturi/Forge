@@ -55,6 +55,10 @@ resources:
 nodeSelector:
   agentpool: systempool
 
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
+
 replicaCount: 1
 
 service:

@@ -20,6 +20,8 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
       initContainers:
         - name: schema-init
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
