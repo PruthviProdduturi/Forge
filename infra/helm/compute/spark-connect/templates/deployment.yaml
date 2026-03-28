@@ -36,6 +36,8 @@ spec:
                 --conf spark.kubernetes.namespace={{ .Release.Namespace }} \
                 --conf spark.kubernetes.container.image={{ .Values.image.repository }}:{{ .Values.image.tag }} \
                 --conf spark.kubernetes.driver.pod.name=${HOSTNAME} \
+                --conf spark.driver.host=$(hostname -i) \
+                --conf spark.driver.bindAddress=0.0.0.0 \
                 --conf spark.driver.cores={{ .Values.driver.cores }} \
                 --conf spark.driver.memory={{ .Values.driver.memory }} \
                 --conf spark.executor.cores={{ .Values.executor.cores }} \
@@ -56,6 +58,14 @@ spec:
               name: grpc
           resources:
             {{- toYaml .Values.driver.resources | nindent 12 }}
+          volumeMounts:
+            - name: executor-pod-template
+              mountPath: /opt/spark/conf/executor-pod-template.yaml
+              subPath: executor-pod-template.yaml
           env:
             - name: SPARK_NO_DAEMONIZE
               value: "true"
+      volumes:
+        - name: executor-pod-template
+          configMap:
+            name: {{ .Values.nameOverride | default "spark-connect" }}-executor-pod-template

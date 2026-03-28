@@ -39,3 +39,12 @@ executor:
     limits:
       cpu: "2"
       memory: "10Gi"
+
+service:
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "snet-forge-compute-dev"
+
+sparkConf:
+  spark.dynamicAllocation.minExecutors: "1"
+  spark.dynamicAllocation.maxExecutors: "4"

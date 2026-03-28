@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.nameOverride | default "spark-connect" }}-driver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.nameOverride | default "spark-connect" }}
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Headless — DNS resolves directly to driver pod IP so executors can connect.
+  # Spark Connect runs in client mode and does not auto-create a driver service;
+  # without this, executor DNS resolution of the driver hostname fails.
+  clusterIP: None
+  selector:
+    app: {{ .Values.nameOverride | default "spark-connect" }}
+  ports:
+    - name: spark-driver
+      port: 7078
+      protocol: TCP
+    - name: block-manager
+      port: 7079
+      protocol: TCP

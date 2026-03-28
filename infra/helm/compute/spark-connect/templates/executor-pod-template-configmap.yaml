@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.nameOverride | default "spark-connect" }}-executor-pod-template
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.nameOverride | default "spark-connect" }}
+    app.kubernetes.io/managed-by: Helm
+data:
+  executor-pod-template.yaml: |
+    apiVersion: v1
+    kind: Pod
+    spec:
+      tolerations:
+        {{- toYaml .Values.executor.tolerations | nindent 8 }}

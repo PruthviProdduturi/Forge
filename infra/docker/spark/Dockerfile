@@ -191,6 +191,15 @@ COPY infra/docker/spark/spark-defaults.conf "${SPARK_HOME}/conf/spark-defaults.c
 COPY infra/docker/spark/log4j2.properties "${SPARK_HOME}/conf/log4j2.properties"
 
 # ----------------------------------------------------------------------------
+# Entrypoint script — routes Spark K8s driver/executor modes.
+# Spark K8s sets executor pod args to ["executor", "--driver-url", ...],
+# so this script must be the ENTRYPOINT (not spark-class directly).
+# Matches the official Apache Spark Docker image convention.
+# ----------------------------------------------------------------------------
+COPY infra/docker/spark/entrypoint.sh /opt/entrypoint.sh
+RUN chmod +x /opt/entrypoint.sh
+
+# ----------------------------------------------------------------------------
 # Directory layout and permissions
 #   /opt/spark/work-dir  — job working directory (SparkApplication CRD mounts here)
 #   /opt/spark/logs      — driver/executor log output
@@ -225,5 +234,5 @@ EXPOSE 4040 7077 8080
 # driver mode (spark-submit) and executor mode based on SPARK_EXECUTOR_ID
 # being set.
 # ----------------------------------------------------------------------------
-ENTRYPOINT ["/usr/bin/tini", "-s", "--"]
-CMD ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.SparkSubmit"]
+ENTRYPOINT ["/usr/bin/tini", "-s", "--", "/opt/entrypoint.sh"]
+CMD ["driver"]

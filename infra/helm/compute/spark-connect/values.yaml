@@ -14,7 +14,8 @@
 #   helm upgrade --install spark-connect infra/helm/compute/spark-connect \
 #     --namespace spark-system \
 #     --values infra/helm/compute/spark-connect/values.yaml \
-#     --set adls.account=forgeadls{alias}{env}
+#     --set adls.account=forgeadls{alias}{env} \
+#     --set image.repository=forgeacr{alias}.azurecr.io/spark
 #
 #   Dev: append --values infra/helm/compute/spark-connect/values-dev.yaml
 # =============================================================================
@@ -23,7 +24,7 @@
 nameOverride: spark-connect
 
 image:
-  repository: forgeacr.azurecr.io/spark
+  repository: forgeacr.azurecr.io/spark  # override at deploy: --set image.repository=forgeacr{alias}.azurecr.io/spark
   tag: "4.1.1"
   pullPolicy: IfNotPresent
 
@@ -109,10 +110,18 @@ sparkConf:
   spark.dynamicAllocation.maxExecutors: "40"
   spark.dynamicAllocation.executorIdleTimeout: "120s"
 
-  # OpenLineage — lineage from interactive sessions too
-  spark.extraListeners: "io.openlineage.spark.agent.OpenLineageSparkListener"
-  spark.openlineage.transport.type: "http"
-  spark.openlineage.namespace: "forge-interactive"
+  # OpenLineage — disabled for Spark Connect. spark-defaults.conf in the image enables it
+  # but without a transport URL executors crash on initialization. Lineage for interactive
+  # sessions is a prod concern; batch jobs via SparkApplication CRDs emit lineage instead.
+  spark.extraListeners: ""
+  spark.openlineage.transport.type: ""
+
+  # Executor pod template — provides tolerations so executors schedule on tainted spark nodes
+  spark.kubernetes.executor.podTemplateFile: "/opt/spark/conf/executor-pod-template.yaml"
+
+  # Disable local event log — spark-defaults.conf in the image sets file:/tmp/spark-events
+  # which does not exist in the container. Event history is a prod concern (log to ADLS).
+  spark.eventLog.enabled: "false"
 
 # ----------------------------------------------------------------------------
 # ADLS account (set per environment at deploy time)
