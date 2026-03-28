@@ -139,9 +139,9 @@ az acr repository show-tags --name $ACR --repository spark-operator-kubectl    -
 $TOKEN = az acr login --name $ACR --expose-token --output tsv --query accessToken
 $TOKEN | helm registry login "${ACR}.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
-helm pull spark-operator/spark-operator --version 2.5.0  --repo https://kubeflow.github.io/spark-operator
-helm pull trino/trino                   --version 1.36.0 --repo https://trinodb.github.io/charts
-helm pull apache-airflow/airflow        --version 1.20.0 --repo https://airflow.apache.org
+helm pull spark-operator --version 2.5.0  --repo https://kubeflow.github.io/spark-operator
+helm pull trino          --version 1.36.0 --repo https://trinodb.github.io/charts
+helm pull airflow        --version 1.20.0 --repo https://airflow.apache.org
 
 helm push spark-operator-2.5.0.tgz oci://${ACR}.azurecr.io/helm
 helm push trino-1.36.0.tgz          oci://${ACR}.azurecr.io/helm
