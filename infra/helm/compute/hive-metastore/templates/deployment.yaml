@@ -30,8 +30,8 @@ spec:
             - /bin/bash
             - -c
             - |
-              /opt/hive/bin/schematool -dbType postgres -initOrUpgradeSchema \
-                --verbose || true
+              /opt/hive/bin/schematool -dbType postgres -initSchema --verbose 2>&1 || \
+              /opt/hive/bin/schematool -dbType postgres -upgradeSchema --verbose 2>&1 || true
           env:
             - name: DB_HOST
               value: {{ .Values.db.host | quote }}
