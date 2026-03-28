@@ -30,11 +30,16 @@ spec:
             - /bin/bash
             - -c
             - |
-              /opt/hive/bin/schematool -dbType postgres -initSchema --verbose 2>&1 || \
-              /opt/hive/bin/schematool -dbType postgres -upgradeSchema --verbose 2>&1 || true
+              JDBC_URL="jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=require&authenticationPluginClassName=com.azure.identity.extensions.jdbc.postgresql.AzurePostgresqlAuthenticationPlugin"
+              /opt/hive/bin/schematool -dbType postgres -url "${JDBC_URL}" -userName "${DB_USER}" -initSchema --verbose 2>&1 || \
+              /opt/hive/bin/schematool -dbType postgres -url "${JDBC_URL}" -userName "${DB_USER}" -upgradeSchema --verbose 2>&1 || true
           env:
             - name: DB_HOST
               value: {{ .Values.db.host | quote }}
+            - name: DB_PORT
+              value: {{ .Values.db.port | quote }}
+            - name: DB_NAME
+              value: {{ .Values.db.name | quote }}
             - name: DB_USER
               value: {{ .Values.db.user | quote }}
           volumeMounts:
