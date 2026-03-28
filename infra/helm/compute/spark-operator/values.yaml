@@ -6,23 +6,29 @@
 #     oci://forgeacr{alias}.azurecr.io/helm/spark-operator \
 #     --version 2.5.0 \
 #     --namespace spark-system --create-namespace \
-#     --values infra/helm/compute/spark-operator/values.yaml \
-#     --set image.repository=forgeacr{alias}.azurecr.io/spark-operator \
-#     --set image.tag=2.5.0
+#     --values infra/helm/compute/spark-operator/values.yaml
 # =============================================================================
 
-image:
-  repository: forgeacr.azurecr.io/spark-operator
-  tag: "2.5.0"
-  pullPolicy: IfNotPresent
+# Controller image (main operator)
+controller:
+  image:
+    registry: forgeacrprproddu.azurecr.io
+    repository: spark-operator-controller
+    tag: "2.5.0"
+    pullPolicy: IfNotPresent
+
+# Kubectl image (used by operator for SparkApplication lifecycle)
+webhook:
+  image:
+    registry: forgeacrprproddu.azurecr.io
+    repository: spark-operator-kubectl
+    tag: "2.5.0"
+    pullPolicy: IfNotPresent
+  enable: true
+  namespaceSelector: "kubernetes.io/metadata.name=spark-jobs"
 
 # Watch only the spark-jobs namespace — operator does not need cluster-wide scope
 sparkJobNamespace: spark-jobs
-
-# Webhook injects workload identity labels and node affinity into driver/executor pods
-webhook:
-  enable: true
-  namespaceSelector: "kubernetes.io/metadata.name=spark-jobs"
 
 # Prometheus-format metrics scraped by Azure Monitor Agent
 metrics:
