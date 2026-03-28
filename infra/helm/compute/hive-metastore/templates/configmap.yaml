@@ -10,7 +10,10 @@ data:
   metastore-site.xml: |
     <?xml version="1.0" encoding="UTF-8" standalone="no"?>
     <configuration>
-      <!-- PostgreSQL backend — AAD token authentication via workload identity -->
+      <!-- PostgreSQL backend — AAD token authentication via workload identity.
+           Values are rendered by Helm at deploy time ({{ .Values.db.host }} etc.).
+           Do NOT use $(DB_HOST) env var syntax here — Kubernetes only substitutes
+           env vars in command/args fields, not in mounted ConfigMap files. -->
       <property>
         <name>javax.jdo.option.ConnectionURL</name>
         <value>jdbc:postgresql://{{ .Values.db.host }}:{{ .Values.db.port }}/{{ .Values.db.name }}?sslmode=require&amp;authenticationPluginClassName=com.azure.identity.extensions.jdbc.postgresql.AzurePostgresqlAuthenticationPlugin</value>

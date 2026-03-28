@@ -257,9 +257,20 @@ az acr build \
 **Why custom (not a third-party import):** The upstream `apache/hive` image does not include the `azure-identity-extensions` JDBC plugin. This plugin is required for AAD token-based authentication against Azure Database for PostgreSQL — no password is stored anywhere.
 
 **What's added on top of the upstream HMS distribution:**
-- `azure-identity-extensions` JAR — JDBC AAD token exchange
-- `postgresql` JDBC driver — PostgreSQL backend
-- Guava version aligned with Hadoop 3.x (replaces bundled version)
+- `postgresql` JDBC driver `42.7.1` — PostgreSQL backend
+- `azure-identity-extensions 1.1.5` + full transitive dependency tree — JDBC AAD token exchange via managed identity. Downloaded via Maven so all required JARs (azure-identity, azure-core, msal4j, okhttp, etc.) are present.
+
+**Important: HTTP transport is OkHttp, not Netty**
+
+`azure-core-http-netty` is explicitly excluded from the Maven dependency resolution. Hadoop bundles its own Netty JARs and the `reactor-netty` version required by `azure-core-http-netty` conflicts, causing `HttpClientConfig` to fail to initialize at runtime. `azure-core-http-okhttp` is used instead — OkHttp has no Netty dependency.
+
+**Important: schematool JDBC URL must be passed explicitly**
+
+The `schema-init` init container runs `schematool` to initialize the PostgreSQL schema on first deploy. `schematool` reads `hive-site.xml`, not `metastore-site.xml`, so without explicit `-url`/`-userName` flags it falls back to Derby. The init container passes the JDBC URL and credentials explicitly via env vars rendered from Helm values.
+
+**Important: ConfigMap values, not env var references**
+
+`metastore-site.xml` uses Helm template values (`{{ .Values.db.host }}`) directly. Kubernetes env var substitution (`$(DB_HOST)`) only works in `command`/`args` fields, not in mounted ConfigMap files.
 
 ```bash
 az acr build \

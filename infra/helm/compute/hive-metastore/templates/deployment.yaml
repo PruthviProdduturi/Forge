@@ -20,6 +20,7 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
+      # systempool nodes have CriticalAddonsOnly taint — toleration required or pod stays Pending
       tolerations:
         {{- toYaml .Values.tolerations | nindent 8 }}
       initContainers:
@@ -30,6 +31,10 @@ spec:
             - /bin/bash
             - -c
             - |
+              # schematool reads hive-site.xml, not metastore-site.xml.
+              # Without explicit -url/-userName it falls back to Derby defaults.
+              # Pass the full JDBC URL with the AAD auth plugin explicitly.
+              # initSchema on fresh install, upgradeSchema if schema already exists.
               JDBC_URL="jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=require&authenticationPluginClassName=com.azure.identity.extensions.jdbc.postgresql.AzurePostgresqlAuthenticationPlugin"
               /opt/hive/bin/schematool -dbType postgres -url "${JDBC_URL}" -userName "${DB_USER}" -initSchema --verbose 2>&1 || \
               /opt/hive/bin/schematool -dbType postgres -url "${JDBC_URL}" -userName "${DB_USER}" -upgradeSchema --verbose 2>&1 || true
