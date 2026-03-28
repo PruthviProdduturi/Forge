@@ -13,7 +13,7 @@ data:
       <!-- PostgreSQL backend — AAD token authentication via workload identity -->
       <property>
         <name>javax.jdo.option.ConnectionURL</name>
-        <value>jdbc:postgresql://$(DB_HOST):{{ .Values.db.port }}/{{ .Values.db.name }}?sslmode=require&amp;authenticationPluginClassName=com.azure.identity.extensions.jdbc.postgresql.AzurePostgresqlAuthenticationPlugin</value>
+        <value>jdbc:postgresql://{{ .Values.db.host }}:{{ .Values.db.port }}/{{ .Values.db.name }}?sslmode=require&amp;authenticationPluginClassName=com.azure.identity.extensions.jdbc.postgresql.AzurePostgresqlAuthenticationPlugin</value>
       </property>
       <property>
         <name>javax.jdo.option.ConnectionDriverName</name>
@@ -21,7 +21,7 @@ data:
       </property>
       <property>
         <name>javax.jdo.option.ConnectionUserName</name>
-        <value>$(DB_USER)</value>
+        <value>{{ .Values.db.user }}</value>
       </property>
       <!-- No ConnectionPassword — AAD plugin handles token exchange using AZURE_CLIENT_ID -->
 
