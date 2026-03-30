@@ -33,7 +33,7 @@ coordinator:
       cpu: "4"
       memory: "8Gi"
   nodeSelector:
-    agentpool: trino
+    agentpool: trinopool
   tolerations:
     - key: workload
       operator: Equal
@@ -47,16 +47,16 @@ coordinator:
 worker:
   replicas: 1
   jvm:
-    maxHeapSize: "10G"
+    maxHeapSize: "7G"
   resources:
     requests:
       cpu: "2"
-      memory: "12Gi"
+      memory: "9Gi"
     limits:
       cpu: "4"
-      memory: "12Gi"
+      memory: "9Gi"
   nodeSelector:
-    agentpool: trino
+    agentpool: trinopool
   tolerations:
     - key: workload
       operator: Equal
@@ -82,13 +82,13 @@ additionalCatalogs:
     hive.metastore.uri=thrift://hive-metastore.hive-metastore.svc.cluster.local:9083
     delta.hive-catalog-name=hive
     fs.native-azure.enabled=true
-    azure.auth-type=MANAGED_IDENTITY
+    azure.auth-type=DEFAULT
 
   hive: |
     connector.name=hive
     hive.metastore.uri=thrift://hive-metastore.hive-metastore.svc.cluster.local:9083
     fs.native-azure.enabled=true
-    azure.auth-type=MANAGED_IDENTITY
+    azure.auth-type=DEFAULT
 
 # ----------------------------------------------------------------------------
 # Workload identity — client ID set at deploy time via --set
@@ -101,3 +101,14 @@ serviceAccount:
 # Pod labels required for workload identity token injection
 podLabels:
   azure.workload.identity/use: "true"
+
+# ----------------------------------------------------------------------------
+# Service — internal Azure Load Balancer on the compute subnet
+# Exposes the Trino HTTP API (port 8080) within the VNet.
+# Access: http://<internal-ip>:8080  (same subnet as Forge services)
+# ----------------------------------------------------------------------------
+service:
+  type: LoadBalancer
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: snet-forge-compute-dev

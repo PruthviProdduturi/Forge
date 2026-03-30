@@ -31,6 +31,17 @@ var addressPrefixes = environment == 'dev' ? {
 }
 
 // ---------------------------------------------------------------------------
+// Pod overlay CIDRs — fixed regardless of environment.
+// Azure CNI Overlay assigns pod IPs from these ranges. They do NOT overlap
+// with the VNet address space and are NOT included in the 'VirtualNetwork'
+// NSG service tag, so explicit inbound rules are required for cross-node
+// pod-to-pod traffic and pod-to-service traffic across clusters.
+// Defined in aks.bicep: compute=10.100.0.0/16, orchestration=10.101.0.0/16
+// ---------------------------------------------------------------------------
+var computePodCidr = '10.100.0.0/16'
+var orchPodCidr = '10.101.0.0/16'
+
+// ---------------------------------------------------------------------------
 // Platform Log Analytics Workspace — NSG and network diagnostics
 // S360: Network activity audit trail. All NSGs send diagnostic logs here.
 // ---------------------------------------------------------------------------
@@ -87,6 +98,23 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
+        // Required for Azure CNI Overlay: pod IPs (10.100.x.x) are outside the
+        // VNet address space and not covered by AllowIntraSubnetInbound.
+        // Without this, cross-node pod traffic (Trino worker↔coordinator,
+        // CoreDNS, kube-proxy) hits DenyAllOtherInbound and the cluster breaks.
+        name: 'AllowComputePodOverlayInbound'
+        properties: {
+          priority: 115
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: '*'
+          sourceAddressPrefix: computePodCidr
+          sourcePortRange: '*'
+          destinationAddressPrefix: addressPrefixes.compute
+          destinationPortRange: '*'
+        }
+      }
+      {
         name: 'AllowOrchestrationToCompute'
         properties: {
           priority: 120
@@ -94,6 +122,22 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
           access: 'Allow'
           protocol: 'Tcp'
           sourceAddressPrefix: addressPrefixes.orchestration
+          sourcePortRange: '*'
+          destinationAddressPrefix: addressPrefixes.compute
+          destinationPortRange: '*'
+        }
+      }
+      {
+        // Allows orchestration cluster pods (e.g. Forge portal) to reach compute
+        // cluster services (e.g. Trino internal LB). Orch pod IPs (10.101.x.x)
+        // are not covered by AllowOrchestrationToCompute which only allows node IPs.
+        name: 'AllowOrchPodToCompute'
+        properties: {
+          priority: 125
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: orchPodCidr
           sourcePortRange: '*'
           destinationAddressPrefix: addressPrefixes.compute
           destinationPortRange: '*'
@@ -237,6 +281,21 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
         }
       }
       {
+        // Required for Azure CNI Overlay: pod IPs (10.101.x.x) are outside the
+        // VNet address space and not covered by AllowIntraSubnetInbound.
+        name: 'AllowOrchPodOverlayInbound'
+        properties: {
+          priority: 115
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: '*'
+          sourceAddressPrefix: orchPodCidr
+          sourcePortRange: '*'
+          destinationAddressPrefix: addressPrefixes.orchestration
+          destinationPortRange: '*'
+        }
+      }
+      {
         name: 'AllowComputeToOrchestration'
         properties: {
           priority: 120
@@ -244,6 +303,22 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
           access: 'Allow'
           protocol: 'Tcp'
           sourceAddressPrefix: addressPrefixes.compute
+          sourcePortRange: '*'
+          destinationAddressPrefix: addressPrefixes.orchestration
+          destinationPortRange: '*'
+        }
+      }
+      {
+        // Allows compute cluster pods to reach orchestration cluster services
+        // (e.g. Airflow API). Compute pod IPs (10.100.x.x) are not covered
+        // by AllowComputeToOrchestration which only allows node IPs.
+        name: 'AllowComputePodToOrch'
+        properties: {
+          priority: 125
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: computePodCidr
           sourcePortRange: '*'
           destinationAddressPrefix: addressPrefixes.orchestration
           destinationPortRange: '*'
@@ -484,10 +559,18 @@ resource nsgPostgres 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
 
 
 // ---------------------------------------------------------------------------
-// Route Tables — pre-created stubs for future Azure Firewall UDR migration.
-// Currently empty (Azure default system routes apply). When Azure Firewall is
-// deployed, add a 0.0.0.0/0 → Firewall IP route here and switch AKS clusters
-// to outboundType: 'userDefinedRouting' to eliminate AllowInternetOutbound NSG.
+// Route Tables — stubs for future Azure Firewall UDR migration.
+//
+// NOT attached to subnets until Azure Firewall is deployed. Attaching an
+// empty UDR to an AKS subnet breaks Azure CNI Overlay cross-node pod routing
+// because the UDR overrides the pod-CIDR routes Azure programs in the VNet
+// fabric, causing all cross-node pod traffic (including DNS) to be dropped.
+//
+// Migration path when Firewall is ready:
+//   1. Add route: 0.0.0.0/0 → Firewall private IP (NextHopType: VirtualAppliance)
+//   2. Re-attach route tables to subnets (restore the routeTable block below)
+//   3. Set AKS outboundType: 'userDefinedRouting' on both clusters
+//   4. Remove the AllowInternetOutbound NSG rules (no longer needed)
 // ---------------------------------------------------------------------------
 resource rtCompute 'Microsoft.Network/routeTables@2023-11-01' = {
   name: 'rt-forge-compute-${environment}'
@@ -526,9 +609,8 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
           networkSecurityGroup: {
             id: nsgCompute.id
           }
-          routeTable: {
-            id: rtCompute.id
-          }
+          // routeTable intentionally omitted — see Route Tables comment above.
+          // Re-attach rtCompute here when Azure Firewall is deployed.
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
         }
@@ -540,9 +622,8 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
           networkSecurityGroup: {
             id: nsgOrchestration.id
           }
-          routeTable: {
-            id: rtOrchestration.id
-          }
+          // routeTable intentionally omitted — see Route Tables comment above.
+          // Re-attach rtOrchestration here when Azure Firewall is deployed.
           privateEndpointNetworkPolicies: 'Enabled'
           privateLinkServiceNetworkPolicies: 'Enabled'
         }

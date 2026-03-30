@@ -45,6 +45,12 @@ COPY --chown=trino:trino \
      plugins/catalog-discovery/ \
      /usr/lib/trino/plugin/catalog-discovery/
 
+# Remove the entire catalog-discovery directory if it contains no JARs.
+# Trino's plugin loader fails on directories with non-JAR files (e.g. .gitkeep).
+# When the real plugin JAR is added, remove this RUN line and let the directory persist.
+RUN find /usr/lib/trino/plugin/catalog-discovery/ -name '*.jar' | grep -q . \
+    || rm -rf /usr/lib/trino/plugin/catalog-discovery
+
 # ----------------------------------------------------------------------------
 # Ensure the trino user owns all plugin directories.
 # The base image ships plugins owned by root.

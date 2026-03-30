@@ -316,8 +316,8 @@ resource trinoPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
   name: 'trinopool'
   properties: {
     vmSize: trinoVmSize
-    count: 0
-    minCount: 0
+    count: 1
+    minCount: 1
     maxCount: trinoMaxNodes
     enableAutoScaling: true
     osType: 'Linux'
