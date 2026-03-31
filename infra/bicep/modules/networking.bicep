@@ -64,6 +64,17 @@ resource platformLaw 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 
 // ---------------------------------------------------------------------------
 // NSG — Compute Subnet (AKS compute cluster nodes)
+//
+// Security model: AKS manages its own NIC-level NSG (aks-agentpool-*-nsg) in
+// the node resource group. That NSG has NRMS rules that block all Internet
+// inbound traffic. This subnet NSG provides additional explicit allows for
+// known traffic patterns — no deny-all at the end (the implicit rule at 65500
+// handles anything not matched, and NRMS handles Internet blocking at the NIC).
+//
+// Removing DenyAllOtherInbound/DenyAllOtherOutbound from AKS subnets is
+// intentional: Azure CNI Overlay pod overlay IPs (10.100.x.x) are outside
+// the VNet address space. A subnet-level deny-all requires adding workaround
+// rules for every pod CIDR combination and fights against AKS networking.
 // ---------------------------------------------------------------------------
 resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
   name: 'nsg-forge-compute-${environment}'
@@ -98,10 +109,9 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
-        // Required for Azure CNI Overlay: pod IPs (10.100.x.x) are outside the
-        // VNet address space and not covered by AllowIntraSubnetInbound.
-        // Without this, cross-node pod traffic (Trino worker↔coordinator,
-        // CoreDNS, kube-proxy) hits DenyAllOtherInbound and the cluster breaks.
+        // Azure CNI Overlay: pod IPs (10.100.x.x) are outside the VNet address
+        // space. Explicit allow ensures cross-node pod traffic and cross-cluster
+        // pod traffic (e.g., portal → Trino) are permitted at the subnet level.
         name: 'AllowComputePodOverlayInbound'
         properties: {
           priority: 115
@@ -128,9 +138,6 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
-        // Allows orchestration cluster pods (e.g. Forge portal) to reach compute
-        // cluster services (e.g. Trino internal LB). Orch pod IPs (10.101.x.x)
-        // are not covered by AllowOrchestrationToCompute which only allows node IPs.
         name: 'AllowOrchPodToCompute'
         properties: {
           priority: 125
@@ -157,19 +164,6 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
-        name: 'DenyAllOtherInbound'
-        properties: {
-          priority: 4096
-          direction: 'Inbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-      {
         name: 'AllowVNetOutbound'
         properties: {
           priority: 100
@@ -183,10 +177,21 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
-        // S360: Restrict to AzureCloud (Azure platform APIs only) rather than
-        // open Internet. For full compliance, deploy Azure Firewall with UDR
-        // (0.0.0.0/0 → firewall) and remove this rule — all AKS-required
-        // endpoints are accessible via private endpoints or AzureCloud tag.
+        // Azure CNI Overlay: allow outbound from pod overlay IPs so cross-node
+        // pod traffic (source IP = pod IP, not node IP) is not blocked.
+        name: 'AllowComputePodOverlayOutbound'
+        properties: {
+          priority: 105
+          direction: 'Outbound'
+          access: 'Allow'
+          protocol: '*'
+          sourceAddressPrefix: computePodCidr
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+      {
         name: 'AllowAzureCloudOutbound'
         properties: {
           priority: 110
@@ -213,9 +218,6 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
-        // Required for AKS node bootstrapping: nodes must reach Ubuntu/Kubernetes
-        // apt repos and pull container images during initial provisioning.
-        // Long-term: replace with Azure Firewall + UDR and allowlist specific FQDNs.
         name: 'AllowInternetOutbound'
         properties: {
           priority: 130
@@ -228,25 +230,16 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
           destinationPortRange: '*'
         }
       }
-      {
-        name: 'DenyAllOtherOutbound'
-        properties: {
-          priority: 4096
-          direction: 'Outbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
     ]
   }
 }
 
 // ---------------------------------------------------------------------------
 // NSG — Orchestration Subnet (AKS orchestration cluster nodes)
+//
+// Security model: same as compute NSG — AKS manages its own NIC-level NSG
+// (aks-agentpool-*-nsg) with NRMS rules that block Internet inbound.
+// No deny-all at the end; implicit 65500 + NRMS handle anything not matched.
 // ---------------------------------------------------------------------------
 resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
   name: 'nsg-forge-orchestration-${environment}'
@@ -338,19 +331,6 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
         }
       }
       {
-        name: 'DenyAllOtherInbound'
-        properties: {
-          priority: 4096
-          direction: 'Inbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
-      {
         name: 'AllowVNetOutbound'
         properties: {
           priority: 100
@@ -364,8 +344,21 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
         }
       }
       {
-        // S360: See compute NSG comment — restrict to AzureCloud, replace with
-        // Azure Firewall UDR for full compliance.
+        // Azure CNI Overlay: allow outbound from pod overlay IPs so cross-node
+        // pod traffic (source IP = pod IP, not node IP) is not blocked.
+        name: 'AllowOrchPodOverlayOutbound'
+        properties: {
+          priority: 105
+          direction: 'Outbound'
+          access: 'Allow'
+          protocol: '*'
+          sourceAddressPrefix: orchPodCidr
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '*'
+        }
+      }
+      {
         name: 'AllowAzureCloudOutbound'
         properties: {
           priority: 110
@@ -404,19 +397,6 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
           sourceAddressPrefix: '*'
           sourcePortRange: '*'
           destinationAddressPrefix: 'Internet'
-          destinationPortRange: '*'
-        }
-      }
-      {
-        name: 'DenyAllOtherOutbound'
-        properties: {
-          priority: 4096
-          direction: 'Outbound'
-          access: 'Deny'
-          protocol: '*'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
           destinationPortRange: '*'
         }
       }

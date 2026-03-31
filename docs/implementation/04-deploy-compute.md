@@ -305,6 +305,15 @@ helm upgrade --install trino \
 Key sections in `infra/helm/compute/trino/values.yaml`:
 ```yaml
 coordinator:
+  # web-ui.authentication.type=fixed: accepts any username without password.
+  # Real auth enforced by trino-auth-proxy (X-Trino-User on /v1/* paths).
+  # web-ui.user=trino-user: required non-null field when type=fixed.
+  # http-server.process-forwarded=true: honour X-Forwarded-* from the proxy.
+  # These are coordinator-only — workers reject web-ui.* properties.
+  additionalConfigProperties:
+    - "web-ui.authentication.type=fixed"
+    - "web-ui.user=trino-user"
+    - "http-server.process-forwarded=true"
   jvm:
     maxHeapSize: "24G"
   resources:
@@ -370,7 +379,52 @@ kill %1
 
 ---
 
-## 4.5 Compute Cluster Readiness Checklist
+## 4.5 Trino Auth Proxy
+
+The auth proxy is a Flask/MSAL reverse proxy that sits in front of Trino and enforces Azure AD OAuth2. Trino itself runs plain HTTP and never handles credentials.
+
+**Auth model:**
+- Browser users → Azure AD OAuth2 authorization code flow → Trino UI
+- CLI users → Azure AD Bearer token (`az account get-access-token`) → Trino CLI
+- No client secret. No TLS cert. No public IP. No DNS label.
+- Pod calls IMDS to get the `id-forge-trino-{env}` managed identity token and uses it as `client_assertion` in MSAL (bypasses AKS OIDC issuer tenant policy)
+- Access via `kubectl port-forward` only — Azure AD natively allows `http://localhost` redirect URIs
+
+### Deploy
+
+```bash
+# Automated — handles FC creation, VMSS identity attachment, redirect URI, session secret, Helm
+bash infra/scripts/deploy-auth-proxy.sh --env {env} --alias {alias}
+# or PowerShell:
+./infra/scripts/deploy-auth-proxy.ps1 --env {env} --alias {alias}
+```
+
+### Verify
+
+```bash
+kubectl get pods -n trino
+# Expected: trino-auth-proxy-xxx 1/1 Running
+
+kubectl get svc trino-auth-proxy -n trino
+# Expected: ClusterIP (no EXTERNAL-IP — correct, port-forward only)
+```
+
+### Access
+
+```bash
+# Terminal 1 — leave running
+kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino
+
+# Browser → http://localhost:8080 → Azure AD login → Trino UI
+
+# CLI
+TOKEN=$(az account get-access-token --resource f21cd19e-5e8b-4739-b0fb-1ebd13b8c036 --query accessToken -o tsv)
+trino --server http://localhost:8080 --access-token $TOKEN
+```
+
+---
+
+## 4.6 Compute Cluster Readiness Checklist
 
 Before proceeding to Step 05:
 
@@ -382,9 +436,10 @@ Before proceeding to Step 05:
 [ ] spark-pi-test SparkApplication COMPLETED (ran and cleaned up)
 [ ] Spark Connect LB IP assigned:           kubectl get svc -n spark-system spark-connect-lb
 [ ] Spark Connect endpoint in Key Vault:    az keyvault secret show --name spark-connect-endpoint
-[ ] Trino coordinator + 2 workers Running:  kubectl get pods -n trino
-[ ] Trino test query returns results:       curl port-forward test above
-[ ] Workload identity test passed:          test pod reads from ADLS bronze/ container
+[ ] Trino coordinator + workers Running:    kubectl get pods -n trino
+[ ] Trino auth proxy Running (ClusterIP):  kubectl get pods -n trino | grep auth-proxy
+[ ] port-forward → http://localhost:8080 → Azure AD login → Trino UI works
+[ ] Workload identity test passed:         test pod reads from ADLS bronze/ container
 ```
 
 All green → proceed to Step 05.

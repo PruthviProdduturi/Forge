@@ -23,6 +23,15 @@ image:
 # Coordinator — always-on, handles query planning and client connections
 # ----------------------------------------------------------------------------
 coordinator:
+  # web-ui.authentication.type=fixed: accepts any username without password.
+  # Real auth is enforced by trino-auth-proxy (X-Trino-User on /v1/* paths).
+  # web-ui.user=trino-user: required when type=fixed (Trino validates non-null).
+  # http-server.process-forwarded=true: honour X-Forwarded-* from the proxy.
+  # These are coordinator-only — workers reject web-ui.* properties.
+  additionalConfigProperties:
+    - "web-ui.authentication.type=fixed"
+    - "web-ui.user=trino-user"
+    - "http-server.process-forwarded=true"
   jvm:
     maxHeapSize: "6G"
   resources:
@@ -39,6 +48,7 @@ coordinator:
       operator: Equal
       value: trino
       effect: NoSchedule
+  # Trino runs plain HTTP internally — TLS and OAuth2 are handled by trino-auth-proxy.
 
 # ----------------------------------------------------------------------------
 # Workers — autoscaled 2–8 based on active query count (HPA)
@@ -103,12 +113,14 @@ podLabels:
   azure.workload.identity/use: "true"
 
 # ----------------------------------------------------------------------------
-# Service — internal Azure Load Balancer on the compute subnet
-# Exposes the Trino HTTP API (port 8080) within the VNet.
-# Access: http://<internal-ip>:8080  (same subnet as Forge services)
+# Additional config.properties for the coordinator.
+# web-ui.authentication.type=fixed  — accepts any username without password;
+#   real auth is enforced by trino-auth-proxy (X-Trino-User on API paths).
+# http-server.process-forwarded=true — honour X-Forwarded-* from the proxy.
+# ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# Service — ClusterIP (internal only).
+# Access goes through trino-auth-proxy via kubectl port-forward.
 # ----------------------------------------------------------------------------
 service:
-  type: LoadBalancer
-  annotations:
-    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
-    service.beta.kubernetes.io/azure-load-balancer-internal-subnet: snet-forge-compute-dev
+  type: ClusterIP

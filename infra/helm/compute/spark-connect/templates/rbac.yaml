@@ -1,0 +1,45 @@
+# =============================================================================
+# Spark Connect — K8s RBAC
+#
+# The Spark driver pod (running as the 'spark' SA) must create and manage
+# executor pods in the same namespace. This Role grants the minimum permissions
+# required by the Spark Kubernetes scheduler.
+#
+# These are K8s-native RBAC permissions (not Azure RBAC). They allow the Spark
+# driver service account to interact with the K8s API within this namespace only.
+# =============================================================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.nameOverride | default "spark-connect" }}-driver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.nameOverride | default "spark-connect" }}
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.nameOverride | default "spark-connect" }}-driver
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: {{ .Values.nameOverride | default "spark-connect" }}
+    app.kubernetes.io/managed-by: Helm
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: {{ .Values.nameOverride | default "spark-connect" }}-driver
+  apiGroup: rbac.authorization.k8s.io

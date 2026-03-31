@@ -96,6 +96,9 @@ param kubernetesVersion string = '1.32'
 @allowed(['LRS', 'ZRS', 'GRS', 'GZRS', 'RAGRS', 'RAGZRS'])
 param storageReplicationType string = 'LRS'
 
+@description('Allow public network access to Key Vault. Set true for dev (enables CLI access without VPN). Prod defaults to false.')
+param kvAllowPublicNetworkAccess bool = false
+
 @description('Resource tags applied to all resources.')
 param tags object = {}
 
@@ -327,7 +330,7 @@ module identity '../../modules/identity.bicep' = {
     // Key Vault ID is empty here; KV role assignments are managed in keyvault.bicep.
     keyVaultId: ''
     namespaces: {
-      spark:   { namespace: 'spark-jobs',     serviceAccountName: 'spark' }
+      spark:   { namespace: 'spark-system',   serviceAccountName: 'spark' }
       trino:   { namespace: 'trino',          serviceAccountName: 'trino' }
       airflow: { namespace: 'airflow',        serviceAccountName: 'airflow' }
       dq:      { namespace: 'dq',            serviceAccountName: 'dq-runner' }
@@ -360,6 +363,7 @@ module keyvault '../../modules/keyvault.bicep' = {
       portal:  identity.outputs.identities.portal.principalId
     }
     logAnalyticsWorkspaceId: orchLaw.outputs.id
+    allowPublicNetworkAccess: kvAllowPublicNetworkAccess
     tags: mergedTags
   }
 }

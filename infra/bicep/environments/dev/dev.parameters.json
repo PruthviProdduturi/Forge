@@ -18,11 +18,13 @@
     "sparkVmSize":                { "value": "Standard_E8s_v5" },
     "sparkMaxNodes":              { "value": 5 },
     "trinoVmSize":                { "value": "Standard_D4s_v5" },
-    "trinoMaxNodes":              { "value": 3 },
+    "trinoMaxNodes":              { "value": 5 },
 
     "orchSystemVmSize":           { "value": "Standard_D4s_v5" },
     "orchSystemNodeCount":        { "value": 1 },
     "orchWorkerVmSize":           { "value": "Standard_D4s_v5" },
-    "orchWorkerMaxNodes":         { "value": 3 }
+    "orchWorkerMaxNodes":         { "value": 3 },
+
+    "kvAllowPublicNetworkAccess": { "value": true }
   }
 }

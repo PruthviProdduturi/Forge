@@ -1,0 +1,63 @@
+# =============================================================================
+# trino-auth-proxy — Helm Values
+#
+# Access model: kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino
+# No public IP, no TLS — Azure AD natively permits http://localhost redirect URIs.
+#
+# Deploy:
+#   ./infra/scripts/deploy-auth-proxy.ps1 --env dev --alias prproddu
+#   bash infra/scripts/deploy-auth-proxy.sh --env dev --alias prproddu
+#
+# Prerequisites:
+#   - K8s secret: proxy-session-secret  (key: session-secret)
+#   - App reg FC: issuer=https://login.microsoftonline.com/<tenant>/v2.0
+#                 subject=<managed identity principalId>
+# =============================================================================
+
+image:
+  repository: forgeacr.azurecr.io/trino-auth-proxy
+  tag: "1.2"
+  pullPolicy: Always
+
+replicaCount: 1
+
+serviceAccount:
+  name: oauth2-proxy-sa
+  annotations: {}  # azure.workload.identity/client-id set at deploy time
+
+env:
+  tenantId: ""
+  clientId: ""
+  redirectUri: ""
+  allowedDomain: "microsoft.com"
+  trinoBackend: "trino:8080"
+  managedIdentityClientId: ""
+
+sessionSecret:
+  secretName: proxy-session-secret
+  key: session-secret
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+nodeSelector:
+  agentpool: trinopool
+
+tolerations:
+  - key: workload
+    operator: Equal
+    value: trino
+    effect: NoSchedule
+
+# ClusterIP — port-forward access only.
+# kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}

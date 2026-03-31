@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trino-auth-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: trino-auth-proxy
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: trino-auth-proxy
+  template:
+    metadata:
+      labels:
+        app: trino-auth-proxy
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: auth-proxy
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sessionSecret.secretName }}
+                  key: {{ .Values.sessionSecret.key }}
+            - name: TENANT_ID
+              value: {{ .Values.env.tenantId | quote }}
+            - name: CLIENT_ID
+              value: {{ .Values.env.clientId | quote }}
+            - name: REDIRECT_URI
+              value: {{ .Values.env.redirectUri | quote }}
+            - name: ALLOWED_DOMAIN
+              value: {{ .Values.env.allowedDomain | quote }}
+            - name: TRINO_BACKEND
+              value: {{ .Values.env.trinoBackend | quote }}
+            - name: MANAGED_IDENTITY_CLIENT_ID
+              value: {{ .Values.env.managedIdentityClientId | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /oauth2/sign_in
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /oauth2/sign_in
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- end }}

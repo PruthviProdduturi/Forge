@@ -78,31 +78,6 @@ var dnsServiceIP = clusterPurpose == 'compute' ? '10.200.0.10' : '10.201.0.10'
 
 
 // ---------------------------------------------------------------------------
-// Outbound public IP for AKS load balancer (SNAT egress)
-// Pre-created so we control ipTags — required for S360 NS2.1.1 compliance.
-// ipTags classify the IP as /NonProd (dev) or /Prod (prod) for Microsoft's
-// service tag system. AKS-auto-created IPs cannot have ipTags set post hoc.
-// ---------------------------------------------------------------------------
-resource outboundPublicIp 'Microsoft.Network/publicIPAddresses@2023-06-01' = {
-  name: 'pip-${clusterName}-outbound'
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard'
-    tier: 'Regional'
-  }
-  properties: {
-    publicIPAllocationMethod: 'Static'
-    ipTags: [
-      {
-        ipTagType: 'FirstPartyUsage'
-        tag: environment == 'prod' ? '/Prod' : '/NonProd'
-      }
-    ]
-  }
-}
-
-// ---------------------------------------------------------------------------
 // User-assigned Managed Identity for kubelet
 // ---------------------------------------------------------------------------
 resource kubeletIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -135,7 +110,7 @@ resource controlPlaneKubeletRbac 'Microsoft.Authorization/roleAssignments@2022-0
 // ---------------------------------------------------------------------------
 // AKS Cluster
 // ---------------------------------------------------------------------------
-resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
+resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-05-01' = {
   name: clusterName
   location: location
   tags: tags
@@ -184,26 +159,17 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
       }
     ]
 
-    // Network profile — CNI Overlay with Calico policy
+    // Network profile — Azure CNI Overlay, no K8s network policy engine.
+    // AKS NIC NSG (aks-agentpool-*-nsg) + subnet NSG handle network security.
     networkProfile: {
       networkPlugin: 'azure'
       networkPluginMode: 'overlay'
-      networkPolicy: 'calico'
+      networkPolicy: 'none'
       podCidr: podCidr
       serviceCidr: serviceCidr
       dnsServiceIP: dnsServiceIP
-      // loadBalancer: pre-created public IP with S360 ipTags is used for SNAT
-      // egress so nodes can reach Ubuntu/k8s apt repos during provisioning.
-      // Switch to userDefinedRouting when Azure Firewall is deployed in prod.
       outboundType: 'loadBalancer'
       loadBalancerSku: 'standard'
-      loadBalancerProfile: {
-        outboundIPs: {
-          publicIPs: [
-            { id: outboundPublicIp.id }
-          ]
-        }
-      }
     }
 
     // API server access — public cluster, kubectl works from anywhere
@@ -282,7 +248,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-01-01' = {
 // ---------------------------------------------------------------------------
 // Additional node pools — compute cluster
 // ---------------------------------------------------------------------------
-resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-01-01' = if (clusterPurpose == 'compute') {
+resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-05-01' = if (clusterPurpose == 'compute') {
   parent: aksCluster
   name: 'sparkpool'
   properties: {
@@ -311,7 +277,7 @@ resource sparkPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
   }
 }
 
-resource trinoPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-01-01' = if (clusterPurpose == 'compute') {
+resource trinoPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-05-01' = if (clusterPurpose == 'compute') {
   parent: aksCluster
   name: 'trinopool'
   properties: {
@@ -339,7 +305,7 @@ resource trinoPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-0
 // ---------------------------------------------------------------------------
 // Additional node pools — orchestration cluster
 // ---------------------------------------------------------------------------
-resource workerPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-01-01' = if (clusterPurpose == 'orchestration') {
+resource workerPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-05-01' = if (clusterPurpose == 'orchestration') {
   parent: aksCluster
   name: 'workerpool'
   properties: {

@@ -25,7 +25,9 @@ param keyVaultId string = ''
 
 @description('Kubernetes namespace and service account mappings for each workload.')
 param namespaces object = {
-  spark:   { namespace: 'spark-jobs',     serviceAccountName: 'spark' }
+  // spark-system: Spark Connect driver deployment namespace (interactive queries)
+  // spark-jobs: SparkApplication CRD namespace for batch jobs (separate FC below)
+  spark:   { namespace: 'spark-system',   serviceAccountName: 'spark' }
   trino:   { namespace: 'trino',          serviceAccountName: 'trino' }
   airflow: { namespace: 'airflow',        serviceAccountName: 'airflow' }
   dq:      { namespace: 'dq',            serviceAccountName: 'dq-runner' }
@@ -97,12 +99,25 @@ resource idSpark 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' =
   tags: tags
 }
 
+// Federated credential for Spark Connect driver (spark-system namespace)
 resource fcSparkCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
   parent: idSpark
   name: 'fc-spark-compute-${environment}'
   properties: {
     issuer: computeOidcIssuerUrl
     subject: 'system:serviceaccount:${namespaces.spark.namespace}:${namespaces.spark.serviceAccountName}'
+    audiences: ['api://AzureADTokenExchange']
+  }
+}
+
+// Federated credential for SparkApplication CRD batch jobs (spark-jobs namespace)
+resource fcSparkBatchJobs 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2023-01-31' = {
+  parent: idSpark
+  name: 'fc-spark-batch-${environment}'
+  dependsOn: [fcSparkCompute]  // Azure requires serial writes per identity
+  properties: {
+    issuer: computeOidcIssuerUrl
+    subject: 'system:serviceaccount:spark-jobs:spark'
     audiences: ['api://AzureADTokenExchange']
   }
 }

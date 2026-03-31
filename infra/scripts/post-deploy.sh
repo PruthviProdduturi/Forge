@@ -89,7 +89,8 @@ tag_ips_in_rg() {
       --resource-group "$rg" \
       --name "$ip" \
       --ip-tags "FirstPartyUsage=$IP_TAG_VALUE" \
-      --output none
+      --output none \
+      || echo "    WARNING: cannot tag $ip (AKS-managed static IPs cannot be tagged post-creation — S360 exemption required)"
   done <<< "$ips"
 
   echo "    Done."

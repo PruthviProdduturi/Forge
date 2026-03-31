@@ -53,3 +53,4 @@ Thumbs.db
 
 # Claude Code
 .claude/
+proxy-tls-tmp-*

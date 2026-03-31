@@ -1,7 +1,15 @@
 # =============================================================================
-# Spark Operator — Helm Values
+# Spark Operator — Helm Values (chart 2.5.0)
 #
-# Chart is pulled from ACR OCI registry (imported in Step 02):
+# Image schema for this chart:
+#   image.*        — controller + webhook pods (same image)
+#   hook.image.*   — pre-install/upgrade hook Job (kubectl image)
+#   controller.*   / webhook.* — scheduling, resources, config (NOT images)
+#
+# Both controller and webhook pods use the same image (spark-operator-controller).
+# The hook job uses a separate kubectl image (spark-operator-kubectl).
+#
+# Chart is pulled from ACR OCI registry (imported in Step 06):
 #   helm upgrade --install spark-operator \
 #     oci://forgeacr{alias}.azurecr.io/helm/spark-operator \
 #     --version 2.5.0 \
@@ -9,43 +17,53 @@
 #     --values infra/helm/compute/spark-operator/values.yaml
 # =============================================================================
 
-# Controller image (main operator)
-controller:
-  image:
-    registry: forgeacrprproddu.azurecr.io
-    repository: spark-operator-controller
-    tag: "2.5.0"
-    pullPolicy: IfNotPresent
+# Controller + webhook pod image
+image:
+  registry: forgeacrprproddu.azurecr.io
+  repository: spark-operator-controller
+  tag: "2.5.0"
+  pullPolicy: IfNotPresent
 
-# Kubectl image (used by operator for SparkApplication lifecycle)
-webhook:
+# Pre-install/upgrade hook Job image (kubectl)
+hook:
   image:
     registry: forgeacrprproddu.azurecr.io
     repository: spark-operator-kubectl
     tag: "2.5.0"
-    pullPolicy: IfNotPresent
-  enable: true
-  namespaceSelector: "kubernetes.io/metadata.name=spark-jobs"
 
-# Watch only the spark-jobs namespace — operator does not need cluster-wide scope
-sparkJobNamespace: spark-jobs
+# Watch only the spark-jobs namespace
+spark:
+  jobNamespaces:
+    - spark-jobs
+
+# Webhook enabled, runs on systempool
+webhook:
+  enable: true
+  nodeSelector:
+    agentpool: systempool
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# Controller runs on systempool — lightweight management component
+controller:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  nodeSelector:
+    agentpool: systempool
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
 
 # Prometheus-format metrics scraped by Azure Monitor Agent
-metrics:
-  enable: true
-  port: 10254
-  portName: metrics
-  endpoint: /metrics
-
-# Operator pod resources — lightweight controller, not a data plane component
-resources:
-  requests:
-    cpu: "100m"
-    memory: "128Mi"
-  limits:
-    cpu: "500m"
-    memory: "512Mi"
-
-# Run operator on system node pool — keep it away from Spark workload nodes
-nodeSelector:
-  agentpool: systempool
+prometheus:
+  metrics:
+    enable: true
+    port: 8080
+    portName: metrics
+    endpoint: /metrics

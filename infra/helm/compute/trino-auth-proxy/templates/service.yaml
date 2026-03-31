@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: trino-auth-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: trino-auth-proxy
+  {{- if .Values.service.annotations }}
+  annotations:
+    {{- toYaml .Values.service.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app: trino-auth-proxy
+  ports:
+    - name: https
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP

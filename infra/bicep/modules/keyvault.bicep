@@ -30,6 +30,9 @@ param workloadPrincipalIds object
 @description('Resource ID of the Log Analytics Workspace for diagnostics.')
 param logAnalyticsWorkspaceId string
 
+@description('Allow public network access to Key Vault. RBAC enforces access control. Both dev and prod use public access + RBAC; private endpoint still preferred for service-to-service traffic.')
+param allowPublicNetworkAccess bool = true
+
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
@@ -57,9 +60,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enableSoftDelete: true
     softDeleteRetentionInDays: 90
     enablePurgeProtection: true
-    publicNetworkAccess: 'Disabled'
+    // Public access enabled; RBAC enforces who can read/write secrets.
+    // Private endpoint still used for service-to-service traffic (pods, Bicep).
+    publicNetworkAccess: allowPublicNetworkAccess ? 'Enabled' : 'Disabled'
     networkAcls: {
-      defaultAction: 'Deny'
+      defaultAction: allowPublicNetworkAccess ? 'Allow' : 'Deny'
       bypass: 'AzureServices'
       ipRules: []
       virtualNetworkRules: []

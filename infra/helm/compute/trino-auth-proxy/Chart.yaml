@@ -1,0 +1,9 @@
+apiVersion: v2
+name: trino-auth-proxy
+description: >
+  Azure AD OAuth2 reverse proxy for Trino. Uses MSAL with workload identity
+  federated credentials (no client secret — S360 compliant). Terminates HTTPS
+  with a self-signed cert and proxies authenticated requests to Trino over HTTP.
+type: application
+version: 1.0.0
+appVersion: "1.0"
