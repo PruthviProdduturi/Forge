@@ -649,13 +649,13 @@ export default function AboutPage() {
           <FeatureCard
             icon="fa-table"
             color="#dd00a1"
-            title="Trino 438"
+            title="Trino 468"
             body="Federated SQL across Delta Lake, Iceberg, and external data sources. Scales horizontally on demand with per-query cost tracking."
           />
           <FeatureCard
             icon="fa-calendar-check"
             color="#017cee"
-            title="Airflow 2.9"
+            title="Airflow 3.1"
             body="KubernetesExecutor for isolated task pods. DAGs go live in 30 seconds via git-sync — no deployment pipeline needed."
           />
           <FeatureCard
@@ -721,8 +721,8 @@ export default function AboutPage() {
             <ChartPill icon="fa-bolt" label="Spark 4.1" color="#e25a1c" />
             <ChartPill icon="fa-layer-group" label="Delta Lake 4.0" color="#003366" />
             <ChartPill icon="fa-snowflake" label="Iceberg 1.6.1" color="#2874A6" />
-            <ChartPill icon="fa-table" label="Trino 438" color="#dd00a1" />
-            <ChartPill icon="fa-calendar-check" label="Airflow 2.9" color="#017cee" />
+            <ChartPill icon="fa-table" label="Trino 468" color="#dd00a1" />
+            <ChartPill icon="fa-calendar-check" label="Airflow 3.1" color="#017cee" />
           </div>
         </div>
 
@@ -829,10 +829,10 @@ export default function AboutPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
                 {[
-                  { label: "Spark Operator 4.1", color: "#e25a1c", icon: "fa-bolt" },
+                  { label: "Spark Operator 2.5", color: "#e25a1c", icon: "fa-bolt" },
                   { label: "Spark Connect (gRPC)", color: "#f97316", icon: "fa-plug" },
-                  { label: "Trino 438", color: "#dd00a1", icon: "fa-table-columns" },
-                  { label: "Hive Metastore 4.0", color: "#b45309", icon: "fa-sitemap" },
+                  { label: "Trino 468", color: "#dd00a1", icon: "fa-table-columns" },
+                  { label: "Hive Metastore 3.1", color: "#b45309", icon: "fa-sitemap" },
                 ].map(c => (
                   <div key={c.label} style={{
                     display: "flex", alignItems: "center", gap: 7,
@@ -1089,9 +1089,9 @@ export default function AboutPage() {
               }}
             >
               {[
-                "Spark Operator 4.1",
+                "Spark Operator 2.5",
                 "Spark Connect server",
-                "Trino 438 (coordinator + workers)",
+                "Trino 468 (coordinator + workers)",
               ].map((item) => (
                 <li
                   key={item}

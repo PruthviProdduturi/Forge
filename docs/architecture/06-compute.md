@@ -834,61 +834,66 @@ No storage account keys or SAS tokens appear anywhere in Trino configuration. Th
 
 ## 8. Trino Authentication
 
-### OIDC via Azure AD
+### Auth Proxy + Azure AD OAuth2 (IMDS approach)
 
-Trino's built-in OIDC authenticator is configured to validate tokens issued by Azure AD. The flow from the Developer Portal to Trino:
+Trino runs plain HTTP internally. A dedicated **trino-auth-proxy** sidecar (Flask + MSAL) handles all authentication before forwarding requests to the Trino coordinator. Trino never sees credentials.
 
 ```
-1. User opens Developer Portal and authenticates via Azure AD (OIDC)
-   └── Portal frontend receives ID token and access token
-
-2. User triggers a dataset preview or ad-hoc query in the portal
-
-3. Portal backend (FastAPI) calls the Trino REST API:
-   POST https://trino-coordinator.trino.svc.cluster.local:8443/v1/statement
-   Authorization: Bearer <access_token>
-   X-Trino-User: user@corp.com
-   X-Trino-Catalog: lakehouse
-   X-Trino-Schema: sales
-
-4. Trino coordinator's HTTPS listener receives the request
-
-5. Trino OAuthAuthenticator extracts the Bearer token from the Authorization header
-
-6. Trino validates the token:
-   a. Fetches Azure AD OIDC discovery document (cached):
-      https://login.microsoftonline.com/<tenant>/.well-known/openid-configuration
-   b. Retrieves JWKS endpoint from discovery document
-   c. Validates JWT: signature, issuer, audience (aud == Forge app ID), expiry
-   d. Extracts user principal from preferred_username or email claim
-
-7. Trino maps the principal to internal roles:
-   - Azure AD group "forge-trino-admin"   → Trino ROLE admin
-   - Azure AD group "forge-data-engineer" → Trino ROLE data_engineer (all schemas)
-   - Azure AD group "forge-analyst"       → Trino ROLE analyst (serving schema only)
-
-8. Trino enforces row/column access policies via OPA (optional, phase 2)
-
-9. Query executes under the authenticated user identity
-   All query logs include the user principal for audit
+Browser / CLI
+     │
+     │  port-forward :8080
+     ▼
+trino-auth-proxy (Flask/MSAL, port 8080)
+     │
+     │  plain HTTP, X-Trino-User header
+     ▼
+trino coordinator (plain HTTP, port 8080, ClusterIP)
 ```
 
-Trino `config.properties` OIDC configuration:
+**Browser flow (Azure AD OAuth2 authorization code):**
+
+```
+1. User: GET http://localhost:8080/ui/
+2. Proxy: no session → redirect to /oauth2/sign_in
+3. Proxy: calls IMDS to get id-forge-trino-dev token → client_assertion → MSAL
+4. Proxy: redirect to Azure AD authorization endpoint
+5. Azure AD: user authenticates + MFA → redirect to /oauth2/callback?code=...
+6. Proxy: exchanges code for ID token, validates @microsoft.com domain
+7. Proxy: POSTs to Trino /ui/login (fixed auth) to get Trino-UI-Token cookie
+8. Proxy: stores user in signed Flask session, sets cookies, redirects to /ui/
+9. Subsequent requests: proxy injects X-Trino-User on /v1/* API paths
+```
+
+**CLI flow (Azure AD Bearer token):**
+
+```
+1. Developer: az account get-access-token --resource <client-id>
+2. Trino CLI: GET http://localhost:8081/v1/statement  (direct port-forward to coordinator)
+   Authorization: Bearer <token>   ← validated by proxy JWKS cache
+3. Proxy (or coordinator directly): validates token, injects X-Trino-User
+```
+
+**Why no client secret (S360 compliance):**
+
+Tenant policy 538f1913 blocks client secrets and AKS OIDC issuers on this app registration. The proxy authenticates to Azure AD using an **IMDS managed identity token as `client_assertion`**:
+- Pod calls `http://169.254.169.254/metadata/identity/oauth2/token` for `id-forge-trino-{env}`
+- Uses token as `client_assertion` in MSAL `ConfidentialClientApplication`
+- Federated credential on app registration uses `login.microsoftonline.com/<tenant>/v2.0` as issuer (Microsoft's own issuer — allowed by policy) and the managed identity's `principalId` as subject
+
+**Trino `config.properties` (coordinator only):**
 
 ```properties
-http-server.authentication.type=OAUTH2
-http-server.https.enabled=true
-http-server.https.port=8443
-http-server.https.keystore.path=/etc/trino/tls/keystore.p12
-
-web-ui.authentication.type=OAUTH2
-http-server.authentication.oauth2.issuer=https://login.microsoftonline.com/<tenant>/v2.0
-http-server.authentication.oauth2.client-id=<forge-app-client-id>
-http-server.authentication.oauth2.client-secret=${ENV:OIDC_CLIENT_SECRET}
-http-server.authentication.oauth2.scopes=openid,profile,email
+web-ui.authentication.type=fixed
+web-ui.user=trino-user
+http-server.process-forwarded=true
 ```
 
-Direct JDBC/CLI access from developer tools (DBeaver, Trino CLI) follows the same OIDC flow, typically via the device-code or browser-redirect flow built into the Trino JDBC driver.
+**Access:**
+
+| Path | Command |
+|---|---|
+| Browser (Trino UI) | `kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino` → `http://localhost:8080` |
+| CLI (direct) | `kubectl port-forward svc/trino 8081:8080 -n trino` → `trino --server http://localhost:8081 --user <alias>` |
 
 ---
 
