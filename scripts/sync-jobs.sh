@@ -3,18 +3,27 @@
 # sync-jobs.sh — Scaffold from TypeScript manifests and deploy to Airflow/ADLS
 #
 # Full pipeline:
-#   1. Discover .forge.ts manifests
+#   1. Discover changed .forge.ts manifests since last deployment
+#      (or all manifests if --full or first run)
 #   2. Run `forge generate` — regenerates Python job, DAG, DQ YAML
 #      Business logic blocks are ALWAYS preserved (forge CLI handles this)
 #   3. Upload Spark .py jobs    → ADLS code container (spark/jobs/)
 #   4. Upload DQ .yaml rules    → ADLS code container (dq/rules/)
 #   5. Commit + push DAG files  → git, Airflow git-sync picks up within 30s
+#   6. Write deployment record  → ADLS state container
+#      - state/last_deploy_{env}.json  — last deployed commit SHA (for next run)
+#      - state/deployments_{env}.jsonl — append-only deployment history log
 #
-# Source of truth is ALWAYS the .forge.ts manifest.
-# Never edit the generated .py files outside the BUSINESS LOGIC block.
+# Source of truth hierarchy:
+#   .forge.ts manifest  →  everything (schema, schedule, DQ, resources)
+#   .py business logic  →  the ONLY thing NOT re-generated from the manifest
+#
+# Incremental by default — only jobs whose .forge.ts changed since last deploy
+# are re-scaffolded and uploaded. Use --full to force all jobs.
 #
 # Usage:
-#   ./scripts/sync-jobs.sh                        # all manifests
+#   ./scripts/sync-jobs.sh                        # changed manifests only
+#   ./scripts/sync-jobs.sh --full                 # all manifests
 #   ./scripts/sync-jobs.sh --job nyc_taxi_silver  # one job only
 #   ./scripts/sync-jobs.sh --dry-run              # preview, no changes
 #   ./scripts/sync-jobs.sh --no-git-push          # skip DAG git push (CI handles it)
@@ -43,8 +52,11 @@ if [[ -z "${STORAGE_ACCOUNT}" && -n "${OWNER_ALIAS}" ]]; then
 fi
 
 CODE_CONTAINER="code"
+STATE_CONTAINER="state"
 JOBS_BLOB_PREFIX="spark/jobs"
 DQ_BLOB_PREFIX="dq/rules"
+STATE_LAST_DEPLOY="last_deploy_${FORGE_ENV}.json"
+STATE_DEPLOY_LOG="deployments_${FORGE_ENV}.jsonl"
 
 # ---------------------------------------------------------------------------
 # Args
@@ -52,12 +64,14 @@ DQ_BLOB_PREFIX="dq/rules"
 JOB_FILTER=""
 DRY_RUN=false
 NO_GIT_PUSH=false
+FULL_DEPLOY=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --job)           JOB_FILTER="$2"; shift 2 ;;
     --dry-run)       DRY_RUN=true; shift ;;
     --no-git-push)   NO_GIT_PUSH=true; shift ;;
+    --full)          FULL_DEPLOY=true; shift ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# Req/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -85,19 +99,77 @@ run() {
 upload_blob() {
   local src="$1"
   local blob_name="$2"
+  local container="${3:-${CODE_CONTAINER}}"
   if dry; then
-    log "  [dry-run] upload → ${CODE_CONTAINER}/${blob_name}"
+    log "  [dry-run] upload → ${container}/${blob_name}"
     return 0
   fi
   az storage blob upload \
     --account-name "${STORAGE_ACCOUNT}" \
-    --container-name "${CODE_CONTAINER}" \
+    --container-name "${container}" \
     --name "${blob_name}" \
     --file "${src}" \
     --overwrite \
     --auth-mode login \
     --output none
-  log "  ✓ $(basename "${src}") → ${CODE_CONTAINER}/${blob_name}"
+  log "  ✓ $(basename "${src}") → ${container}/${blob_name}"
+}
+
+download_blob_text() {
+  # Download blob content to stdout; returns empty string if blob doesn't exist
+  local blob_name="$1"
+  local container="${2:-${STATE_CONTAINER}}"
+  az storage blob download \
+    --account-name "${STORAGE_ACCOUNT}" \
+    --container-name "${container}" \
+    --name "${blob_name}" \
+    --file /dev/stdout \
+    --auth-mode login \
+    --output none \
+    2>/dev/null || true
+}
+
+upload_blob_text() {
+  # Upload inline text as a blob
+  local content="$1"
+  local blob_name="$2"
+  local container="${3:-${STATE_CONTAINER}}"
+  if dry; then
+    log "  [dry-run] write state → ${container}/${blob_name}"
+    return 0
+  fi
+  local tmp
+  tmp="$(mktemp)"
+  printf '%s' "${content}" > "${tmp}"
+  az storage blob upload \
+    --account-name "${STORAGE_ACCOUNT}" \
+    --container-name "${container}" \
+    --name "${blob_name}" \
+    --file "${tmp}" \
+    --overwrite \
+    --auth-mode login \
+    --output none
+  rm -f "${tmp}"
+}
+
+append_blob_text() {
+  # Append a line to an existing blob (download + prepend-append workaround — ADLS doesn't support append on block blobs)
+  local line="$1"
+  local blob_name="$2"
+  local container="${3:-${STATE_CONTAINER}}"
+  if dry; then
+    log "  [dry-run] append to ${container}/${blob_name}"
+    return 0
+  fi
+  local existing
+  existing="$(download_blob_text "${blob_name}" "${container}")"
+  local updated
+  if [[ -n "${existing}" ]]; then
+    updated="${existing}"$'\n'"${line}"
+  else
+    updated="${line}"
+  fi
+  upload_blob_text "${updated}" "${blob_name}" "${container}"
 }
 
 # ---------------------------------------------------------------------------
@@ -114,30 +186,88 @@ if ! command -v npx &>/dev/null; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 1 — Discover manifests
+# Step 1 — Determine last deployed commit + discover changed manifests
 # ---------------------------------------------------------------------------
-section "Discover manifests"
+section "Determine scope"
 
-mapfile -t MANIFEST_FILES < <(find "${MANIFESTS_DIR}" -name "*.forge.ts" | sort)
+CURRENT_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+DEPLOY_ID="deploy-$(date -u +%Y%m%dT%H%M%SZ)-${CURRENT_COMMIT:0:8}"
+log "Current commit : ${CURRENT_COMMIT}"
+log "Deployment ID  : ${DEPLOY_ID}"
+log "Environment    : ${FORGE_ENV}"
 
-if [[ ${#MANIFEST_FILES[@]} -eq 0 ]]; then
+# Discover all manifests first
+mapfile -t ALL_MANIFEST_FILES < <(find "${MANIFESTS_DIR}" -name "*.forge.ts" | sort)
+
+if [[ ${#ALL_MANIFEST_FILES[@]} -eq 0 ]]; then
   warn "No .forge.ts manifests found in ${MANIFESTS_DIR}"
   exit 0
 fi
 
-# Apply --job filter
+MANIFEST_FILES=()
+
 if [[ -n "${JOB_FILTER}" ]]; then
-  FILTERED=()
-  for mf in "${MANIFEST_FILES[@]}"; do
+  # --job flag overrides everything — explicit single-job run
+  for mf in "${ALL_MANIFEST_FILES[@]}"; do
     if [[ "$(basename "${mf}" .forge.ts)" == "${JOB_FILTER}" ]]; then
-      FILTERED+=("${mf}")
+      MANIFEST_FILES+=("${mf}")
     fi
   done
-  if [[ ${#FILTERED[@]} -eq 0 ]]; then
+  if [[ ${#MANIFEST_FILES[@]} -eq 0 ]]; then
     echo "ERROR: no manifest found for job '${JOB_FILTER}'" >&2
     exit 1
   fi
-  MANIFEST_FILES=("${FILTERED[@]}")
+  log "Mode: single-job (--job ${JOB_FILTER})"
+
+elif [[ "${FULL_DEPLOY}" == "true" ]]; then
+  # --full flag: deploy everything regardless of what changed
+  MANIFEST_FILES=("${ALL_MANIFEST_FILES[@]}")
+  log "Mode: full deploy (--full)"
+
+else
+  # Incremental: only deploy manifests changed since last successful deployment
+  LAST_COMMIT=""
+  if ! dry; then
+    LAST_STATE="$(download_blob_text "${STATE_LAST_DEPLOY}")"
+    if [[ -n "${LAST_STATE}" ]]; then
+      LAST_COMMIT="$(printf '%s' "${LAST_STATE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('commit',''))" 2>/dev/null || true)"
+    fi
+  fi
+
+  if [[ -z "${LAST_COMMIT}" ]]; then
+    log "Mode: first run (no prior deployment state found) — deploying all manifests"
+    MANIFEST_FILES=("${ALL_MANIFEST_FILES[@]}")
+  else
+    log "Mode: incremental (last deployed commit: ${LAST_COMMIT:0:8})"
+    # Find .forge.ts files that changed between last deployed commit and HEAD
+    mapfile -t CHANGED_FORGE < <(
+      git -C "${REPO_ROOT}" diff --name-only "${LAST_COMMIT}...${CURRENT_COMMIT}" \
+        -- "Forge/examples/src/spark/jobs/*.forge.ts" 2>/dev/null \
+      | xargs -I{} basename {} .forge.ts 2>/dev/null \
+      | sort -u
+    )
+
+    if [[ ${#CHANGED_FORGE[@]} -eq 0 ]]; then
+      log "No .forge.ts files changed since last deployment — nothing to do"
+      log "Use --full to force all, or --job <name> to target one job"
+      exit 0
+    fi
+
+    log "Changed manifests since ${LAST_COMMIT:0:8}:"
+    for name in "${CHANGED_FORGE[@]}"; do
+      log "  - ${name}"
+    done
+
+    for mf in "${ALL_MANIFEST_FILES[@]}"; do
+      job_name="$(basename "${mf}" .forge.ts)"
+      for changed in "${CHANGED_FORGE[@]}"; do
+        if [[ "${job_name}" == "${changed}" ]]; then
+          MANIFEST_FILES+=("${mf}")
+          break
+        fi
+      done
+    done
+  fi
 fi
 
 log "Manifests to process: ${#MANIFEST_FILES[@]}"
@@ -149,7 +279,8 @@ done
 # Step 2 — forge generate (regenerate Python, DAG, DQ YAML)
 # ---------------------------------------------------------------------------
 section "forge generate — scaffold from TypeScript manifests"
-log "Business logic blocks are preserved automatically"
+log "Source of truth: .forge.ts manifest"
+log "Preserved:       business logic block in .py (only user-editable region)"
 log ""
 
 GENERATED_PY=()
@@ -165,14 +296,11 @@ for manifest in "${MANIFEST_FILES[@]}"; do
     GENERATED_PY+=("${MANIFESTS_DIR}/${job_name}.py")
     GENERATED_DQ+=("${DQ_RULES_DIR}/${job_name}.yaml")
   else
-    # Run forge generate — writes .py and _dag.py into MANIFESTS_DIR,
-    # and DAG into orchestration/airflow/dags/{folder}/
     npx tsx "${CLI_ENTRY}" generate \
       --job "${job_name}" \
       --dir "${MANIFESTS_DIR}" \
       2>&1 | sed "s/^/    /"
 
-    # Collect generated outputs
     py_file="${MANIFESTS_DIR}/${job_name}.py"
     dq_file="${DQ_RULES_DIR}/${job_name}.yaml"
     [[ -f "${py_file}" ]] && GENERATED_PY+=("${py_file}")
@@ -180,7 +308,7 @@ for manifest in "${MANIFEST_FILES[@]}"; do
   fi
 done
 
-# Collect generated DAG files (forge generate writes these to DAGS_DIR)
+# Collect generated DAG files
 if ! dry; then
   mapfile -t GENERATED_DAGS < <(
     git -C "${REPO_ROOT}" diff --name-only HEAD -- "${DAGS_DIR}" 2>/dev/null
@@ -221,12 +349,13 @@ fi
 # ---------------------------------------------------------------------------
 section "Push DAG files → git (Airflow git-sync polls every 30s)"
 
+DAG_PUSH_DONE=false
+
 if [[ "${NO_GIT_PUSH}" == "true" ]]; then
   log "  --no-git-push set — skipping (CI pipeline handles git push)"
 elif dry; then
   log "  [dry-run] would git add + commit + push DAG changes"
 else
-  # Stage any changed/new DAG files
   CHANGED_DAGS=()
   while IFS= read -r -d '' dagfile; do
     if git -C "${REPO_ROOT}" diff --quiet HEAD -- "${dagfile}" 2>/dev/null && \
@@ -247,23 +376,56 @@ else
     done
 
     BRANCH="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)"
-    COMMIT_MSG="chore(dags): regenerate from .forge.ts manifests [sync-jobs]"
 
     if [[ -n "${JOB_FILTER}" ]]; then
-      COMMIT_MSG="chore(dags): regenerate ${JOB_FILTER} from manifest [sync-jobs]"
+      COMMIT_MSG="chore(dags): regenerate ${JOB_FILTER} from manifest [${DEPLOY_ID}]"
+    else
+      COMMIT_MSG="chore(dags): regenerate from .forge.ts manifests [${DEPLOY_ID}]"
     fi
 
     git -C "${REPO_ROOT}" commit -m "${COMMIT_MSG}"
     git -C "${REPO_ROOT}" push origin "${BRANCH}"
     log "  ✓ Pushed to ${BRANCH} — Airflow will pick up changes within 30s"
+    DAG_PUSH_DONE=true
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# Step 6 — Write deployment state to ADLS
+# ---------------------------------------------------------------------------
+section "Record deployment state → ADLS ${STATE_CONTAINER}/"
+
+DEPLOYED_JOBS="$(printf '%s\n' "${MANIFEST_FILES[@]}" | xargs -I{} basename {} .forge.ts | sort | tr '\n' ',' | sed 's/,$//')"
+NOW_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+# last_deploy_{env}.json — overwritten each time (pointer to latest)
+LAST_DEPLOY_JSON="$(cat <<EOF
+{
+  "deploy_id": "${DEPLOY_ID}",
+  "commit": "${CURRENT_COMMIT}",
+  "deployed_at": "${NOW_ISO}",
+  "env": "${FORGE_ENV}",
+  "jobs_deployed": [$(printf '%s\n' "${MANIFEST_FILES[@]}" | xargs -I{} basename {} .forge.ts | sort | awk '{printf "\"%s\",", $0}' | sed 's/,$//')],
+  "storage_account": "${STORAGE_ACCOUNT}",
+  "mode": "$( [[ -n "${JOB_FILTER}" ]] && echo "single-job" || ([[ "${FULL_DEPLOY}" == "true" ]] && echo "full" || echo "incremental"))"
+}
+EOF
+)"
+upload_blob_text "${LAST_DEPLOY_JSON}" "${STATE_LAST_DEPLOY}"
+log "  ✓ Updated last_deploy_${FORGE_ENV}.json (commit: ${CURRENT_COMMIT:0:8})"
+
+# deployments_{env}.jsonl — append-only history
+DEPLOY_LOG_LINE="{\"deploy_id\":\"${DEPLOY_ID}\",\"commit\":\"${CURRENT_COMMIT}\",\"deployed_at\":\"${NOW_ISO}\",\"env\":\"${FORGE_ENV}\",\"jobs\":\"${DEPLOYED_JOBS}\",\"dag_push\":${DAG_PUSH_DONE},\"dry_run\":${DRY_RUN}}"
+append_blob_text "${DEPLOY_LOG_LINE}" "${STATE_DEPLOY_LOG}"
+log "  ✓ Appended to deployments_${FORGE_ENV}.jsonl"
 
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
 log "══════════════════════════════════════════════"
+log "  Deployment ID    : ${DEPLOY_ID}"
+log "  Commit           : ${CURRENT_COMMIT:0:12}"
 log "  Jobs regenerated : ${#GENERATED_PY[@]}"
 log "  ADLS uploads     : $((${#GENERATED_PY[@]} + ${#GENERATED_DQ[@]}))"
 log "  Storage account  : ${STORAGE_ACCOUNT}"
