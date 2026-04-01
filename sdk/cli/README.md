@@ -119,15 +119,37 @@ export default defineJob({
   },
 
   // ── Source ─────────────────────────────────────────────────────────────
+  // Path formula: abfss://{container}@{storage}/{category}/{entity}/{audience}/{metricsCohort}/{assetName}/{version}/{name}
+  // Lakehouse containers (bronze/silver/gold) → Delta format auto-detected
+  // External containers → specify format explicitly
   source: {
-    type: "bronze",                   // external | bronze | silver
-    table: "lakehouse.bronze.nyc_taxi",
+    name: "NycTaxiBronze",
+    version: 1,
+    path: {
+      container: "bronze",           // ADLS container
+      category: "Transport",
+      entity: "Trip",
+      audience: "Internal",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
+    filter: "__year = {_year} AND __month = {_month}",  // optional Delta filter
   },
 
   // ── Output ─────────────────────────────────────────────────────────────
   output: {
-    table: "lakehouse.silver.nyc_taxi_trips",
+    name: "NycTaxiTrips",
+    version: 1,
+    path: {
+      container: "silver",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Analytics",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
     mode: "overwrite",                // overwrite (default) | append
+    // table: "lakehouse.silver.nyctaxi",  // HMS table name; derived from assetName if omitted
   },
 
   // ── DQ rules ───────────────────────────────────────────────────────────
