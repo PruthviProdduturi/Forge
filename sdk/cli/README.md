@@ -1,0 +1,229 @@
+# Forge CLI
+
+Scaffold Spark jobs from a single TypeScript manifest. One file defines everything — schedule, DQ rules, resources, partition strategy. The CLI generates the Python job, Airflow DAG, and DQ YAML.
+
+---
+
+## How it works
+
+```
+my_job.forge.ts          ← you write this
+    │
+    ▼  forge generate
+├── my_job.py            ← generated, DO NOT edit outside the marked block
+├── my_job_dag.py        ← generated, fully managed
+└── dq/rules/my_job.yaml ← generated once, then yours to extend
+```
+
+On re-generation, the business logic you wrote is **preserved**. Everything else is regenerated from the manifest.
+
+---
+
+## Install
+
+```bash
+cd sdk/cli
+npm install
+npm run build        # compiles to dist/
+npm link             # makes `forge` available globally
+```
+
+Or run without installing:
+
+```bash
+npx tsx sdk/cli/src/index.ts <command>
+```
+
+---
+
+## Commands
+
+### `forge init` — create a new manifest
+
+```bash
+forge init --name nyc_taxi_bronze --layer bronze
+# creates: examples/src/spark/jobs/nyc_taxi_bronze.forge.ts
+```
+
+Then open the generated `.forge.ts` and fill in the details.
+
+---
+
+### `forge generate` — generate job files from a manifest
+
+```bash
+# single job
+forge generate --job nyc_taxi_bronze
+
+# all manifests in a directory
+forge generate --dir examples/src/spark/jobs
+
+# custom output directory
+forge generate --job nyc_taxi_bronze --dir path/to/jobs
+
+# verbose output
+forge generate --job nyc_taxi_bronze --verbose
+```
+
+**What gets generated:**
+
+| File | Location | Re-generated? |
+|---|---|---|
+| `{name}.py` | `--dir` (default: manifest dir) | Yes — business logic block preserved |
+| `{name}_dag.py` | `orchestration/airflow/dags/{ingestion\|transformation}/` | Yes — fully managed |
+| `dq/rules/{name}.yaml` | relative to manifest dir | No — written once, then yours |
+
+---
+
+### `forge generate --check` — CI gate
+
+Fails with exit code 1 if the committed `.py` file is stale relative to the manifest. Use this as a PR validation step.
+
+```bash
+forge generate --check --job nyc_taxi_bronze
+# exit 0 — up to date
+# exit 1 — stale, run `forge generate --job nyc_taxi_bronze` to fix
+```
+
+**Azure DevOps pipeline step:**
+
+```yaml
+- script: npx tsx sdk/cli/src/index.ts generate --check --dir examples/src/spark/jobs
+  displayName: Forge — check generated files are up to date
+```
+
+---
+
+## The manifest
+
+Every job is defined by a `.forge.ts` file:
+
+```typescript
+import { defineJob } from "@forge/cli/schema";
+
+export default defineJob({
+  name: "nyc_taxi_silver",            // snake_case, matches file name
+  layer: "silver",                    // bronze | silver | gold
+  description: "Clean NYC taxi trips",
+
+  schedule: "0 0 1 * *",             // cron — omit if triggered by upstream
+  triggeredBy: "nyc_taxi_bronze",    // upstream DAG id
+  triggers: ["nyc_taxi_gold"],       // DAGs to trigger on success
+
+  // ── Partition ──────────────────────────────────────────────────────────
+  // Bronze  →  __year / __month / __day / __hour  (4 integer columns)
+  // Silver/Gold  →  __date  string  "DD_MM_YYYY_HH"  e.g. "01_02_1991_00"
+  //
+  // column:  the date/timestamp column in your data
+  // hasHour: true = extract hour from column; false = hour defaults to 0
+  partition: {
+    column: "pickup_datetime",
+    hasHour: true,           // timestamp column — hour extracted
+  },
+
+  // ── Source ─────────────────────────────────────────────────────────────
+  source: {
+    type: "bronze",                   // external | bronze | silver
+    table: "lakehouse.bronze.nyc_taxi",
+  },
+
+  // ── Output ─────────────────────────────────────────────────────────────
+  output: {
+    table: "lakehouse.silver.nyc_taxi_trips",
+    mode: "overwrite",                // overwrite (default) | append
+  },
+
+  // ── DQ rules ───────────────────────────────────────────────────────────
+  dq: {
+    rules: "orchestration/dq/rules/nyc_taxi_silver.yaml",
+    failFast: true,                   // fail job on critical violation
+  },
+
+  // ── Extra params (PARTITION_DATE + PARTITION_HOUR always auto-injected) ─
+  params: {
+    TAXI_TYPE: { type: "string", default: "yellow" },
+  },
+
+  // ── Resources ──────────────────────────────────────────────────────────
+  resources: {
+    driver:   { cores: 2, memory: "4g" },
+    executor: { cores: 4, memory: "8g", instances: 3 },
+  },
+
+  tags: ["nyc-taxi", "monthly"],
+});
+```
+
+---
+
+## Partition scheme
+
+### Bronze — 4 integer columns
+
+Every bronze table has `__year`, `__month`, `__day`, `__hour`:
+
+```python
+__year  = 1991          # int
+__month = 2             # int
+__day   = 1             # int
+__hour  = 0             # int — 0 when hasHour: false
+```
+
+- Airflow always passes `PARTITION_DATE` (yyyy-MM-dd) and `PARTITION_HOUR` (default 0)
+- `__hour` is either extracted from the data column (`hasHour: true`) or `PARTITION_HOUR` literal
+- Idempotent replaceWhere: `__year = 1991 AND __month = 2 AND __day = 1 AND __hour = 0`
+
+### Silver / Gold — 1 string column
+
+Every silver/gold table has a single `__date` column:
+
+```
+01_02_1991_00    →  DD_MM_YYYY_HH
+```
+
+- Format is always `DD_MM_YYYY_HH` — hour always present, `00` when not applicable
+- Consistent format across all tables regardless of source granularity
+- Trino filter: `WHERE __date = '01_02_1991_00'`
+- Idempotent replaceWhere: `__date = '01_02_1991_00'`
+
+---
+
+## The generated Python
+
+```python
+# GENERATED BY FORGE CLI — DO NOT EDIT OUTSIDE THE MARKED BLOCK
+# Source: nyc_taxi_silver.forge.ts  |  Layer: silver
+# Regenerate: forge generate --job nyc_taxi_silver
+
+# ... locked: imports, params, class definition, source read ...
+
+        # ╔══════════════════════════════════════════╗
+        # ║  EDIT THIS BLOCK — business logic only   ║
+        # ╚══════════════════════════════════════════╝
+        # ── FORGE:BUSINESS_LOGIC:START ──
+        df = raw  # TODO: transform raw → df
+        # ── FORGE:BUSINESS_LOGIC:END ──
+        # ════════════════════════════════════════════
+
+# ... locked: __date/__year stamping, write, saveAsTable ...
+```
+
+**Rules:**
+- Only edit between `FORGE:BUSINESS_LOGIC:START` and `FORGE:BUSINESS_LOGIC:END`
+- Re-running `forge generate` will regenerate everything else and keep your logic
+- The VS Code extension decorates locked regions with a grey background
+
+---
+
+## VS Code extension
+
+The extension is in `sdk/vscode-extension/`. It provides:
+
+- **Grey decorations** on locked regions in generated `.py` files
+- **Status bar**: `Forge: silver — nyc_taxi_silver` when a `.forge.ts` is open
+- **Commands** (Ctrl+Shift+P):
+  - `Forge: Generate` — runs `forge generate` for the active manifest
+  - `Forge: Check` — runs `forge generate --check` (useful before committing)
+  - `Forge: Init` — creates a new manifest stub
+
+To install locally: `cd sdk/vscode-extension && npm install && npm run build`, then install the `.vsix` from VS Code.

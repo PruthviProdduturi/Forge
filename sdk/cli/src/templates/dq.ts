@@ -20,8 +20,11 @@ import type { ForgeJobManifest } from "../schema.js";
 export function generateDqYaml(manifest: ForgeJobManifest): string {
   const table = manifest.output.table;
   const layer = manifest.layer;
-  // Always partition by (partition_date, partition_hour)
-  const partitionCols = ["partition_date", "partition_hour"];
+  // Bronze: 4 integer columns. Silver/Gold: 1 string __date column.
+  const partitionCols: string[] =
+    layer === "bronze"
+      ? ["__year", "__month", "__day", "__hour"]
+      : ["__date"];
 
   // Build a set of sensible starter rules based on layer and partition columns
   const partitionRules = partitionCols

@@ -168,30 +168,53 @@ function renderWrite(
   manifest: ForgeJobManifest,
   indent = "        "
 ): string {
-  const { output, dq, partition } = manifest;
+  const { output, dq, partition, layer } = manifest;
   const mode = output.mode ?? "overwrite";
   const col = partition.column;
 
-  // Always partition by (partition_date, partition_hour).
-  // PARTITION_DATE is always set by Airflow.
-  // PARTITION_HOUR defaults to 0 when the date column has no time component.
-  // When hasHour=true, the hour is extracted from the column; otherwise F.lit(0).
-  const hourExpr = partition.hasHour
-    ? `F.hour(F.col("${col}"))`
-    : `F.lit(0)`;
+  let preMutationBlock: string;
+  let partBy: string;
+  let pyReplaceWhere: string;
 
-  const preMutationBlock = [
-    `${indent}# Stamp partition columns before write`,
-    `${indent}df = (`,
-    `${indent}    df`,
-    `${indent}    .withColumn("partition_date", F.to_date(F.col("${col}")))`,
-    `${indent}    .withColumn("partition_hour", ${hourExpr})`,
-    `${indent})`,
-    ``,
-  ].join("\n");
+  if (layer === "bronze") {
+    // Bronze: 4 integer partition columns — best for range scans on raw data.
+    // __year, __month, __day always from PARTITION_DATE env var.
+    // __hour from the data column (hasHour=true) or PARTITION_HOUR (default 0).
+    const hourExpr = partition.hasHour
+      ? `F.hour(F.col("${col}"))`
+      : `F.lit(PARTITION_HOUR)`;
 
-  const partBy = `"partition_date", "partition_hour"`;
-  const pyReplaceWhere = `partition_date = '{PARTITION_DATE}' AND partition_hour = {PARTITION_HOUR}`;
+    preMutationBlock = [
+      `${indent}# Stamp bronze partition columns from execution context`,
+      `${indent}_year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))`,
+      `${indent}df = (`,
+      `${indent}    df`,
+      `${indent}    .withColumn("__year",  F.lit(_year))`,
+      `${indent}    .withColumn("__month", F.lit(_month))`,
+      `${indent}    .withColumn("__day",   F.lit(_day))`,
+      `${indent}    .withColumn("__hour",  ${hourExpr})`,
+      `${indent})`,
+      ``,
+    ].join("\n");
+
+    partBy = `"__year", "__month", "__day", "__hour"`;
+    pyReplaceWhere = `__year = {_year} AND __month = {_month} AND __day = {_day} AND __hour = {PARTITION_HOUR}`;
+  } else {
+    // Silver / Gold: single __date string column — format DD_MM_YYYY_HH.
+    // Hour is always included (defaults to 00) so the format is consistent
+    // across all silver/gold tables regardless of source granularity.
+    // Example: 01_02_1991_00  (1 Feb 1991, hour 0)
+    preMutationBlock = [
+      `${indent}# Build __date partition key: DD_MM_YYYY_HH`,
+      `${indent}_dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")`,
+      `${indent}_date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"`,
+      `${indent}df = df.withColumn("__date", F.lit(_date_key))`,
+      ``,
+    ].join("\n");
+
+    partBy = `"__date"`;
+    pyReplaceWhere = `__date = '{_date_key}'`;
+  }
 
   const writeLines = [
     `${indent}(`,
@@ -352,7 +375,10 @@ ${manifest.description}
 
 Layer:     ${manifest.layer}
 Table:     ${manifest.output.table}
-Partition: ${manifest.partition.column} → (partition_date, partition_hour) — hour=${manifest.partition.hasHour ? "extracted from column" : "0 (date-only)"}
+Partition: ${manifest.layer === "bronze"
+    ? `__year/__month/__day/__hour from ${manifest.partition.column}${manifest.partition.hasHour ? "" : " (hour=PARTITION_HOUR, default 0)"}`
+    : `__date = DD_MM_YYYY_HH from ${manifest.partition.column}`
+  }
 Schedule:  ${scheduleStr}
 Params:
 ${paramDocs}
