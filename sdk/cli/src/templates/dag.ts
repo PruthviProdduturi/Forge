@@ -188,6 +188,7 @@ ${allEnvVars}
     spark.sql.hive.metastore.jars: builtin
     spark.databricks.delta.optimizeWrite.enabled: "true"
     spark.sql.shuffle.partitions: "24"
+    spark.submit.pyFiles: "abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/lib/forge_lib.zip"
 ${adaptiveConf}
 """`;
 }

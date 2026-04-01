@@ -7,15 +7,15 @@ Scaffold Spark jobs from a single TypeScript manifest. One file defines everythi
 ## How it works
 
 ```
-my_job.forge.ts          ← you write this
-    │
-    ▼  forge generate
-├── my_job.py            ← generated, DO NOT edit outside the marked block
-├── my_job_dag.py        ← generated, fully managed
-└── dq/rules/my_job.yaml ← generated once, then yours to extend
+src/spark/jobs/my_job.forge.ts      ← you write this (manifest)
+src/spark/jobs/my_job.py            ← generated — only edit the BL block
+src/airflow/dags/{layer}/my_job_dag.py  ← generated, fully managed
+src/dq/rules/my_job.yaml            ← generated once, then yours to extend
 ```
 
-On re-generation, the business logic you wrote is **preserved**. Everything else is regenerated from the manifest.
+On re-generation, the business logic block inside `.py` is **preserved**. Everything else is regenerated from the manifest.
+
+The Spark job calls into `forge_sdk` and `forge_dq` at runtime. These are distributed to every executor automatically via `spark.submit.pyFiles: forge_lib.zip` — no image rebuild needed when the SDK changes.
 
 ---
 
@@ -52,26 +52,23 @@ Then open the generated `.forge.ts` and fill in the details.
 ### `forge generate` — generate job files from a manifest
 
 ```bash
-# single job
-forge generate --job nyc_taxi_bronze
+# single job (--manifest-dir is where .forge.ts files live, --dir is the src root)
+forge generate --job nyc_taxi_bronze --manifest-dir src/spark/jobs --dir .
 
-# all manifests in a directory
-forge generate --dir examples/src/spark/jobs
-
-# custom output directory
-forge generate --job nyc_taxi_bronze --dir path/to/jobs
+# all manifests (processes every .forge.ts in manifest-dir)
+forge generate --manifest-dir src/spark/jobs --dir .
 
 # verbose output
-forge generate --job nyc_taxi_bronze --verbose
+forge generate --job nyc_taxi_bronze --manifest-dir src/spark/jobs --dir . --verbose
 ```
 
 **What gets generated:**
 
-| File | Location | Re-generated? |
+| File | Location under `--dir` | Re-generated? |
 |---|---|---|
-| `{name}.py` | `--dir` (default: manifest dir) | Yes — business logic block preserved |
-| `{name}_dag.py` | `orchestration/airflow/dags/{ingestion\|transformation}/` | Yes — fully managed |
-| `dq/rules/{name}.yaml` | relative to manifest dir | No — written once, then yours |
+| `{name}.py` | `src/spark/jobs/{name}.py` | Yes — business logic block preserved |
+| `{name}_dag.py` | `src/airflow/dags/{ingestion\|transformation}/{name}_dag.py` | Yes — fully managed |
+| `{name}.yaml` | `src/dq/rules/{name}.yaml` | No — written once, then yours |
 
 ---
 

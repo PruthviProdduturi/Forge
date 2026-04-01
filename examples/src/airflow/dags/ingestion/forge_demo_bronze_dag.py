@@ -1,41 +1,15 @@
 """
 DAG: forge_demo_bronze
 ======================
-Daily ingestion of synthetic retail orders into the bronze Delta layer.
-This DAG is the entry point of the Forge platform end-to-end demo pipeline
-and is designed to be self-contained: the Spark job generates ~1 000
-synthetic records for the run date rather than pulling from an external
-source, so the demo can run in any environment without additional data
-dependencies.
+Daily ingestion of synthetic retail orders into the bronze Delta layer
 
-Pipeline:
-  Source  — Synthetic generator (no external dependency)
-  Output  — lakehouse.bronze.retail_orders  (Delta, partitioned by order_date)
-
-Dataset schema (retail_orders):
-  order_id          string       — unique order identifier, e.g. "ORD-00000042"
-  customer_id       string       — anonymised customer ref, e.g. "CUST-43"
-  product_id        string       — product reference, e.g. "PROD-7"
-  product_category  string       — one of: Electronics, Clothing, Food, Home, Sports
-  quantity          int          — units ordered (1–10)
-  unit_price        double       — price per unit in USD (e.g. 42.99)
-  order_timestamp   timestamp    — wall-clock time within the partition date
-  status            string       — one of: pending, confirmed, shipped, delivered, cancelled
-  region            string       — one of: North, South, East, West, Central
-  order_date        string       — partition column (yyyy-MM-dd), equals PARTITION_DATE
-  _source           string       — audit: always "synthetic-generator"
-  _ingested_at      timestamp    — audit: wall-clock time of the Spark write
-
-Schedule:   Daily at 02:00 UTC
-SLA:        2 hours (must complete by 04:00 UTC)
+Triggers:    forge_demo_silver on success
+Schedule:   At 02:00 AM
+SLA:        2 hours
 Retries:    2 × 5-minute back-off
 
-Portal:     Visible in Forge portal under Pipelines → ingestion, forge-demo tags
-Lineage:    Emitted automatically to Microsoft Purview via the OpenLineage
-            listener configured in forge_session().  No extra code required.
-
-Dependencies:
-  → triggers forge_demo_silver once ingest_orders completes successfully
+Layer:   bronze
+Table:   lakehouse.bronze.retail_orders
 """
 from __future__ import annotations
 
@@ -56,8 +30,6 @@ _STORAGE_ACCOUNT = "{{ var.value.get('storage_account', 'forgeadlsprproddudev') 
 
 # ---------------------------------------------------------------------------
 # SparkApplication YAML — Jinja-rendered per run.
-# application_file is a template_field on SparkKubernetesOperator so all
-# {{ }} expressions are rendered by Airflow before submission to the operator.
 # ---------------------------------------------------------------------------
 _SPARK_APP = f"""
 apiVersion: sparkoperator.k8s.io/v1beta2
@@ -86,6 +58,8 @@ spec:
     env:
       - name: PARTITION_DATE
         value: "{{{{ data_interval_start.strftime('%Y-%m-%d') }}}}"
+      - name: PARTITION_HOUR
+        value: "{{{{ data_interval_start.strftime('%-H') }}}}"
       - name: FORGE_ENV
         valueFrom:
           configMapKeyRef:
@@ -110,6 +84,8 @@ spec:
     spark.sql.hive.metastore.jars: builtin
     spark.databricks.delta.optimizeWrite.enabled: "true"
     spark.sql.shuffle.partitions: "24"
+    spark.submit.pyFiles: "abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/lib/forge_lib.zip"
+
 """
 
 # ---------------------------------------------------------------------------
@@ -131,17 +107,18 @@ default_args = {
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="forge_demo_bronze",
-    description="Forge demo — daily ingest of synthetic retail orders → bronze Delta",
+    description="Daily ingestion of synthetic retail orders into the bronze Delta layer",
     schedule="0 2 * * *",
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    tags=["forge-demo", "bronze", "ingestion", "retail", "daily"],
+    max_active_runs=3,
+    tags=["bronze", "ingestion", "forge", "demo", "forge-demo", "retail", "daily", "synthetic"],
     default_args=default_args,
     doc_md=__doc__,
 ) as dag:
 
-    ingest_orders = SparkKubernetesOperator(
-        task_id="ingest_orders",
+    spark_task = SparkKubernetesOperator(
+        task_id="ingest_demo_bronze",
         namespace="spark-jobs",
         application_file=_SPARK_APP,
         kubernetes_conn_id="kubernetes_compute_cluster",
@@ -149,12 +126,11 @@ with DAG(
         poll_interval=30,
     )
 
-    trigger_silver = TriggerDagRunOperator(
-        task_id="trigger_silver",
+    trigger_forge_demo_silver = TriggerDagRunOperator(
+        task_id="trigger_forge_demo_silver",
         trigger_dag_id="forge_demo_silver",
         logical_date="{{ data_interval_start }}",
         wait_for_completion=False,
         reset_dag_run=True,
     )
-
-    ingest_orders >> trigger_silver
+    spark_task >> [trigger_forge_demo_silver]

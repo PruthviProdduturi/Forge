@@ -1,32 +1,16 @@
 """
 DAG: forge_demo_silver
 ======================
-Transforms retail orders bronze data into a cleaned, deduplicated silver Delta
-table partitioned by order_date.
-
-Pipeline:
-    Source:   bronze/retail/orders/              (Delta, appended by forge_demo_bronze)
-    Output:   silver/retail/orders_cleaned/      (Delta, partition-overwrite per run)
-    HMS:      lakehouse.silver.retail_orders_cleaned
-
-Transforms applied:
-  - Deduplicate on order_id
-  - Drop rows with NULL in order_id, customer_id, unit_price, or quantity
-  - Filter out non-positive quantity and unit_price
-  - Compute total_amount = round(quantity * unit_price, 2)
-  - Add _processed_at audit timestamp
-  - Drop _source staging column
-  - DQ gate via @track decorator (forge_dq)
+Clean and deduplicate retail orders bronze partition into the silver layer
 
 Triggered by: forge_demo_bronze (via TriggerDagRunOperator)
-Can also be run manually to reprocess any date partition.
-
-Schedule:   Triggered by forge_demo_bronze (no independent schedule)
-SLA:        3 hours after trigger
+Triggers:    forge_demo_gold on success
+Schedule:   Triggered (no independent schedule)
+SLA:        3 hours
 Retries:    2 × 10-minute back-off
 
-Portal:     Visible in Forge portal under Pipelines → transformation, retail tags
-Lineage:    Emitted automatically via OpenLineage
+Layer:   silver
+Table:   lakehouse.silver.retail_orders_cleaned
 """
 from __future__ import annotations
 
@@ -38,10 +22,17 @@ from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import (
     SparkKubernetesOperator,
 )
 
+# ---------------------------------------------------------------------------
+# Shared template values — resolved at render time via Airflow Variables so
+# the same DAG file works across dev / staging / prod without edits.
+# ---------------------------------------------------------------------------
 _SPARK_IMAGE = "{{ var.value.get('spark_image', 'forgeacrprproddu.azurecr.io/spark:4.1.1') }}"
 _STORAGE_ACCOUNT = "{{ var.value.get('storage_account', 'forgeadlsprproddudev') }}"
 
-_SILVER_SPEC = f"""
+# ---------------------------------------------------------------------------
+# SparkApplication YAML — Jinja-rendered per run.
+# ---------------------------------------------------------------------------
+_SPARK_APP = f"""
 apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
 metadata:
@@ -68,6 +59,8 @@ spec:
     env:
       - name: PARTITION_DATE
         value: "{{{{ data_interval_start.strftime('%Y-%m-%d') }}}}"
+      - name: PARTITION_HOUR
+        value: "{{{{ data_interval_start.strftime('%-H') }}}}"
       - name: FORGE_ENV
         valueFrom:
           configMapKeyRef:
@@ -92,10 +85,14 @@ spec:
     spark.sql.hive.metastore.jars: builtin
     spark.databricks.delta.optimizeWrite.enabled: "true"
     spark.sql.shuffle.partitions: "24"
+    spark.submit.pyFiles: "abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/lib/forge_lib.zip"
     spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"
 """
 
+# ---------------------------------------------------------------------------
+# Default task arguments
+# ---------------------------------------------------------------------------
 default_args = {
     "owner": "data-engineering",
     "depends_on_past": False,
@@ -107,33 +104,35 @@ default_args = {
     "email_on_retry": False,
 }
 
+# ---------------------------------------------------------------------------
+# DAG
+# ---------------------------------------------------------------------------
 with DAG(
     dag_id="forge_demo_silver",
-    description="Retail orders bronze → silver (clean, dedupe, DQ gate)",
-    schedule=None,  # triggered by forge_demo_bronze
+    description="Clean and deduplicate retail orders bronze partition into the silver layer",
+    schedule=None  # triggered by upstream,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     max_active_runs=3,
-    tags=["forge-demo", "silver", "transformation", "retail", "daily"],
+    tags=["silver", "transformation", "forge", "demo", "forge-demo", "retail", "daily"],
     default_args=default_args,
     doc_md=__doc__,
 ) as dag:
 
-    silver_transform = SparkKubernetesOperator(
-        task_id="silver_transform",
+    spark_task = SparkKubernetesOperator(
+        task_id="transform_silver",
         namespace="spark-jobs",
-        application_file=_SILVER_SPEC,
+        application_file=_SPARK_APP,
         kubernetes_conn_id="kubernetes_compute_cluster",
         do_xcom_push=True,
         poll_interval=30,
     )
 
-    trigger_gold = TriggerDagRunOperator(
-        task_id="trigger_gold",
+    trigger_forge_demo_gold = TriggerDagRunOperator(
+        task_id="trigger_forge_demo_gold",
         trigger_dag_id="forge_demo_gold",
         logical_date="{{ data_interval_start }}",
         wait_for_completion=False,
         reset_dag_run=True,
     )
-
-    silver_transform >> trigger_gold
+    spark_task >> [trigger_forge_demo_gold]

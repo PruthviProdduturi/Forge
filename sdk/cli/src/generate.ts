@@ -80,16 +80,9 @@ export function resolveOutputPaths(
   const folder = dagFolder(manifest.layer);
   return {
     pythonJob: path.join(outputDir, "src", "spark", "jobs", `${manifest.name}.py`),
-    dag: path.join(
-      outputDir,
-      "orchestration",
-      "airflow",
-      "dags",
-      folder,
-      `${manifest.name}_dag.py`
-    ),
+    dag: path.join(outputDir, "src", "airflow", "dags", folder, `${manifest.name}_dag.py`),
     dqRules: manifest.dq
-      ? path.join(outputDir, "orchestration", "dq", "rules", `${manifest.name}.yaml`)
+      ? path.join(outputDir, "src", "dq", "rules", `${manifest.name}.yaml`)
       : null,
   };
 }
@@ -288,11 +281,11 @@ export default defineJob({
 ${sourcePart}
 
   // The generator derives partitionBy and replaceWhere from this block.
-  // granularity "day"  → partitionBy([column]), replaceWhere uses PARTITION_DATE
-  // granularity "hour" → partitionBy(["year","month","day","hour"]), uses PARTITION_DATE + PARTITION_HOUR
+  // hasHour: false → __date = DD_MM_YYYY_00  (silver/gold) or __hour = PARTITION_HOUR literal (bronze)
+  // hasHour: true  → hour extracted from the column itself (timestamp columns)
   partition: {
     column: "${partitionColumnHint}",  // date/timestamp column in your data
-    granularity: "day",               // "day" | "hour"
+    hasHour: false,                    // true if column includes a time component to extract
   },
 
   output: {

@@ -1,4 +1,4 @@
-import { defineJob } from "../../../../../sdk/cli/src/schema.js";
+import { defineJob } from "../../../../sdk/cli/src/schema.js";
 
 export default defineJob({
   name: "forge_demo_silver",
