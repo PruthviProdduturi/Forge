@@ -6,6 +6,7 @@
 #   1. Determine scope — git diff since last deploy (incremental) or all (--full)
 #   2. forge generate  — re-scaffold Python job, DAG, DQ YAML from .forge.ts
 #                        Business logic blocks are ALWAYS preserved
+#      Copy DAGs: examples/src/airflow/dags/ → orchestration/airflow/dags/
 #   3. Build forge_lib.zip — packages forge_sdk/ + forge_dq/ from sdk/python/
 #                            Rebuilt only when sdk/python/ changed since last deploy
 #   4. Upload forge_lib.zip → ADLS code/lib/  (if rebuilt)
@@ -43,7 +44,10 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLI_ENTRY="${REPO_ROOT}/sdk/cli/src/index.ts"
 EXAMPLES_DIR="${REPO_ROOT}/examples"
 MANIFESTS_DIR="${EXAMPLES_DIR}/src/spark/jobs"
-DAGS_DIR="${EXAMPLES_DIR}/src/airflow/dags"
+# forge generate writes DAGs here (pipelines-repo path, two-repo model)
+GENERATED_DAGS_DIR="${EXAMPLES_DIR}/src/airflow/dags"
+# git-sync reads from here — sync-jobs.sh copies from GENERATED_DAGS_DIR to here
+DAGS_DIR="${REPO_ROOT}/orchestration/airflow/dags"
 DQ_RULES_DIR="${EXAMPLES_DIR}/src/dq/rules"
 SDK_PYTHON_DIR="${REPO_ROOT}/sdk/python"
 LIB_BLOB_PREFIX="lib"
@@ -314,7 +318,30 @@ for manifest in "${MANIFEST_FILES[@]}"; do
   fi
 done
 
-# Collect generated DAG files
+# ---------------------------------------------------------------------------
+# Step 2b — Copy generated DAGs → orchestration/airflow/dags/ (git-sync target)
+# ---------------------------------------------------------------------------
+# forge generate writes DAGs to examples/src/airflow/dags/ (pipelines-repo path).
+# Airflow git-sync reads from orchestration/airflow/dags/ (platform-repo path).
+# In a two-repo setup git-sync would point directly to src/airflow/dags/; in
+# the current single-repo dev setup we copy across before pushing.
+# ---------------------------------------------------------------------------
+if ! dry; then
+  for manifest in "${MANIFEST_FILES[@]}"; do
+    job_name="$(basename "${manifest}" .forge.ts)"
+    # DAG lives in either ingestion/ or transformation/ — check both
+    for _subdir in ingestion transformation; do
+      _src="${GENERATED_DAGS_DIR}/${_subdir}/${job_name}_dag.py"
+      if [[ -f "${_src}" ]]; then
+        mkdir -p "${DAGS_DIR}/${_subdir}"
+        cp "${_src}" "${DAGS_DIR}/${_subdir}/${job_name}_dag.py"
+        log "  synced → orchestration/airflow/dags/${_subdir}/${job_name}_dag.py"
+      fi
+    done
+  done
+fi
+
+# Collect generated DAG files (from the git-sync target dir)
 if ! dry; then
   mapfile -t GENERATED_DAGS < <(
     git -C "${REPO_ROOT}" diff --name-only HEAD -- "${DAGS_DIR}" 2>/dev/null

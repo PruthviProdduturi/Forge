@@ -324,93 +324,148 @@ kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags list | head -10
 
 ## 5.6 Developer Portal
 
-The portal backend and frontend run as separate deployments in the `portal` namespace.
+The portal is deployed by a single script that handles everything: image builds, NGINX ingress, Helm chart, and Key Vault secret seeding.
+
+### Prerequisites
+
+- `az login` complete with the correct subscription
+- `kubectl` context for the orchestration cluster:
+  ```bash
+  az aks get-credentials \
+    --resource-group rg-forge-{env} \
+    --name aks-forge-orchestration-{alias}-{env} \
+    --overwrite-existing
+  ```
+- cluster-bootstrap applied (creates `portal` namespace and `portal-api` ServiceAccount with workload identity)
+- ACR built — images will be built by the script via `az acr build`
+
+### Deploy
 
 ```bash
-kubectl create namespace portal --dry-run=client -o yaml | kubectl apply -f -
+bash infra/scripts/deploy-portal.sh --env dev --alias prproddu
+```
 
-# Deploy portal backend (FastAPI)
-kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: portal-api
-  namespace: portal
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: portal-api
-  template:
-    metadata:
-      labels:
-        app: portal-api
-        azure.workload.identity/use: "true"
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
-    spec:
-      serviceAccountName: portal
-      containers:
-        - name: portal-api
-          image: forgeacr{alias}.azurecr.io/portal-api:latest
-          ports:
-            - containerPort: 8080
-          env:
-            - name: AIRFLOW_URL
-              value: "http://airflow-webserver.airflow.svc.cluster.local:8080"
-            - name: PURVIEW_ACCOUNT
-              value: "purview-forge-{env}"
-            - name: PURVIEW_ENDPOINT
-              value: "https://purview-forge-{env}.purview.azure.com"
-            - name: ADLS_ACCOUNT
-              value: "forgeadls{env}"
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8080
-            initialDelaySeconds: 10
-          resources:
-            requests: { cpu: "250m", memory: "256Mi" }
-            limits:   { cpu: "1",    memory: "1Gi"   }
-EOF
+What the script does:
 
-# Deploy portal frontend (Next.js)
-kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: portal-web
-  namespace: portal
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: portal-web
-  template:
-    metadata:
-      labels:
-        app: portal-web
-    spec:
-      containers:
-        - name: portal-web
-          image: forgeacr{alias}.azurecr.io/portal-web:latest
-          ports:
-            - containerPort: 3000
-          env:
-            - name: NEXT_PUBLIC_API_URL
-              value: "/api"
-            - name: NEXTAUTH_URL
-              value: "https://portal.forge.{env}.internal"
-          readinessProbe:
-            httpGet:
-              path: /api/health
-              port: 3000
-          resources:
-            requests: { cpu: "250m", memory: "256Mi" }
-            limits:   { cpu: "1",    memory: "512Mi"  }
-EOF
+| Step | Action |
+|---|---|
+| 1 | Resolves `id-forge-portal-{alias}-{env}` managed identity client ID |
+| 1b | Seeds Key Vault secrets: `forge-portal-auth-provider=local`, `forge-portal-aad-client-id=""`, `forge-portal-aad-tenant-id=""` (skips if already set) |
+| 2 | `az acr build` — builds `portal-api:1.0` and `portal-web:1.0` from `portal/backend/` and `portal/frontend/` |
+| 3 | `helm upgrade --install ingress-nginx` — installs NGINX ingress controller with Azure public LoadBalancer + DNS label |
+| 4 | Waits for public IP from Azure (up to 5 min) |
+| 5 | `helm upgrade --install forge-portal` — deploys portal Helm chart (API + Web + Ingress + RBAC) |
+
+Skip image builds if images are already in ACR:
+```bash
+bash infra/scripts/deploy-portal.sh --env dev --alias prproddu --skip-build
+```
+
+### Accessing the Portal
+
+After deployment, the portal is available at:
+
+```
+http://forge-portal-{alias}-{env}.{region}.cloudapp.azure.com
+```
+
+For `prproddu` in `dev`:
+```
+http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+```
+
+**Endpoints:**
+
+| Path | What |
+|---|---|
+| `/` | Developer portal (Next.js UI) |
+| `/api/health` | API health check (unauthenticated) |
+| `/api/pipelines` | List all DAGs + last run state |
+| `/api/status` | Cluster health (both clusters) |
+| `/api/docs` | FastAPI auto-docs (Swagger UI) |
+
+**Default credentials (local auth, dev only):**
+```
+username: admin
+password: admin
+```
+
+### Connecting from kubectl (without public URL)
+
+If the public IP hasn't been allocated yet, or you want a direct in-cluster connection:
+
+```bash
+# Option 1 — port-forward the NGINX ingress controller
+kubectl port-forward svc/ingress-nginx-controller 8080:80 \
+  -n ingress-nginx \
+  --context aks-forge-orchestration-{alias}-{env}
+
+# Then open: http://localhost:8080
+# The /api/* and /* routing both work via ingress.
+```
+
+```bash
+# Option 2 — port-forward directly to portal-web (UI only)
+kubectl port-forward svc/portal-web 3001:3001 \
+  -n portal \
+  --context aks-forge-orchestration-{alias}-{env}
+
+# Then open: http://localhost:3001
+# Note: /api/* won't work through this — use Option 1 for full access.
+```
+
+```bash
+# Option 3 — port-forward directly to portal-api (API only)
+kubectl port-forward svc/portal-api 8080:8080 \
+  -n portal \
+  --context aks-forge-orchestration-{alias}-{env}
+
+# Then open: http://localhost:8080/api/health
+#            http://localhost:8080/api/docs
+#            http://localhost:8080/api/pipelines  (requires auth header)
+```
+
+### Portal API — Airflow Connectivity
+
+The portal API talks to Airflow inside the orchestration cluster via:
+```
+http://airflow-webserver.airflow.svc.cluster.local:8080
+```
+This is a cluster-internal DNS name. The portal pod must be in the same cluster as Airflow for this to resolve. The `GET /api/pipelines` endpoint lists all DAGs from Airflow including their last run state, schedule, and tags.
+
+### Portal API — Compute Cluster Connectivity
+
+Trino and Spark Connect run on the **compute** cluster. `.svc.cluster.local` DNS does not resolve cross-cluster. The portal probes these via the internal LoadBalancer IPs exposed on the VNet:
+
+```bash
+# Get Trino internal LB IP (set after Trino is deployed on compute cluster)
+kubectl get svc trino -n trino \
+  --context aks-forge-compute-{alias}-{env} \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+```
+
+Set in Helm values:
+```bash
+helm upgrade forge-portal infra/helm/orchestration/portal \
+  --namespace portal \
+  --reuse-values \
+  --set "api.env.trinoHost=<trino-internal-lb-ip>" \
+  --set "api.env.sparkConnectUrl=http://<spark-connect-lb-ip>:4040"
+```
+
+### Deploying Updated Pipelines to Airflow
+
+After running `sync-jobs.sh`, Airflow picks up the new DAGs within 30 seconds. The portal's `GET /api/pipelines` then shows the new DAGs automatically — no portal redeploy needed.
+
+```bash
+# Run all changed pipelines
+FORGE_ENV=dev OWNER_ALIAS=prproddu bash scripts/sync-jobs.sh
+
+# Or a single job
+FORGE_ENV=dev OWNER_ALIAS=prproddu bash scripts/sync-jobs.sh --job nyc_taxi_silver
+
+# Preview what would change
+FORGE_ENV=dev OWNER_ALIAS=prproddu bash scripts/sync-jobs.sh --dry-run
 ```
 
 ---
@@ -434,7 +489,10 @@ EOF
 [ ] Run a test DAG task and verify lineage appears in Purview (forge-{env} namespace)
 [ ] Portal API pod Running:                   kubectl get pods -n portal
 [ ] Portal Web pod Running
-[ ] Portal accessible via Application Gateway
+[ ] Portal accessible at http://forge-portal-{alias}-{env}.{region}.cloudapp.azure.com
+[ ] Portal /api/health returns 200
+[ ] Portal /api/pipelines lists DAGs from Airflow
+[ ] Portal /api/status shows both cluster states
 ```
 
 All green → proceed to Step 06 (CI/CD pipeline configuration).
