@@ -21,6 +21,10 @@
 #   --pg-admin-pass <pass>  Postgres admin password (or set FORGE_PG_ADMIN_PASS)
 #   --api-tag <tag>         portal-api image tag (default: 1.0)
 #   --web-tag <tag>         portal-web image tag (default: 1.0)
+#   --run-test              After deploy: seed raw data, trigger all pipelines
+#                           once (bronze → silver → gold), verify tables in Trino
+#   --test-date <date>      Partition date for test run (default: 2023-01-15)
+#                           Pick a date where NYC TLC data exists
 #
 # First-run prerequisites:
 #   - az login done, correct subscription set
@@ -45,6 +49,8 @@ ALIAS=""
 SKIP_INFRA=false
 SKIP_BUILD=false
 SKIP_SYNC=false
+RUN_TEST=false
+TEST_DATE="2023-01-15"
 GIT_REPO="https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"
 GIT_BRANCH="main"
 GIT_PAT="${FORGE_GIT_PAT:-}"
@@ -62,6 +68,8 @@ while [[ $# -gt 0 ]]; do
     --skip-infra)    SKIP_INFRA=true;   shift ;;
     --skip-build)    SKIP_BUILD=true;   shift ;;
     --skip-sync)     SKIP_SYNC=true;    shift ;;
+    --run-test)      RUN_TEST=true;     shift ;;
+    --test-date)     TEST_DATE="$2";    shift 2 ;;
     --git-repo)      GIT_REPO="$2";     shift 2 ;;
     --git-branch)    GIT_BRANCH="$2";   shift 2 ;;
     --git-pat)       GIT_PAT="$2";      shift 2 ;;
@@ -538,6 +546,176 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Phase 8 — Test pipeline run (--run-test only)
+#
+# Flow:
+#   1. Copy a sample slice of NYC TLC Yellow Taxi data from Azure Open
+#      Datasets into the raw container (Transport/Trip/Public/Rideshare/NycTlc)
+#   2. Trigger nyc_taxi_bronze DAG for TEST_DATE, wait for completion
+#   3. Trigger nyc_taxi_silver DAG for TEST_DATE, wait for completion
+#   4. Trigger nyc_taxi_gold  DAG for TEST_DATE, wait for completion
+#   5. Smoke-test Trino: SELECT COUNT(*) from each output table
+# ---------------------------------------------------------------------------
+if [[ "$RUN_TEST" == "true" ]]; then
+  echo "━━━ [8/8 TEST] Seeding raw data + triggering pipelines ━━"
+  echo "  Test date: ${TEST_DATE}"
+  echo ""
+
+  # ── Step 8.1: Copy NYC TLC sample from Azure Open Datasets → raw container ─
+  echo "  [8.1] Copying NYC TLC sample to raw zone..."
+
+  # Source: Azure Open Datasets public ADLS Gen2 (yellow taxi, 2023-01)
+  # One month of yellow taxi parquet — ~50 MB, ~3M rows — enough to prove the pipeline
+  ADLS_SOURCE="https://azureopendatastore.blob.core.windows.net/nyctlc/yellow/puYear=2023/puMonth=1/part-00000-tid-8898858832658823408-a1de80bd-ead9-4197-baf0-c90f802a6c6c-451985-1.c000.snappy.parquet"
+
+  RAW_CONTAINER="raw"
+  RAW_PATH="Transport/Trip/Public/Rideshare/NycTlc/1/TlcYellowTrip"
+
+  # Download to temp, upload to ADLS raw zone
+  _tmpfile=$(mktemp --suffix=.parquet)
+  curl -L -s -o "${_tmpfile}" "${ADLS_SOURCE}" && \
+    az storage blob upload \
+      --account-name "${ADLS_ACCOUNT}" \
+      --container-name "${RAW_CONTAINER}" \
+      --name "${RAW_PATH}/data.parquet" \
+      --file "${_tmpfile}" \
+      --auth-mode login \
+      --overwrite \
+      --output none && \
+    echo "  Uploaded sample: ${RAW_CONTAINER}/${RAW_PATH}/data.parquet" || \
+    echo "  WARN: raw data upload failed — check ADLS permissions"
+  rm -f "${_tmpfile}"
+
+  # ── Step 8.2: Helper — trigger DAG and wait ──────────────────────────────
+  # Uses `kubectl exec` on the Airflow scheduler pod — no port-forward needed
+  _airflow_exec() {
+    kubectl exec \
+      -n airflow \
+      --context "$ORCH_CLUSTER" \
+      "$(kubectl get pod -n airflow --context "$ORCH_CLUSTER" \
+          -l component=scheduler \
+          --field-selector=status.phase=Running \
+          -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)" \
+      -- "$@" 2>/dev/null
+  }
+
+  _trigger_and_wait() {
+    local dag_id="$1"
+    local run_id="forge_test_${TEST_DATE//-/}"
+    local timeout_mins="${2:-20}"
+
+    echo ""
+    echo "  [DAG] ${dag_id} — triggering for ${TEST_DATE}..."
+
+    # Unpause the DAG first
+    _airflow_exec airflow dags unpause "${dag_id}" > /dev/null 2>&1 || true
+
+    # Trigger a backfill run for the test date (one execution)
+    _airflow_exec airflow dags trigger \
+      "${dag_id}" \
+      --run-id "${run_id}" \
+      --conf "{\"PARTITION_DATE\":\"${TEST_DATE}\"}" \
+      > /dev/null 2>&1 || {
+        echo "  WARN: trigger failed for ${dag_id} — check Airflow logs"
+        return 1
+      }
+
+    echo "  Waiting for ${dag_id} (up to ${timeout_mins}m)..."
+    local elapsed=0
+    local state=""
+    while [[ $elapsed -lt $((timeout_mins * 60)) ]]; do
+      state=$(_airflow_exec airflow dags state "${dag_id}" "${run_id}" 2>/dev/null | tail -1 || echo "unknown")
+      case "$state" in
+        success)
+          echo "  ${dag_id}: SUCCESS"
+          return 0
+          ;;
+        failed|upstream_failed)
+          echo "  ${dag_id}: FAILED (state=${state})"
+          echo "  Check logs: kubectl logs -n airflow -l dag_id=${dag_id} --context ${ORCH_CLUSTER}"
+          return 1
+          ;;
+        *)
+          sleep 15
+          elapsed=$((elapsed + 15))
+          echo "  ${dag_id}: ${state} (${elapsed}s elapsed)"
+          ;;
+      esac
+    done
+    echo "  ${dag_id}: TIMED OUT after ${timeout_mins}m"
+    return 1
+  }
+
+  # ── Step 8.3: Wait for Airflow scheduler to be ready ─────────────────────
+  echo ""
+  echo "  [8.2] Waiting for Airflow scheduler pod..."
+  for i in $(seq 1 24); do
+    SCHED_POD=$(kubectl get pod -n airflow --context "$ORCH_CLUSTER" \
+      -l component=scheduler --field-selector=status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [[ -n "$SCHED_POD" ]]; then
+      echo "  Scheduler ready: ${SCHED_POD}"
+      break
+    fi
+    echo "  Waiting for scheduler... ($((i*5))s)"
+    sleep 5
+  done
+
+  if [[ -z "$SCHED_POD" ]]; then
+    echo "  ERROR: Airflow scheduler not ready. Check: kubectl get pods -n airflow --context ${ORCH_CLUSTER}"
+    echo "  Skipping pipeline test."
+  else
+    # ── Step 8.4: Wait for git-sync to pick up DAGs ───────────────────────
+    echo "  Waiting 35s for Airflow git-sync to pick up DAGs..."
+    sleep 35
+
+    # ── Step 8.5: Trigger bronze → silver → gold ──────────────────────────
+    echo ""
+    echo "  [8.3] Triggering pipeline chain: bronze → silver → gold"
+
+    TEST_OK=true
+    _trigger_and_wait "nyc_taxi_bronze" 25 || TEST_OK=false
+
+    if [[ "$TEST_OK" == "true" ]]; then
+      _trigger_and_wait "nyc_taxi_silver" 20 || TEST_OK=false
+    fi
+
+    if [[ "$TEST_OK" == "true" ]]; then
+      _trigger_and_wait "nyc_taxi_gold" 15 || TEST_OK=false
+    fi
+
+    # ── Step 8.6: Smoke-test Trino ────────────────────────────────────────
+    echo ""
+    echo "  [8.4] Trino smoke test..."
+    TRINO_POD=$(kubectl get pod -n trino --context "$COMPUTE_CLUSTER" \
+      -l app=trino,component=coordinator \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+    if [[ -n "$TRINO_POD" ]]; then
+      for _layer in bronze silver gold; do
+        _count=$(kubectl exec -n trino --context "$COMPUTE_CLUSTER" "${TRINO_POD}" \
+          -- trino --server localhost:8080 \
+             --execute "SELECT COUNT(*) FROM delta.${_layer}.nyctaxi" \
+             --output-format TSV 2>/dev/null | tail -1 || echo "error")
+        printf "  %-8s delta.%s.nyctaxi → %s rows\n" "" "${_layer}" "${_count}"
+      done
+    else
+      echo "  WARN: no Trino coordinator pod found — skipping Trino check"
+    fi
+
+    if [[ "$TEST_OK" == "true" ]]; then
+      echo ""
+      echo "  Test pipelines: ALL PASSED"
+    else
+      echo ""
+      echo "  Test pipelines: SOME FAILED — check Airflow UI"
+      echo "  kubectl port-forward svc/airflow-webserver 8081:8080 -n airflow --context ${ORCH_CLUSTER}"
+    fi
+  fi
+  echo ""
+fi
+
+# ---------------------------------------------------------------------------
 # Done
 # ---------------------------------------------------------------------------
 echo ""
@@ -563,5 +741,13 @@ printf "║      --context %-37s║\n" "$COMPUTE_CLUSTER"
 echo "║    Then open: http://localhost:8080                  ║"
 echo "║                                                      ║"
 echo "║  TABLES (after pipelines run)                        ║"
-echo "║    SELECT * FROM delta.bronze.nyc_taxi LIMIT 10;     ║"
+echo "║    SELECT * FROM delta.bronze.nyctaxi LIMIT 10;      ║"
+echo "║    SELECT * FROM delta.silver.nyctaxi LIMIT 10;      ║"
+echo "║    SELECT * FROM delta.gold.nyctaxi   LIMIT 10;      ║"
+echo "║                                                      ║"
+echo "║  RUN TEST PIPELINES (one-shot end-to-end)            ║"
+echo "║    bash infra/scripts/forge-up.sh \\                 ║"
+echo "║      --env dev --alias prproddu \\                   ║"
+echo "║      --skip-infra --skip-build --skip-sync \\        ║"
+echo "║      --run-test                                      ║"
 echo "╚══════════════════════════════════════════════════════╝"
