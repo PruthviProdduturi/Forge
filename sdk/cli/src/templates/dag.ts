@@ -273,6 +273,9 @@ export function generateDag(manifest: ForgeJobManifest): {
       ? `Triggers:    ${manifest.triggers!.join(", ")} on success\n`
       : "";
 
+  const table = manifest.output.table ??
+    `lakehouse.${manifest.layer}.${manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+
   const content = `"""
 DAG: ${manifest.name}
 ${"=".repeat(manifest.name.length + 5)}
@@ -283,7 +286,7 @@ SLA:        ${slaHours} hour${slaHours !== 1 ? "s" : ""}
 Retries:    2 × ${manifest.layer === "bronze" ? "5" : "10"}-minute back-off
 
 Layer:   ${manifest.layer}
-Table:   ${manifest.output.table}
+Table:   ${table}
 """
 from __future__ import annotations
 

@@ -9,7 +9,7 @@ SLA:        4 hours
 Retries:    2 × 10-minute back-off
 
 Layer:   gold
-Table:   lakehouse.gold.nyc_taxi_{GOLD_TABLE}
+Table:   lakehouse.gold.nyctaxi
 """
 from __future__ import annotations
 

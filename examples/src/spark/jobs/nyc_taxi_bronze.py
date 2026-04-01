@@ -9,7 +9,7 @@
 Daily ingestion of NYC TLC trip data from Azure Open Datasets, partitioned by pickup date
 
 Layer:     bronze
-Table:     lakehouse.bronze.nyc_taxi
+Table:     lakehouse.bronze.nyctaxi
 Partition: __year/__month/__day/__hour from pickup_datetime (hour=PARTITION_HOUR, default 0)
 Schedule:  0 2 * * *
 Params:
@@ -51,7 +51,7 @@ class NycTaxiBronze(ForgeJob):
         """ADLS path for this partition's tracker file."""
         _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
         return (
-            f"{self.bronze("nyc/taxi/_tracker")}"
+            f"abfss://bronze@{self.storage}/Transport/Trip/Internal/Rideshare/NycTaxi/1/NycTaxiBronze/_tracker"
             f"/{_year}/{_month}/{_day}/{PARTITION_HOUR}/tracker.json"
         )
 
@@ -69,17 +69,17 @@ class NycTaxiBronze(ForgeJob):
     def setup(self) -> None:
         if not RESTATE and self._tracker_exists():
             self.log.info(
-                "partition_complete skipping table=lakehouse.bronze.nyc_taxi "
+                "partition_complete skipping table=lakehouse.bronze.nyctaxi "
                 "RESTATE=false — pass RESTATE=true to force rerun",
             )
             raise SystemExit(0)
         if RESTATE:
-            self.log.info("restatement_mode table=lakehouse.bronze.nyc_taxi tracker=%s", self._tracker_path())
+            self.log.info("restatement_mode table=lakehouse.bronze.nyctaxi tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
-        src_path = f"wasbs://nyctlc@azureopendatastore.blob.core.windows.net/{TAXI_TYPE}/*.parquet"
+        src_path = f"abfss://raw@{self.storage}/Transport/Trip/Public/Rideshare/NycTlc/1/TlcYellowTrip"
         raw = (
             self.spark.read
             .option("mergeSchema", "true")
@@ -100,7 +100,7 @@ class NycTaxiBronze(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.bronze.nyc_taxi")
+            self.log.warning("empty_partition_skipping table=lakehouse.bronze.nyctaxi")
             return
 
         # Stamp partition columns
@@ -120,16 +120,16 @@ class NycTaxiBronze(ForgeJob):
             .option("overwriteSchema", "true")
             .option("replaceWhere", f"__year = {_year} AND __month = {_month} AND __day = {_day} AND __hour = {PARTITION_HOUR}")
             .partitionBy("__year", "__month", "__day", "__hour")
-            .saveAsTable("lakehouse.bronze.nyc_taxi")
+            .saveAsTable("lakehouse.bronze.nyctaxi")
         )
 
-        self.log.info("write_complete table=lakehouse.bronze.nyc_taxi rows=%d", _row_count)
+        self.log.info("write_complete table=lakehouse.bronze.nyctaxi rows=%d", _row_count)
 
         # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
-            "table":        "lakehouse.bronze.nyc_taxi",
+            "table":        "lakehouse.bronze.nyctaxi",
             "partition":    {"year": _year, "month": _month, "day": _day, "hour": PARTITION_HOUR},
             "status":       "success",
             "rows_written": _row_count,

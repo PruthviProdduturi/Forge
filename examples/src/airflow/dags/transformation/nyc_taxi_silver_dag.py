@@ -10,7 +10,7 @@ SLA:        3 hours
 Retries:    2 × 10-minute back-off
 
 Layer:   silver
-Table:   lakehouse.silver.nyc_taxi_trips
+Table:   lakehouse.silver.nyctaxi
 """
 from __future__ import annotations
 

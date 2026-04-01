@@ -10,9 +10,17 @@ export default defineJob({
     PARTITION_MONTH: { type: "int", default: 1 },
   },
   source: {
-    type: "bronze",
-    table: "lakehouse.bronze.nyc_taxi",
-    filter: "PARTITION_YEAR = {PARTITION_YEAR} AND PARTITION_MONTH = {PARTITION_MONTH}",
+    name: "NycTaxiBronze",
+    version: 1,
+    path: {
+      container: "bronze",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Internal",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
+    filter: "__year = {_year} AND __month = {_month} AND __day = {_day}",
   },
   partition: {
     column: "PARTITION_MONTH",
@@ -20,7 +28,16 @@ export default defineJob({
   },
 
   output: {
-    table: "lakehouse.silver.nyc_taxi_trips",
+    name: "NycTaxiTrips",
+    version: 1,
+    path: {
+      container: "silver",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Analytics",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
   },
   dq: { rules: "orchestration/dq/rules/nyc_taxi_silver.yaml" },
   triggeredBy: "nyc_taxi_bronze",

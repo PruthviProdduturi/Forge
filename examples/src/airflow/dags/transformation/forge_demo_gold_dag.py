@@ -9,7 +9,7 @@ SLA:        4 hours
 Retries:    2 × 10-minute back-off
 
 Layer:   gold
-Table:   lakehouse.gold.retail_{GOLD_TABLE}
+Table:   lakehouse.gold.forgedemo
 """
 from __future__ import annotations
 

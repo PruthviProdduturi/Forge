@@ -120,32 +120,22 @@ echo ""
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Bicep infra provisioning (skippable)
+# deploy.sh handles both Bicep + post-deploy (kubeconfigs + IP tags)
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_INFRA" == "false" ]]; then
-  echo "━━━ [1/8] Bicep infra provisioning ━━━━━━━━━━━━━━━━━━━━━"
-  bash "${SCRIPT_DIR}/deploy.sh" \
-    --env "$ENV" \
-    --alias "$ALIAS" \
-    --sub "$SUBSCRIPTION_ID"
+  echo "━━━ [1/7] Bicep infra + post-deploy ━━━━━━━━━━━━━━━━━━━━"
+  bash "${SCRIPT_DIR}/deploy.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
 else
-  echo "━━━ [1/8] Bicep infra — skipped (--skip-infra) ━━━━━━━━━"
+  echo "━━━ [1/7] Bicep infra — skipped (--skip-infra) ━━━━━━━━━"
+  echo "         Refreshing kubeconfigs..."
+  bash "${SCRIPT_DIR}/post-deploy.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
 fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 2 — Fetch kubeconfigs + tag public IPs
+# Phase 2 — Key Vault secret seeding
 # ---------------------------------------------------------------------------
-echo "━━━ [2/8] Post-deploy (kubeconfigs + IP tags) ━━━━━━━━━━━"
-bash "${SCRIPT_DIR}/post-deploy.sh" \
-  --env "$ENV" \
-  --alias "$ALIAS" \
-  --sub "$SUBSCRIPTION_ID"
-echo ""
-
-# ---------------------------------------------------------------------------
-# Phase 3 — Key Vault secret seeding
-# ---------------------------------------------------------------------------
-echo "━━━ [3/8] Key Vault secret seeding ━━━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [2/7] Key Vault secret seeding ━━━━━━━━━━━━━━━━━━━━━━"
 
 _kv_seed() {
   local name="$1" value="$2"
@@ -191,9 +181,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 4 — Postgres: create airflow database and user
+# Phase 3 — Postgres: create airflow database and user
 # ---------------------------------------------------------------------------
-echo "━━━ [4/8] Postgres: airflow DB setup ━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [3/7] Postgres: airflow DB setup ━━━━━━━━━━━━━━━━━━━━"
 
 # Resolve pg admin password: flag > env var > Key Vault
 if [[ -z "$PG_ADMIN_PASS" ]]; then
@@ -240,9 +230,9 @@ echo "  Postgres airflow DB ready"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 5 — K8s secrets for Airflow (both clusters)
+# Phase 4 — K8s secrets for Airflow (both clusters)
 # ---------------------------------------------------------------------------
-echo "━━━ [5/8] K8s secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [4/7] K8s secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 AIRFLOW_DB_CONN="postgresql+psycopg2://airflow:${AIRFLOW_DB_PASS}@${PG_HOST}:5432/airflow?sslmode=require"
 
@@ -312,9 +302,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 6 — Compute cluster: Helm deploys
+# Phase 5 — Compute cluster: Helm deploys
 # ---------------------------------------------------------------------------
-echo "━━━ [6/8] Compute cluster Helm deploys ━━━━━━━━━━━━━━━━━━"
+echo "━━━ [5/7] Compute cluster Helm deploys ━━━━━━━━━━━━━━━━━━"
 
 # Resolve managed identity client IDs
 HMS_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
@@ -441,9 +431,9 @@ echo "    Done"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 7 — Orchestration cluster: Helm deploys
+# Phase 6 — Orchestration cluster: Helm deploys
 # ---------------------------------------------------------------------------
-echo "━━━ [7/8] Orchestration cluster Helm deploys ━━━━━━━━━━━━"
+echo "━━━ [6/7] Orchestration cluster Helm deploys ━━━━━━━━━━━━"
 
 # Ensure portal managed identity is available
 PORTAL_MI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
@@ -536,15 +526,15 @@ echo "    Done"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 8 — sync-jobs.sh: generate + upload DAGs, forge_lib.zip, Spark jobs
+# Phase 7 — sync-jobs.sh: generate + upload DAGs, forge_lib.zip, Spark jobs
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_SYNC" == "false" ]]; then
-  echo "━━━ [8/8] Sync jobs (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
+  echo "━━━ [7/7] Sync jobs (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
   FORGE_ENV="$ENV" OWNER_ALIAS="$ALIAS" \
     bash "${SCRIPT_DIR}/sync-jobs.sh" --full
   echo ""
 else
-  echo "━━━ [8/8] Sync jobs — skipped (--skip-sync) ━━━━━━━━━━━━━"
+  echo "━━━ [7/7] Sync jobs — skipped (--skip-sync) ━━━━━━━━━━━━━"
 fi
 
 # ---------------------------------------------------------------------------

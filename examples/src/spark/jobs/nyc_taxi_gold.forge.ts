@@ -11,9 +11,16 @@ export default defineJob({
     GOLD_TABLE:      { type: "string", required: true, description: "daily_summary | hourly_demand | zone_stats | payment_summary" },
   },
   source: {
-    type: "silver",
-    table: "lakehouse.silver.nyc_taxi_trips",
-    filter: "PARTITION_YEAR = {PARTITION_YEAR} AND PARTITION_MONTH = {PARTITION_MONTH}",
+    name: "NycTaxiTrips",
+    version: 1,
+    path: {
+      container: "silver",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Analytics",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
   },
   partition: {
     column: "PARTITION_MONTH",
@@ -21,7 +28,16 @@ export default defineJob({
   },
 
   output: {
-    table: "lakehouse.gold.nyc_taxi_{GOLD_TABLE}",
+    name: "NycTaxiMetrics",
+    version: 1,
+    path: {
+      container: "gold",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Analytics",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
   },
   triggeredBy: "nyc_taxi_silver",
   resources: {

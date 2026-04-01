@@ -9,7 +9,7 @@
 Daily ingestion of synthetic retail orders into the bronze Delta layer
 
 Layer:     bronze
-Table:     lakehouse.bronze.retail_orders
+Table:     lakehouse.bronze.forgedemo
 Partition: __year/__month/__day/__hour from PARTITION_DATE (hour=PARTITION_HOUR, default 0)
 Schedule:  0 2 * * *
 Params:
@@ -49,7 +49,7 @@ class ForgeDemoBronze(ForgeJob):
         """ADLS path for this partition's tracker file."""
         _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
         return (
-            f"{self.bronze("retail/orders/_tracker")}"
+            f"abfss://bronze@{self.storage}/Demo/Event/Internal/Demo/ForgeDemo/1/ForgeDemoBronze/_tracker"
             f"/{_year}/{_month}/{_day}/{PARTITION_HOUR}/tracker.json"
         )
 
@@ -67,17 +67,17 @@ class ForgeDemoBronze(ForgeJob):
     def setup(self) -> None:
         if not RESTATE and self._tracker_exists():
             self.log.info(
-                "partition_complete skipping table=lakehouse.bronze.retail_orders "
+                "partition_complete skipping table=lakehouse.bronze.forgedemo "
                 "RESTATE=false — pass RESTATE=true to force rerun",
             )
             raise SystemExit(0)
         if RESTATE:
-            self.log.info("restatement_mode table=lakehouse.bronze.retail_orders tracker=%s", self._tracker_path())
+            self.log.info("restatement_mode table=lakehouse.bronze.forgedemo tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
-        src_path = f"synthetic://retail-orders/{PARTITION_DATE}"
+        src_path = f"abfss://raw@{self.storage}/Demo/Event/Public/Demo/ForgeDemo/1/ForgeDemoRaw"
         raw = (
             self.spark.read
             .parquet(src_path)
@@ -97,7 +97,7 @@ class ForgeDemoBronze(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.bronze.retail_orders")
+            self.log.warning("empty_partition_skipping table=lakehouse.bronze.forgedemo")
             return
 
         # Stamp partition columns
@@ -117,16 +117,16 @@ class ForgeDemoBronze(ForgeJob):
             .option("overwriteSchema", "true")
             .option("replaceWhere", f"__year = {_year} AND __month = {_month} AND __day = {_day} AND __hour = {PARTITION_HOUR}")
             .partitionBy("__year", "__month", "__day", "__hour")
-            .saveAsTable("lakehouse.bronze.retail_orders")
+            .saveAsTable("lakehouse.bronze.forgedemo")
         )
 
-        self.log.info("write_complete table=lakehouse.bronze.retail_orders rows=%d", _row_count)
+        self.log.info("write_complete table=lakehouse.bronze.forgedemo rows=%d", _row_count)
 
         # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
-            "table":        "lakehouse.bronze.retail_orders",
+            "table":        "lakehouse.bronze.forgedemo",
             "partition":    {"year": _year, "month": _month, "day": _day, "hour": PARTITION_HOUR},
             "status":       "success",
             "rows_written": _row_count,

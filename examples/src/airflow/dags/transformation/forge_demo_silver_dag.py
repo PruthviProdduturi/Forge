@@ -10,7 +10,7 @@ SLA:        3 hours
 Retries:    2 × 10-minute back-off
 
 Layer:   silver
-Table:   lakehouse.silver.retail_orders_cleaned
+Table:   lakehouse.silver.forgedemo
 """
 from __future__ import annotations
 

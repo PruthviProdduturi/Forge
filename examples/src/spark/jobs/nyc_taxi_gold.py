@@ -9,7 +9,7 @@
 NYC taxi gold aggregations: daily_summary, hourly_demand, zone_stats, payment_summary
 
 Layer:     gold
-Table:     lakehouse.gold.nyc_taxi_{GOLD_TABLE}
+Table:     lakehouse.gold.nyctaxi
 Partition: __date = DD_MM_YYYY_HH derived from PARTITION_MONTH
 Schedule:  triggered (no schedule)
 Params:
@@ -56,7 +56,7 @@ class NycTaxiGold(ForgeJob):
         _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")
         _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"
         return (
-            f"{self.gold("nyc/taxi/{GOLD/TABLE}/_tracker")}"
+            f"abfss://gold@{self.storage}/Transport/Trip/Analytics/Rideshare/NycTaxi/1/NycTaxiMetrics/_tracker"
             f"/{_date_key}/tracker.json"
         )
 
@@ -74,23 +74,23 @@ class NycTaxiGold(ForgeJob):
     def setup(self) -> None:
         if not RESTATE and self._tracker_exists():
             self.log.info(
-                "partition_complete skipping table=lakehouse.gold.nyc_taxi_{GOLD_TABLE} "
+                "partition_complete skipping table=lakehouse.gold.nyctaxi "
                 "RESTATE=false — pass RESTATE=true to force rerun",
             )
             raise SystemExit(0)
         if RESTATE:
-            self.log.info("restatement_mode table=lakehouse.gold.nyc_taxi_{GOLD_TABLE} tracker=%s", self._tracker_path())
+            self.log.info("restatement_mode table=lakehouse.gold.nyctaxi tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
+        src_path = f"abfss://silver@{self.storage}/Transport/Trip/Analytics/Rideshare/NycTaxi/1/NycTaxiTrips"
         raw = (
             self.spark.read
             .format("delta")
-            .load(self.silver("nyc/taxi/trips"))
-            .filter(f"PARTITION_YEAR = {PARTITION_YEAR} AND PARTITION_MONTH = {PARTITION_MONTH}")
+            .load(src_path)
         )
-        self.log.info("source_read table=lakehouse.silver.nyc_taxi_trips")
+        self.log.info("source_read path=%s", src_path)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
@@ -105,7 +105,7 @@ class NycTaxiGold(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.gold.nyc_taxi_{GOLD_TABLE}")
+            self.log.warning("empty_partition_skipping table=lakehouse.gold.nyctaxi")
             return
 
         # Build __date partition key: DD_MM_YYYY_HH
@@ -120,16 +120,16 @@ class NycTaxiGold(ForgeJob):
             .option("overwriteSchema", "true")
             .option("replaceWhere", f"__date = '{_date_key}'")
             .partitionBy("__date")
-            .saveAsTable("lakehouse.gold.nyc_taxi_{GOLD_TABLE}")
+            .saveAsTable("lakehouse.gold.nyctaxi")
         )
 
-        self.log.info("write_complete table=lakehouse.gold.nyc_taxi_{GOLD_TABLE} rows=%d", _row_count)
+        self.log.info("write_complete table=lakehouse.gold.nyctaxi rows=%d", _row_count)
 
         # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
-            "table":        "lakehouse.gold.nyc_taxi_{GOLD_TABLE}",
+            "table":        "lakehouse.gold.nyctaxi",
             "partition":    {"date": _date_key},
             "status":       "success",
             "rows_written": _row_count,

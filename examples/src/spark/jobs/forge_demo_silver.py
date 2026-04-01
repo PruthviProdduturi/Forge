@@ -9,7 +9,7 @@
 Clean and deduplicate retail orders bronze partition into the silver layer
 
 Layer:     silver
-Table:     lakehouse.silver.retail_orders_cleaned
+Table:     lakehouse.silver.forgedemo
 Partition: __date = DD_MM_YYYY_HH derived from PARTITION_DATE
 Schedule:  triggered (no schedule)
 Params:
@@ -64,7 +64,7 @@ class ForgeDemoSilver(ForgeJob):
         _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")
         _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"
         return (
-            f"{self.silver("retail/orders/cleaned/_tracker")}"
+            f"abfss://silver@{self.storage}/Demo/Event/Analytics/Demo/ForgeDemo/1/ForgeDemoEvents/_tracker"
             f"/{_date_key}/tracker.json"
         )
 
@@ -82,23 +82,23 @@ class ForgeDemoSilver(ForgeJob):
     def setup(self) -> None:
         if not RESTATE and self._tracker_exists():
             self.log.info(
-                "partition_complete skipping table=lakehouse.silver.retail_orders_cleaned "
+                "partition_complete skipping table=lakehouse.silver.forgedemo "
                 "RESTATE=false — pass RESTATE=true to force rerun",
             )
             raise SystemExit(0)
         if RESTATE:
-            self.log.info("restatement_mode table=lakehouse.silver.retail_orders_cleaned tracker=%s", self._tracker_path())
+            self.log.info("restatement_mode table=lakehouse.silver.forgedemo tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
+        src_path = f"abfss://bronze@{self.storage}/Demo/Event/Internal/Demo/ForgeDemo/1/ForgeDemoBronze"
         raw = (
             self.spark.read
             .format("delta")
-            .load(self.bronze("retail/orders"))
-            .filter(f"order_date = '{PARTITION_DATE}'")
+            .load(src_path)
         )
-        self.log.info("source_read table=lakehouse.bronze.retail_orders")
+        self.log.info("source_read path=%s", src_path)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
@@ -113,7 +113,7 @@ class ForgeDemoSilver(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.silver.retail_orders_cleaned")
+            self.log.warning("empty_partition_skipping table=lakehouse.silver.forgedemo")
             return
 
         # Build __date partition key: DD_MM_YYYY_HH
@@ -122,7 +122,7 @@ class ForgeDemoSilver(ForgeJob):
         df = df.withColumn("__date", F.lit(_date_key))
 
         @track(
-            dataset="lakehouse.silver.retail_orders_cleaned",
+            dataset="lakehouse.silver.forgedemo",
             rules="orchestration/dq/rules/forge_demo_silver.yaml",
             fail_fast=True,
         )
@@ -134,18 +134,18 @@ class ForgeDemoSilver(ForgeJob):
                 .option("overwriteSchema", "true")
                 .option("replaceWhere", f"__date = '{_date_key}'")
                 .partitionBy("__date")
-                .saveAsTable("lakehouse.silver.retail_orders_cleaned")
+                .saveAsTable("lakehouse.silver.forgedemo")
             )
 
         _write()
 
-        self.log.info("write_complete table=lakehouse.silver.retail_orders_cleaned rows=%d", _row_count)
+        self.log.info("write_complete table=lakehouse.silver.forgedemo rows=%d", _row_count)
 
         # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
-            "table":        "lakehouse.silver.retail_orders_cleaned",
+            "table":        "lakehouse.silver.forgedemo",
             "partition":    {"date": _date_key},
             "status":       "success",
             "rows_written": _row_count,

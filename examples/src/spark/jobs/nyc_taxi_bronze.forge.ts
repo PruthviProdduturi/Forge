@@ -11,8 +11,16 @@ export default defineJob({
     TAXI_TYPE: { type: "string", default: "yellow", description: "yellow | green | fhv | hvfhv" },
   },
   source: {
-    type: "external",
-    path: "wasbs://nyctlc@azureopendatastore.blob.core.windows.net/{TAXI_TYPE}/*.parquet",
+    name: "TlcYellowTrip",
+    version: 1,
+    path: {
+      container: "raw",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Public",
+      metricsCohort: "Rideshare",
+      assetName: "NycTlc",
+    },
     format: "parquet",
     options: { mergeSchema: "true" },
   },
@@ -26,7 +34,16 @@ export default defineJob({
   },
 
   output: {
-    table: "lakehouse.bronze.nyc_taxi",
+    name: "NycTaxiBronze",
+    version: 1,
+    path: {
+      container: "bronze",
+      category: "Transport",
+      entity: "Trip",
+      audience: "Internal",
+      metricsCohort: "Rideshare",
+      assetName: "NycTaxi",
+    },
   },
 
   triggers: ["nyc_taxi_silver"],

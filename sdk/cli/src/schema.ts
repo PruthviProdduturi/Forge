@@ -20,15 +20,23 @@ const ParamSchema = z.object({
   description: z.string().optional(),
 });
 
+const DataPathSchema = z.object({
+  container: z.string(),          // ADLS container (e.g. "bronze", "silver", "gold", "Publish", "raw")
+  category: z.string(),           // e.g. "Transport"
+  entity: z.string(),             // e.g. "Trip"
+  audience: z.string(),           // e.g. "Internal"
+  metricsCohort: z.string(),      // e.g. "Rideshare"
+  assetName: z.string(),          // e.g. "NycTaxi"
+  storageAccount: z.string().optional(),  // override for cross-account reads; defaults to self.storage
+});
+
 const SourceSchema = z.object({
-  type: z.enum(["external", "bronze", "silver"]),
-  // external
-  path: z.string().optional(),
-  format: z.enum(["parquet", "csv", "json", "delta"]).optional(),
-  options: z.record(z.string()).optional(),
-  // bronze / silver
-  table: z.string().optional(),
-  filter: z.string().optional(),
+  name: z.string(),                          // dataset name, used as last path segment
+  version: z.number().int().positive(),      // version number, used as path segment
+  path: DataPathSchema,
+  format: z.enum(["parquet", "csv", "json", "delta"]).optional(),  // for non-delta sources; delta auto-detected for lakehouse containers
+  options: z.record(z.string()).optional(),  // Spark reader options
+  filter: z.string().optional(),             // Delta partition filter
 });
 
 const PartitionSchema = z.object({
@@ -40,8 +48,11 @@ const PartitionSchema = z.object({
 });
 
 const OutputSchema = z.object({
-  table: z.string(),
+  name: z.string(),                          // dataset name, last path segment
+  version: z.number().int().positive(),      // version number, path segment
+  path: DataPathSchema,
   mode: z.enum(["overwrite", "append"]).optional(),
+  table: z.string().optional(),              // HMS/Trino table name; derived as "lakehouse.{layer}.{assetName.toLowerCase()}" if omitted
 });
 
 const DqSchema = z.object({

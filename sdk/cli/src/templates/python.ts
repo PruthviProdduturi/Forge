@@ -74,17 +74,28 @@ function renderParamDocs(params: ForgeJobManifest["params"]): string {
     .join("\n");
 }
 
-/** Derive table sub-path from HMS name: "lakehouse.silver.nyc_taxi_trips" → "nyc_taxi/trips" */
-function tableSubPath(table: string): string {
-  const parts = table.split(".");
-  return parts.slice(2).join(".").replace(/_/g, "/") || parts[parts.length - 1];
+/**
+ * Build the Python f-string snippet for an ADLS path.
+ * container, category, etc. are baked in at codegen time as literals.
+ * storageAccount (if set) is also a literal; otherwise {self.storage} is the runtime reference.
+ */
+function adlsPath(name: string, version: number, path: ForgeJobManifest["output"]["path"]): string {
+  const { container, category, entity, audience, metricsCohort, assetName, storageAccount } = path;
+  const storageExpr = storageAccount ? storageAccount : "{self.storage}";
+  return `abfss://${container}@${storageExpr}/${category}/${entity}/${audience}/${metricsCohort}/${assetName}/${version}/${name}`;
+}
+
+/** Derive the HMS/Trino table name from the manifest. */
+function deriveTable(manifest: ForgeJobManifest): string {
+  if (manifest.output.table) return manifest.output.table;
+  const slug = manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return `lakehouse.${manifest.layer}.${slug}`;
 }
 
 /** Render the `_tracker_path()` instance method — layer-specific. */
 function renderTrackerPathMethod(manifest: ForgeJobManifest): string {
-  const { layer, output, partition } = manifest;
-  const subPath = tableSubPath(output.table);
-  const layerHelper = layer === "gold" ? "self.gold" : layer === "silver" ? "self.silver" : "self.bronze";
+  const { layer, output } = manifest;
+  const base = adlsPath(output.name, output.version, output.path) + "/_tracker";
 
   if (layer === "bronze") {
     return [
@@ -92,7 +103,7 @@ function renderTrackerPathMethod(manifest: ForgeJobManifest): string {
       `        """ADLS path for this partition's tracker file."""`,
       `        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))`,
       `        return (`,
-      `            f"{${layerHelper}("${subPath}/_tracker")}"`,
+      `            f"${base}"`,
       `            f"/{_year}/{_month}/{_day}/{PARTITION_HOUR}/tracker.json"`,
       `        )`,
     ].join("\n");
@@ -105,7 +116,7 @@ function renderTrackerPathMethod(manifest: ForgeJobManifest): string {
     `        _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")`,
     `        _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"`,
     `        return (`,
-    `            f"{${layerHelper}("${subPath}/_tracker")}"`,
+    `            f"${base}"`,
     `            f"/{_date_key}/tracker.json"`,
     `        )`,
   ].join("\n");
@@ -129,7 +140,7 @@ function renderTrackerExistsMethod(): string {
 
 /** Render the `setup()` override — idempotency + restatement guard. */
 function renderSetupMethod(manifest: ForgeJobManifest): string {
-  const table = manifest.output.table;
+  const table = deriveTable(manifest);
   return [
     `    def setup(self) -> None:`,
     `        if not RESTATE and self._tracker_exists():`,
@@ -146,58 +157,42 @@ function renderSetupMethod(manifest: ForgeJobManifest): string {
 /** Render the source-read block (8-space indent — inside run()). */
 function renderSourceRead(manifest: ForgeJobManifest, indent = "        "): string {
   const { source } = manifest;
+  const lakehouseContainers = new Set(["bronze", "silver", "gold"]);
+  const isDelta = source.format === "delta" || lakehouseContainers.has(source.path.container);
+  const fmt = source.format ?? (isDelta ? "delta" : "parquet");
+  const srcAdls = adlsPath(source.name, source.version, source.path);
 
-  if (source.type === "external") {
-    const fmt = source.format ?? "parquet";
-    const pyPath = (source.path ?? "").replace(/\{(\w+)\}/g, "{$1}");
-    const optionsLines = Object.entries(source.options ?? {})
-      .map(([k, v]) => `${indent}    .option("${k}", "${v}")`)
-      .join("\n");
+  const optionsLines = Object.entries(source.options ?? {})
+    .map(([k, v]) => `${indent}    .option("${k}", "${v}")`)
+    .join("\n");
 
-    if (fmt === "parquet") {
-      return [
-        `${indent}src_path = f"${pyPath}"`,
-        `${indent}raw = (`,
-        `${indent}    self.spark.read`,
-        optionsLines,
-        `${indent}    .parquet(src_path)`,
-        `${indent})`,
-        `${indent}self.log.info("source_read path=%s", src_path)`,
-      ].filter(Boolean).join("\n");
-    }
+  const filterLine = source.filter
+    ? `${indent}    .filter(f"${source.filter.replace(/\{(\w+)\}/g, "{$1}")}")`
+    : "";
 
+  if (fmt === "parquet" && !source.filter) {
     return [
-      `${indent}src_path = f"${pyPath}"`,
+      `${indent}src_path = f"${srcAdls}"`,
       `${indent}raw = (`,
       `${indent}    self.spark.read`,
-      `${indent}    .format("${fmt}")`,
       optionsLines,
-      `${indent}    .load(src_path)`,
+      `${indent}    .parquet(src_path)`,
       `${indent})`,
       `${indent}self.log.info("source_read path=%s", src_path)`,
     ].filter(Boolean).join("\n");
   }
 
-  if (source.type === "bronze" || source.type === "silver") {
-    const pathHelper = source.type === "bronze" ? "self.bronze" : "self.silver";
-    const table = source.table ?? "";
-    const subPath = tableSubPath(table);
-    const filterLine = source.filter
-      ? `${indent}    .filter(f"${source.filter.replace(/\{(\w+)\}/g, "{$1}")}")`
-      : "";
-
-    return [
-      `${indent}raw = (`,
-      `${indent}    self.spark.read`,
-      `${indent}    .format("delta")`,
-      `${indent}    .load(${pathHelper}("${subPath}"))`,
-      filterLine,
-      `${indent})`,
-      `${indent}self.log.info("source_read table=${table}")`,
-    ].filter(Boolean).join("\n");
-  }
-
-  return `${indent}raw = None  # TODO: configure source`;
+  return [
+    `${indent}src_path = f"${srcAdls}"`,
+    `${indent}raw = (`,
+    `${indent}    self.spark.read`,
+    `${indent}    .format("${fmt}")`,
+    optionsLines,
+    `${indent}    .load(src_path)`,
+    filterLine,
+    `${indent})`,
+    `${indent}self.log.info("source_read path=%s", src_path)`,
+  ].filter(Boolean).join("\n");
 }
 
 /** Render the write + tracker block (8-space indent — inside run()). */
@@ -205,8 +200,8 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
   const { output, dq, partition, layer } = manifest;
   const mode = output.mode ?? "overwrite";
   const col = partition.column;
-  const subPath = tableSubPath(output.table);
-  const layerHelper = layer === "gold" ? "self.gold" : layer === "silver" ? "self.silver" : "self.bronze";
+  const table = deriveTable(manifest);
+  const outAdls = adlsPath(output.name, output.version, output.path);
 
   // ── Partition stamping ──────────────────────────────────────────────────
   let partitionStamp: string;
@@ -253,19 +248,19 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
     `${indent}    .option("overwriteSchema", "true")`,
     `${indent}    .option("replaceWhere", f"${pyReplaceWhere}")`,
     `${indent}    .partitionBy(${partBy})`,
-    `${indent}    .saveAsTable("${output.table}")`,
+    `${indent}    .saveAsTable("${table}")`,
     `${indent})`,
   ].join("\n");
 
   // ── Tracker write block ──────────────────────────────────────────────────
   const trackerWrite = [
-    `${indent}self.log.info("write_complete table=${output.table} rows=%d", _row_count)`,
+    `${indent}self.log.info("write_complete table=${table} rows=%d", _row_count)`,
     ``,
     `${indent}# Write tracker — source of truth for run history and downstream dependencies`,
     `${indent}_tracker = {`,
     `${indent}    "version":      "v1",`,
     `${indent}    "job":          self.__class__.__name__,`,
-    `${indent}    "table":        "${output.table}",`,
+    `${indent}    "table":        "${table}",`,
     `${indent}    "partition":    ${trackerPartition},`,
     `${indent}    "status":       "success",`,
     `${indent}    "rows_written": _row_count,`,
@@ -287,7 +282,7 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
     `${indent}_row_count = df.count()`,
     `${indent}self.log.info("rows_to_write count=%d", _row_count)`,
     `${indent}if _row_count == 0:`,
-    `${indent}    self.log.warning("empty_partition_skipping table=${output.table}")`,
+    `${indent}    self.log.warning("empty_partition_skipping table=${table}")`,
     `${indent}    return`,
   ].join("\n");
 
@@ -301,7 +296,7 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
       partitionStamp,
       ``,
       `${indent}@track(`,
-      `${indent}    dataset="${output.table}",`,
+      `${indent}    dataset="${table}",`,
       `${indent}    rules="${dq.rules}",`,
       `${indent}    fail_fast=${failFast},`,
       `${indent})`,
@@ -424,7 +419,7 @@ ${SENTINEL.HEADER_START}
 ${manifest.description}
 
 Layer:     ${manifest.layer}
-Table:     ${manifest.output.table}
+Table:     ${deriveTable(manifest)}
 Partition: ${partitionDoc}
 Schedule:  ${scheduleStr}
 Params:

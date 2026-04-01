@@ -9,7 +9,7 @@
 Clean, deduplicate and union all NYC taxi types into a unified silver trips table
 
 Layer:     silver
-Table:     lakehouse.silver.nyc_taxi_trips
+Table:     lakehouse.silver.nyctaxi
 Partition: __date = DD_MM_YYYY_HH derived from PARTITION_MONTH
 Schedule:  triggered (no schedule)
 Params:
@@ -68,7 +68,7 @@ class NycTaxiSilver(ForgeJob):
         _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")
         _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"
         return (
-            f"{self.silver("nyc/taxi/trips/_tracker")}"
+            f"abfss://silver@{self.storage}/Transport/Trip/Analytics/Rideshare/NycTaxi/1/NycTaxiTrips/_tracker"
             f"/{_date_key}/tracker.json"
         )
 
@@ -86,23 +86,24 @@ class NycTaxiSilver(ForgeJob):
     def setup(self) -> None:
         if not RESTATE and self._tracker_exists():
             self.log.info(
-                "partition_complete skipping table=lakehouse.silver.nyc_taxi_trips "
+                "partition_complete skipping table=lakehouse.silver.nyctaxi "
                 "RESTATE=false — pass RESTATE=true to force rerun",
             )
             raise SystemExit(0)
         if RESTATE:
-            self.log.info("restatement_mode table=lakehouse.silver.nyc_taxi_trips tracker=%s", self._tracker_path())
+            self.log.info("restatement_mode table=lakehouse.silver.nyctaxi tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
+        src_path = f"abfss://bronze@{self.storage}/Transport/Trip/Internal/Rideshare/NycTaxi/1/NycTaxiBronze"
         raw = (
             self.spark.read
             .format("delta")
-            .load(self.bronze("nyc/taxi"))
-            .filter(f"PARTITION_YEAR = {PARTITION_YEAR} AND PARTITION_MONTH = {PARTITION_MONTH}")
+            .load(src_path)
+            .filter(f"__year = {_year} AND __month = {_month} AND __day = {_day}")
         )
-        self.log.info("source_read table=lakehouse.bronze.nyc_taxi")
+        self.log.info("source_read path=%s", src_path)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
@@ -117,7 +118,7 @@ class NycTaxiSilver(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.silver.nyc_taxi_trips")
+            self.log.warning("empty_partition_skipping table=lakehouse.silver.nyctaxi")
             return
 
         # Build __date partition key: DD_MM_YYYY_HH
@@ -126,7 +127,7 @@ class NycTaxiSilver(ForgeJob):
         df = df.withColumn("__date", F.lit(_date_key))
 
         @track(
-            dataset="lakehouse.silver.nyc_taxi_trips",
+            dataset="lakehouse.silver.nyctaxi",
             rules="orchestration/dq/rules/nyc_taxi_silver.yaml",
             fail_fast=True,
         )
@@ -138,18 +139,18 @@ class NycTaxiSilver(ForgeJob):
                 .option("overwriteSchema", "true")
                 .option("replaceWhere", f"__date = '{_date_key}'")
                 .partitionBy("__date")
-                .saveAsTable("lakehouse.silver.nyc_taxi_trips")
+                .saveAsTable("lakehouse.silver.nyctaxi")
             )
 
         _write()
 
-        self.log.info("write_complete table=lakehouse.silver.nyc_taxi_trips rows=%d", _row_count)
+        self.log.info("write_complete table=lakehouse.silver.nyctaxi rows=%d", _row_count)
 
         # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
-            "table":        "lakehouse.silver.nyc_taxi_trips",
+            "table":        "lakehouse.silver.nyctaxi",
             "partition":    {"date": _date_key},
             "status":       "success",
             "rows_written": _row_count,

@@ -14,8 +14,16 @@ export default defineJob({
     },
   },
   source: {
-    type: "external",
-    path: "synthetic://retail-orders/{PARTITION_DATE}",
+    name: "ForgeDemoRaw",
+    version: 1,
+    path: {
+      container: "raw",
+      category: "Demo",
+      entity: "Event",
+      audience: "Public",
+      metricsCohort: "Demo",
+      assetName: "ForgeDemo",
+    },
     format: "parquet",
   },
   partition: {
@@ -23,7 +31,16 @@ export default defineJob({
     hasHour: false,
   },
   output: {
-    table: "lakehouse.bronze.retail_orders",
+    name: "ForgeDemoBronze",
+    version: 1,
+    path: {
+      container: "bronze",
+      category: "Demo",
+      entity: "Event",
+      audience: "Internal",
+      metricsCohort: "Demo",
+      assetName: "ForgeDemo",
+    },
   },
   triggers: ["forge_demo_silver"],
   resources: {

@@ -13,16 +13,32 @@ export default defineJob({
     },
   },
   source: {
-    type: "bronze",
-    table: "lakehouse.bronze.retail_orders",
-    filter: "order_date = '{PARTITION_DATE}'",
+    name: "ForgeDemoBronze",
+    version: 1,
+    path: {
+      container: "bronze",
+      category: "Demo",
+      entity: "Event",
+      audience: "Internal",
+      metricsCohort: "Demo",
+      assetName: "ForgeDemo",
+    },
   },
   partition: {
     column: "PARTITION_DATE",
     hasHour: false,
   },
   output: {
-    table: "lakehouse.silver.retail_orders_cleaned",
+    name: "ForgeDemoEvents",
+    version: 1,
+    path: {
+      container: "silver",
+      category: "Demo",
+      entity: "Event",
+      audience: "Analytics",
+      metricsCohort: "Demo",
+      assetName: "ForgeDemo",
+    },
   },
   dq: {
     rules: "orchestration/dq/rules/forge_demo_silver.yaml",
