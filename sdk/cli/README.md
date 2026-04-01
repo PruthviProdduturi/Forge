@@ -188,6 +188,38 @@ Every silver/gold table has a single `__date` column:
 
 ---
 
+## Tracker files
+
+Every generated job writes a `tracker.json` to ADLS after a successful write. This is the source of truth for pipeline run history — not logs, not Airflow metadata.
+
+**Bronze** — path per partition:
+```
+abfss://bronze@{storage}.dfs.core.windows.net/{table}/_tracker/{year}/{month}/{day}/{hour}/tracker.json
+```
+
+**Silver/Gold** — path per `__date` key:
+```
+abfss://silver@{storage}.dfs.core.windows.net/{table}/_tracker/01_02_1991_00/tracker.json
+```
+
+**Content:**
+```json
+{
+  "version": "v1",
+  "job": "NycTaxiSilver",
+  "table": "lakehouse.silver.nyc_taxi_trips",
+  "partition": { "date": "01_02_1991_00" },
+  "status": "success",
+  "rows_written": 847291,
+  "completed_at": "1991-02-01T03:12:45+00:00",
+  "forge_env": "dev"
+}
+```
+
+The job also guards against empty partitions — if `df.count() == 0` after the business logic block, the write and tracker are skipped and the job exits cleanly (no failure, no empty Delta partition).
+
+---
+
 ## The generated Python
 
 ```python

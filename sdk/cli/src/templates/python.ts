@@ -216,7 +216,29 @@ function renderWrite(
     pyReplaceWhere = `__date = '{_date_key}'`;
   }
 
+  // Derive the table sub-path for tracker: "lakehouse.silver.foo" → "foo"
+  const tableParts = output.table.split(".");
+  const tableSubPath = tableParts.slice(2).join("/").replace(/_/g, "/") || tableParts[tableParts.length - 1];
+  const layerHelper = layer === "gold" ? "self.gold" : layer === "silver" ? "self.silver" : "self.bronze";
+
+  // Tracker path — layer-specific
+  const trackerPathExpr = layer === "bronze"
+    ? `f"{${layerHelper}("${tableSubPath}/_tracker")}/{_year}/{_month}/{_day}/{PARTITION_HOUR}/tracker.json"`
+    : `f"{${layerHelper}("${tableSubPath}/_tracker")}/{_date_key}/tracker.json"`;
+
+  // Tracker partition dict
+  const trackerPartition = layer === "bronze"
+    ? `{"year": _year, "month": _month, "day": _day, "hour": PARTITION_HOUR}`
+    : `{"date": _date_key}`;
+
   const writeLines = [
+    `${indent}# Row count — guard empty partitions and populate tracker`,
+    `${indent}_row_count = df.count()`,
+    `${indent}self.log.info("rows_to_write count=%d", _row_count)`,
+    `${indent}if _row_count == 0:`,
+    `${indent}    self.log.warning("empty_partition_skipping_write table=${output.table}")`,
+    `${indent}    return`,
+    ``,
     `${indent}(`,
     `${indent}    df.write`,
     `${indent}    .format("delta")`,
@@ -226,27 +248,91 @@ function renderWrite(
     `${indent}    .partitionBy(${partBy})`,
     `${indent}    .saveAsTable("${output.table}")`,
     `${indent})`,
-    `${indent}self.log.info("write_complete table=${output.table}")`,
+    `${indent}self.log.info("write_complete table=${output.table} rows=%d", _row_count)`,
+    ``,
+    `${indent}# Write tracker to ADLS — source of truth for pipeline run history`,
+    `${indent}_tracker = {`,
+    `${indent}    "version":       "v1",`,
+    `${indent}    "job":           self.__class__.__name__,`,
+    `${indent}    "table":         "${output.table}",`,
+    `${indent}    "partition":     ${trackerPartition},`,
+    `${indent}    "status":        "success",`,
+    `${indent}    "rows_written":  _row_count,`,
+    `${indent}    "completed_at":  datetime.now(timezone.utc).isoformat(),`,
+    `${indent}    "forge_env":     FORGE_ENV,`,
+    `${indent}}`,
+    `${indent}_tracker_path = ${trackerPathExpr}`,
+    `${indent}_jvm  = self.spark.sparkContext._jvm`,
+    `${indent}_conf = self.spark.sparkContext._jsc.hadoopConfiguration()`,
+    `${indent}_p    = _jvm.org.apache.hadoop.fs.Path(_tracker_path)`,
+    `${indent}_out  = _p.getFileSystem(_conf).create(_p, True)`,
+    `${indent}_out.write(bytearray(json.dumps(_tracker, indent=2).encode("utf-8")))`,
+    `${indent}_out.close()`,
+    `${indent}self.log.info("tracker_written path=%s rows=%d", _tracker_path, _row_count)`,
   ].join("\n");
 
   const fullWrite = preMutationBlock + writeLines;
 
   if (dq) {
-    // Wrap write in @track decorator pattern
+    // Wrap only the Delta write in @track — tracker is always written after
     const failFast = dq.failFast !== false ? "True" : "False";
+    const deltaWriteOnly = [
+      `${indent}(`,
+      `${indent}    df.write`,
+      `${indent}    .format("delta")`,
+      `${indent}    .mode("${mode}")`,
+      `${indent}    .option("overwriteSchema", "true")`,
+      `${indent}    .option("replaceWhere", f"${pyReplaceWhere}")`,
+      `${indent}    .partitionBy(${partBy})`,
+      `${indent}    .saveAsTable("${output.table}")`,
+      `${indent})`,
+    ].join("\n");
+
+    const trackerBlock = [
+      `${indent}self.log.info("write_complete table=${output.table} rows=%d", _row_count)`,
+      ``,
+      `${indent}# Write tracker to ADLS — source of truth for pipeline run history`,
+      `${indent}_tracker = {`,
+      `${indent}    "version":       "v1",`,
+      `${indent}    "job":           self.__class__.__name__,`,
+      `${indent}    "table":         "${output.table}",`,
+      `${indent}    "partition":     ${trackerPartition},`,
+      `${indent}    "status":        "success",`,
+      `${indent}    "rows_written":  _row_count,`,
+      `${indent}    "completed_at":  datetime.now(timezone.utc).isoformat(),`,
+      `${indent}    "forge_env":     FORGE_ENV,`,
+      `${indent}}`,
+      `${indent}_tracker_path = ${trackerPathExpr}`,
+      `${indent}_jvm  = self.spark.sparkContext._jvm`,
+      `${indent}_conf = self.spark.sparkContext._jsc.hadoopConfiguration()`,
+      `${indent}_p    = _jvm.org.apache.hadoop.fs.Path(_tracker_path)`,
+      `${indent}_out  = _p.getFileSystem(_conf).create(_p, True)`,
+      `${indent}_out.write(bytearray(json.dumps(_tracker, indent=2).encode("utf-8")))`,
+      `${indent}_out.close()`,
+      `${indent}self.log.info("tracker_written path=%s rows=%d", _tracker_path, _row_count)`,
+    ].join("\n");
+
     return [
+      `${indent}# Row count — guard empty partitions and populate tracker`,
+      `${indent}_row_count = df.count()`,
+      `${indent}self.log.info("rows_to_write count=%d", _row_count)`,
+      `${indent}if _row_count == 0:`,
+      `${indent}    self.log.warning("empty_partition_skipping_write table=${output.table}")`,
+      `${indent}    return`,
+      ``,
+      preMutationBlock.trimEnd(),
+      ``,
       `${indent}@track(`,
       `${indent}    dataset="${output.table}",`,
       `${indent}    rules="${dq.rules}",`,
       `${indent}    fail_fast=${failFast},`,
       `${indent})`,
       `${indent}def _write() -> None:`,
-      fullWrite
-        .split("\n")
-        .map((l) => `    ${l}`)
-        .join("\n"),
+      deltaWriteOnly.split("\n").map((l) => `    ${l}`).join("\n"),
       ``,
       `${indent}_write()`,
+      ``,
+      trackerBlock,
     ].join("\n");
   }
 
@@ -385,6 +471,7 @@ ${paramDocs}
 """
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 
