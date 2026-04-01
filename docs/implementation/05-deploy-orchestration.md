@@ -1,380 +1,189 @@
 # Step 05 — Deploy Orchestration Cluster
 
 > **Prerequisite:** Step 04 complete. Compute cluster is fully operational.
-> **Cluster context:** `aks-forge-orch-{env}`
+> **Cluster context:** `aks-forge-orchestration-{alias}-{env}`
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
 
 ---
 
+> **Automated:** `forge-up.sh` phase **[6/7]** handles all orchestration cluster deployments
+> automatically (ingress-nginx, Airflow, Portal).
+> Run `bash infra/scripts/forge-up.sh --env dev --alias prproddu --skip-infra --git-pat <pat>` to
+> deploy (or re-deploy) all orchestration components in one step.
+>
+> This document is a reference for the individual components, access instructions, and
+> troubleshooting. You do not need to run these commands manually unless debugging a specific
+> component.
+
+---
+
 ## Overview
 
-The orchestration cluster hosts Airflow, the observability stack, and the Developer Portal. Lineage is handled by Microsoft Purview — a managed service, no in-cluster deployment required. Deploy in this order:
+The orchestration cluster hosts Airflow and the Developer Portal. Lineage is handled by Microsoft
+Purview — a managed service, no in-cluster deployment required. Deploy in this order:
 
 ```
-1. PostgreSQL setup                   ← metadata DB for Airflow (Azure managed)
-2. Container Insights add-on          ← Azure Monitor / Container Insights (AKS built-in, already enabled in Step 03)
-3. Azure Managed Grafana              ← provisioned via Bicep (already done in Step 03)
-4. Airflow                            ← orchestrator (depends on PostgreSQL)
-5. Purview OpenLineage integration    ← configure OPENLINEAGE_TRANSPORT in Airflow Helm values
-6. Developer Portal                   ← frontend + backend (depends on Airflow + Purview)
-```
-
-Set your kubectl context:
-```bash
-az aks get-credentials \
-  --resource-group rg-forge-compute-{env} \
-  --name aks-forge-orch-{env} \
-  --overwrite-existing
-
-kubectl config current-context   # verify
-kubectl get nodes                 # verify all nodes Ready
+1. PostgreSQL setup       ← metadata DB for Airflow (Azure managed, configured by forge-up.sh [3/7])
+2. ingress-nginx          ← NGINX ingress controller with Azure public LoadBalancer
+3. Airflow                ← orchestrator (depends on PostgreSQL)
+4. Portal                 ← frontend + backend (depends on Airflow)
 ```
 
 ---
 
 ## 5.1 PostgreSQL — Airflow Metadata Database
 
-Airflow needs a PostgreSQL database. This is hosted on **Azure Database for PostgreSQL Flexible Server** (provisioned by Bicep in Step 03). This step creates the database and user.
+`forge-up.sh` phase [3/7] creates the `airflow` database and user on the Azure Flexible Server
+(`psql-forge-{alias}-{env}`). The DB password is seeded to Key Vault in phase [2/7].
 
-Note: There is no longer a separate lineage database — Microsoft Purview is the lineage backend and is a managed service.
-
+Manual setup (if needed):
 ```bash
-# Get the PostgreSQL host from Key Vault
-PG_HOST=$(az keyvault secret show \
-  --vault-name kv-forge-{env} \
-  --name postgres-host \
-  --query value -o tsv)
+PG_HOST=$(az postgres flexible-server show \
+  --resource-group rg-forge-{alias}-{env} \
+  --name psql-forge-{alias}-{env} \
+  --query fullyQualifiedDomainName -o tsv)
 
-PG_ADMIN_PASS=$(az keyvault secret show \
-  --vault-name kv-forge-{env} \
-  --name postgres-admin-password \
-  --query value -o tsv)
+PG_PASS="<admin-password>"
 
-# Create Airflow database and user (run once)
-psql "host=${PG_HOST} dbname=postgres user=forgeadmin sslmode=require" \
+psql "host=${PG_HOST} dbname=postgres user=forgeadmin sslmode=require password=${PG_PASS}" \
   -c "CREATE DATABASE airflow;"
-psql "host=${PG_HOST} dbname=postgres user=forgeadmin sslmode=require" \
-  -c "CREATE USER airflow WITH PASSWORD '$(openssl rand -base64 32)';"
-psql "host=${PG_HOST} dbname=postgres user=forgeadmin sslmode=require" \
+
+AIRFLOW_DB_PASS=$(openssl rand -base64 32)
+psql "host=${PG_HOST} dbname=postgres user=forgeadmin sslmode=require password=${PG_PASS}" \
+  -c "CREATE USER airflow WITH PASSWORD '${AIRFLOW_DB_PASS}';"
+psql "host=${PG_HOST} dbname=postgres user=forgeadmin sslmode=require password=${PG_PASS}" \
   -c "GRANT ALL PRIVILEGES ON DATABASE airflow TO airflow;"
 
-# Store password in Key Vault
-az keyvault secret set --vault-name kv-forge-{env} --name airflow-db-password --value "<airflow-password>"
+az keyvault secret set \
+  --vault-name kv-forge-{alias}-{env} \
+  --name airflow-db-password \
+  --value "${AIRFLOW_DB_PASS}"
 ```
 
 ---
 
-## 5.2 Purview OpenLineage Integration
+## 5.2 Apache Airflow
 
-Microsoft Purview is the lineage backend. No in-cluster deployment is required — Purview is a managed Azure service provisioned via Bicep (Step 03). This step:
+### Deployed configuration
 
-1. Verifies the Purview account is reachable from the orchestration cluster
-2. Grants `id-forge-read-{env}` the **Purview Data Curator** role on the Purview collection
-3. Configures the `OPENLINEAGE_TRANSPORT` environment variable in Airflow Helm values
+| Property | Value |
+|----------|-------|
+| Helm chart | `oci://forgeacrprproddu.azurecr.io/helm/airflow:1.20.0` |
+| Image | `forgeacrprproddu.azurecr.io/airflow:3.1.8` |
+| Executor | `LocalExecutor` (dev) / `KubernetesExecutor` (prod) |
+| Postgres DB | `psql-forge-prproddu-dev` → database `airflow` |
+| Git-sync repo | Azure DevOps — branch `user/PrProddu/StarRocks` |
+| Git-sync subPath | `Forge/orchestration/airflow/dags` |
+| Git-sync period | 30 seconds |
+| Values file | `infra/helm/orchestration/airflow/values.yaml` |
+| Compute K8s connection | `kubernetes_compute_cluster` → compute cluster kubeconfig |
 
-### 5.2.1 Assign Purview Data Curator Role
-
-The `id-forge-read-{env}` managed identity must have the **Purview Data Curator** collection role. This is a Purview-internal role (not Azure RBAC) and must be assigned via the Purview governance portal or the Purview REST API.
-
-```bash
-# Get the Purview account principal ID
-PURVIEW_ACCOUNT="purview-forge-{env}"
-
-# Assign Data Curator role via Azure CLI (Purview collection role)
-az purview account add-root-collection-admin \
-  --account-name "${PURVIEW_ACCOUNT}" \
-  --resource-group rg-forge-platform-{env} \
-  --object-id "$(az identity show \
-    --name id-forge-read-{env} \
-    --resource-group rg-forge-platform-{env} \
-    --query principalId -o tsv)"
-```
-
-Alternatively, in the Purview governance portal:
-1. Open `https://purview-forge-{env}.purview.azure.com`
-2. Go to **Data Map** → **Collections** → select the root collection
-3. Go to the **Role assignments** tab
-4. Add `id-forge-read-{env}` to the **Data Curators** role
-
-### 5.2.2 Verify Purview Endpoint Connectivity
-
-Verify the Purview OpenLineage endpoint is reachable from the orchestration cluster (via private endpoint):
+### Access
 
 ```bash
-# Test from within the cluster
-kubectl run ol-connectivity-test \
-  --image=curlimages/curl:latest \
-  --restart=Never \
-  --rm -it \
-  -- curl -s -o /dev/null -w "%{http_code}" \
-  "https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events" \
-  -X POST \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer test" \
-  -d '{"eventType":"START","eventTime":"2026-01-01T00:00:00Z","run":{"runId":"00000000-0000-0000-0000-000000000000"},"job":{"namespace":"forge-{env}","name":"connectivity-test"},"inputs":[],"outputs":[]}'
-# Expected: 401 (unauthorized — but reachable). 000 means unreachable.
+# Webserver port-forward
+kubectl port-forward svc/airflow-webserver 8081:8080 \
+  -n airflow \
+  --context aks-forge-orchestration-prproddu-dev
+
+# Open: http://localhost:8081
+# Login: admin / admin (default dev credentials)
 ```
 
-If the result is `000`, check the private endpoint for `privatelink.purview.azure.com` in the `private-endpoints-subnet`.
+### Verify
 
-### 5.2.3 Configure OpenLineage Transport in Airflow
+```bash
+kubectl get pods -n airflow --context aks-forge-orchestration-prproddu-dev
+# NAME                              READY   STATUS    RESTARTS
+# airflow-scheduler-xxx             1/1     Running   0
+# airflow-webserver-xxx             1/1     Running   0
+# airflow-triggerer-xxx             1/1     Running   0
 
-The `OPENLINEAGE_TRANSPORT` environment variable is set in `infra/helm/orchestration/airflow/values.yaml`. Ensure it points to the Purview endpoint for this environment:
+# Check git-sync is working
+kubectl logs -n airflow deploy/airflow-scheduler -c git-sync \
+  --context aks-forge-orchestration-prproddu-dev | tail -5
+# Should show: level=info msg="successfully synced repo"
+
+# Check DAGs are loaded
+kubectl exec -n airflow deploy/airflow-scheduler \
+  --context aks-forge-orchestration-prproddu-dev \
+  -- airflow dags list | head -10
+```
+
+### DAG locations
+
+| Source (generated) | Synced to (git-sync reads) |
+|-------------------|---------------------------|
+| `examples/src/airflow/dags/ingestion/` | `orchestration/airflow/dags/ingestion/` |
+| `examples/src/airflow/dags/transformation/` | `orchestration/airflow/dags/transformation/` |
+
+Bronze ingestion jobs go to `ingestion/`, Silver/Gold transformation jobs go to `transformation/`.
+
+### forge_lib.zip
+
+The Forge SDK is packaged as `forge_lib.zip` and uploaded to
+`abfss://code@{storage}/lib/forge_lib.zip` by `sync-jobs.sh`. Every SparkApplication has
+`spark.submit.pyFiles` pointing to it — no image rebuild is required when the SDK changes.
+
+Built from: `sdk/python/forge_sdk/` + `forge_dq/`
+
+### Deploying updated pipelines
+
+```bash
+# Sync all jobs (generates DAGs + uploads forge_lib.zip + pushes DAG files)
+FORGE_ENV=dev OWNER_ALIAS=prproddu bash infra/scripts/sync-jobs.sh
+```
+
+Airflow picks up new DAGs within 30 seconds via git-sync. No portal redeploy needed.
+
+### Airflow values (key sections)
 
 ```yaml
 # infra/helm/orchestration/airflow/values.yaml (excerpt)
-env:
-  - name: AIRFLOW__LINEAGE__BACKEND
-    value: "openlineage.airflow.OpenLineageBackend"
-  - name: OPENLINEAGE_URL
-    value: "https://purview-forge-{env}.purview.azure.com"
-  - name: OPENLINEAGE_TRANSPORT
-    value: >-
-      {"type":"http",
-       "url":"https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events",
-       "auth":{"type":"azure_identity"}}
-  - name: OPENLINEAGE_NAMESPACE
-    value: "forge-{env}"
-```
-
-The `azure_identity` auth type instructs the OpenLineage HTTP transport to obtain an Azure AD Bearer token from the pod's workload identity (OIDC) before each POST. No static credentials are required.
-
-After updating the Helm values, re-deploy Airflow to apply (see Section 5.4 below).
-
----
-
-## 5.3 Azure Monitor / Container Insights and Azure Managed Grafana
-
-The Container Insights add-on and Azure Managed Grafana were provisioned in Step 03 via `az aks enable-addons` and Bicep. This step verifies they are healthy and configured correctly.
-
-```bash
-# Verify Container Insights add-on is enabled on the orchestration cluster
-az aks show \
-  --name aks-forge-orch-{env} \
-  --resource-group rg-forge-compute-{env} \
-  --query "addonProfiles.omsagent.enabled" -o tsv
-# Expected: true
-
-# Verify AMA DaemonSet pods are Running
-kubectl get pods -n kube-system -l component=ama-metrics
-# ama-metrics-xxx   2/2   Running  (one per node)
-
-# Verify metrics are arriving in Log Analytics
-az monitor log-analytics query \
-  --workspace "/subscriptions/${SUB_ID}/resourceGroups/rg-forge-platform-{env}/providers/Microsoft.OperationalInsights/workspaces/law-forge-{env}" \
-  --analytics-query "Perf | where ObjectName == 'K8SNode' | take 5" \
-  --output table
-# Expected: rows with node performance data
-```
-
-### Verify Azure Managed Grafana
-
-```bash
-# Get Managed Grafana endpoint
-GRAFANA_URL=$(az grafana show \
-  --name "grafana-forge-{env}" \
-  --resource-group "rg-forge-platform-{env}" \
-  --query properties.endpoint -o tsv)
-
-# Verify it is accessible (requires Azure AD login in browser)
-echo "Open: ${GRAFANA_URL}"
-# Should see Forge dashboards after Azure AD authentication
-```
-
----
-
-## 5.4 Log Aggregation (Azure Log Analytics)
-
-Log aggregation is handled by **Azure Log Analytics Workspace**, enabled automatically via the Container Insights add-on provisioned in Step 03. The Azure Monitor Agent (AMA) DaemonSet on both clusters tails `/var/log/containers/*` and forwards all pod logs to the workspace — no separate deployment required.
-
-```bash
-# Verify AMA DaemonSet is running on the orchestration cluster
-kubectl get daemonset ama-logs -n kube-system
-
-# Confirm logs are flowing — query from Azure CLI
-az monitor log-analytics query \
-  --workspace "${LOG_ANALYTICS_WORKSPACE_ID}" \
-  --analytics-query "ContainerLog | limit 10" \
-  --output table
-```
-
----
-
-## 5.5 Apache Airflow
-
-Airflow needs access to the compute cluster kubeconfig (to submit SparkApplications). This is stored in Key Vault and mounted via CSI.
-
-### Pre-flight: Store Compute Cluster Kubeconfig in Key Vault
-
-```bash
-# Get compute cluster kubeconfig
-az aks get-credentials \
-  --resource-group rg-forge-compute-{env} \
-  --name aks-forge-compute-{env} \
-  --file /tmp/compute-kubeconfig
-
-# Store in Key Vault
-az keyvault secret set \
-  --vault-name kv-forge-{env} \
-  --name compute-cluster-kubeconfig \
-  --file /tmp/compute-kubeconfig
-
-# Clean up local file
-rm /tmp/compute-kubeconfig
-
-# Switch back to orchestration cluster context
-az aks get-credentials \
-  --resource-group rg-forge-compute-{env} \
-  --name aks-forge-orch-{env} \
-  --overwrite-existing
-```
-
-### Deploy Airflow
-
-```bash
-kubectl create namespace airflow --dry-run=client -o yaml | kubectl apply -f -
-
-# Helm chart is pre-imported to ACR (see Step 02 §6 — no public Helm repo access)
-helm upgrade --install airflow \
-  oci://forgeacr{alias}.azurecr.io/helm/airflow \
-  --version 1.20.0 \
-  --namespace airflow \
-  --values infra/helm/orchestration/airflow/values.yaml \
-  --set images.airflow.repository=forgeacr{alias}.azurecr.io/airflow \
-  --set images.airflow.tag=3.1.8 \
-  --set data.metadataConnection.host=$(az keyvault secret show --vault-name kv-forge-{env} --name postgres-host --query value -o tsv) \
-  --set data.metadataConnection.db=airflow \
-  --set data.metadataConnection.user=airflow \
-  --set data.metadataConnection.pass="" \
-  --set config.core.executor=KubernetesExecutor \
-  --wait --timeout 10m
-```
-
-Key sections in `infra/helm/orchestration/airflow/values.yaml`:
-```yaml
-executor: KubernetesExecutor
+executor: LocalExecutor  # dev; use KubernetesExecutor for prod
 
 dags:
   gitSync:
     enabled: true
     repo: https://dev.azure.com/{org}/Forge/_git/Forge
-    branch: main
-    subPath: orchestration/airflow/dags
+    branch: user/PrProddu/StarRocks
+    subPath: Forge/orchestration/airflow/dags
     credentialsSecret: airflow-git-credentials
     period: 30s
 
 webserver:
   service:
     type: ClusterIP
-  extraEnv:
-    - name: AIRFLOW__WEBSERVER__AUTHENTICATE
-      value: "True"
-    - name: AIRFLOW__WEBSERVER__AUTH_BACKEND
-      value: airflow.providers.microsoft.azure.auth_backend.aad_auth
-
-scheduler:
-  replicas: 2   # HA: two schedulers with row-level locking
-
-triggerer:
-  enabled: true
-  replicas: 1
-
-extraEnvFrom:
-  - secretRef:
-      name: airflow-openlineage-config
 
 env:
   - name: AIRFLOW__SECRETS__BACKEND
     value: "airflow.providers.microsoft.azure.secrets.key_vault.AzureKeyVaultBackend"
   - name: AIRFLOW__SECRETS__BACKEND_KWARGS
     value: '{"vault_url": "https://kv-forge-{env}.vault.azure.net", "connections_prefix": "airflow-connections", "variables_prefix": "airflow-variables"}'
-  - name: AIRFLOW__LINEAGE__BACKEND
-    value: "openlineage.airflow.OpenLineageBackend"
-  - name: OPENLINEAGE_URL
-    value: "https://purview-forge-{env}.purview.azure.com"
-  - name: OPENLINEAGE_TRANSPORT
-    value: >-
-      {"type":"http",
-       "url":"https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events",
-       "auth":{"type":"azure_identity"}}
-  - name: OPENLINEAGE_NAMESPACE
-    value: "forge-{env}"
-```
-
-### Verify
-
-```bash
-kubectl get pods -n airflow
-# NAME                              READY   STATUS    RESTARTS
-# airflow-scheduler-xxx             1/1     Running   0
-# airflow-scheduler-xxx (HA)        1/1     Running   0
-# airflow-webserver-xxx             1/1     Running   0
-# airflow-triggerer-xxx             1/1     Running   0
-
-# Check git-sync is working
-kubectl logs -n airflow deploy/airflow-scheduler -c git-sync | tail -5
-# Should show successful git pull
-
-# Check DAGs are loaded
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags list | head -10
 ```
 
 ---
 
-## 5.6 Developer Portal
+## 5.3 Developer Portal
 
-The portal is deployed by a single script that handles everything: image builds, NGINX ingress, Helm chart, and Key Vault secret seeding.
+### Deployed configuration
 
-### Prerequisites
+| Property | Value |
+|----------|-------|
+| URL | `http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com` |
+| Login | `admin` / `admin` (local auth, dev only) |
+| Auth mode | Local (Key Vault secret `forge-portal-auth-provider=local`) |
+| Values file | `infra/helm/orchestration/portal/values.yaml` |
 
-- `az login` complete with the correct subscription
-- `kubectl` context for the orchestration cluster:
-  ```bash
-  az aks get-credentials \
-    --resource-group rg-forge-{env} \
-    --name aks-forge-orchestration-{alias}-{env} \
-    --overwrite-existing
-  ```
-- cluster-bootstrap applied (creates `portal` namespace and `portal-api` ServiceAccount with workload identity)
-- ACR built — images will be built by the script via `az acr build`
+### Access
 
-### Deploy
-
-```bash
-bash infra/scripts/deploy-portal.sh --env dev --alias prproddu
-```
-
-What the script does:
-
-| Step | Action |
-|---|---|
-| 1 | Resolves `id-forge-portal-{alias}-{env}` managed identity client ID |
-| 1b | Seeds Key Vault secrets: `forge-portal-auth-provider=local`, `forge-portal-aad-client-id=""`, `forge-portal-aad-tenant-id=""` (skips if already set) |
-| 2 | `az acr build` — builds `portal-api:1.0` and `portal-web:1.0` from `portal/backend/` and `portal/frontend/` |
-| 3 | `helm upgrade --install ingress-nginx` — installs NGINX ingress controller with Azure public LoadBalancer + DNS label |
-| 4 | Waits for public IP from Azure (up to 5 min) |
-| 5 | `helm upgrade --install forge-portal` — deploys portal Helm chart (API + Web + Ingress + RBAC) |
-
-Skip image builds if images are already in ACR:
-```bash
-bash infra/scripts/deploy-portal.sh --env dev --alias prproddu --skip-build
-```
-
-### Accessing the Portal
-
-After deployment, the portal is available at:
-
-```
-http://forge-portal-{alias}-{env}.{region}.cloudapp.azure.com
-```
-
-For `prproddu` in `dev`:
+The portal is available publicly at:
 ```
 http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
 ```
 
-**Endpoints:**
+**Portal endpoints:**
 
 | Path | What |
 |---|---|
@@ -384,115 +193,171 @@ http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
 | `/api/status` | Cluster health (both clusters) |
 | `/api/docs` | FastAPI auto-docs (Swagger UI) |
 
-**Default credentials (local auth, dev only):**
-```
-username: admin
-password: admin
-```
-
-### Connecting from kubectl (without public URL)
-
-If the public IP hasn't been allocated yet, or you want a direct in-cluster connection:
+### Access without the public URL (port-forward)
 
 ```bash
-# Option 1 — port-forward the NGINX ingress controller
+# Option 1 — port-forward the NGINX ingress controller (full portal with API routing)
 kubectl port-forward svc/ingress-nginx-controller 8080:80 \
   -n ingress-nginx \
-  --context aks-forge-orchestration-{alias}-{env}
+  --context aks-forge-orchestration-prproddu-dev
+# Open: http://localhost:8080
 
-# Then open: http://localhost:8080
-# The /api/* and /* routing both work via ingress.
-```
-
-```bash
 # Option 2 — port-forward directly to portal-web (UI only)
 kubectl port-forward svc/portal-web 3001:3001 \
   -n portal \
-  --context aks-forge-orchestration-{alias}-{env}
+  --context aks-forge-orchestration-prproddu-dev
+# Open: http://localhost:3001  (note: /api/* won't work — use Option 1 for full access)
 
-# Then open: http://localhost:3001
-# Note: /api/* won't work through this — use Option 1 for full access.
-```
-
-```bash
 # Option 3 — port-forward directly to portal-api (API only)
 kubectl port-forward svc/portal-api 8080:8080 \
   -n portal \
-  --context aks-forge-orchestration-{alias}-{env}
-
-# Then open: http://localhost:8080/api/health
-#            http://localhost:8080/api/docs
-#            http://localhost:8080/api/pipelines  (requires auth header)
+  --context aks-forge-orchestration-prproddu-dev
+# Open: http://localhost:8080/api/health
+#        http://localhost:8080/api/docs
 ```
 
-### Portal API — Airflow Connectivity
+### Airflow access via portal
 
-The portal API talks to Airflow inside the orchestration cluster via:
+The portal provides a link to the Airflow UI. The Airflow webserver is ClusterIP — use the
+port-forward from Section 5.2 directly, or access it through the portal's proxy.
+
+### Verify
+
+```bash
+kubectl get pods -n portal --context aks-forge-orchestration-prproddu-dev
+# NAME                    READY   STATUS    RESTARTS
+# portal-api-xxx          1/1     Running   0
+# portal-web-xxx          1/1     Running   0
+
+curl -s http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com/api/health
+# Expected: {"status": "ok", ...}
+```
+
+### Portal internals — Airflow connectivity
+
+The portal API calls Airflow inside the orchestration cluster via:
 ```
 http://airflow-webserver.airflow.svc.cluster.local:8080
 ```
-This is a cluster-internal DNS name. The portal pod must be in the same cluster as Airflow for this to resolve. The `GET /api/pipelines` endpoint lists all DAGs from Airflow including their last run state, schedule, and tags.
+This is a cluster-internal DNS name — both pods are on the same cluster.
 
-### Portal API — Compute Cluster Connectivity
+### Portal internals — Compute cluster connectivity
 
-Trino and Spark Connect run on the **compute** cluster. `.svc.cluster.local` DNS does not resolve cross-cluster. The portal probes these via the internal LoadBalancer IPs exposed on the VNet:
+Trino and Spark Connect run on the compute cluster. The portal probes these via internal
+LoadBalancer IPs on the shared VNet:
 
 ```bash
-# Get Trino internal LB IP (set after Trino is deployed on compute cluster)
+# Get Trino internal LB IP (set after compute cluster is deployed)
 kubectl get svc trino -n trino \
-  --context aks-forge-compute-{alias}-{env} \
+  --context aks-forge-compute-prproddu-dev \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-```
-
-Set in Helm values:
-```bash
-helm upgrade forge-portal infra/helm/orchestration/portal \
-  --namespace portal \
-  --reuse-values \
-  --set "api.env.trinoHost=<trino-internal-lb-ip>" \
-  --set "api.env.sparkConnectUrl=http://<spark-connect-lb-ip>:4040"
-```
-
-### Deploying Updated Pipelines to Airflow
-
-After running `sync-jobs.sh`, Airflow picks up the new DAGs within 30 seconds. The portal's `GET /api/pipelines` then shows the new DAGs automatically — no portal redeploy needed.
-
-```bash
-# Run all changed pipelines
-FORGE_ENV=dev OWNER_ALIAS=prproddu bash scripts/sync-jobs.sh
-
-# Or a single job
-FORGE_ENV=dev OWNER_ALIAS=prproddu bash scripts/sync-jobs.sh --job nyc_taxi_silver
-
-# Preview what would change
-FORGE_ENV=dev OWNER_ALIAS=prproddu bash scripts/sync-jobs.sh --dry-run
 ```
 
 ---
 
-## 5.7 Orchestration Cluster Readiness Checklist
+## 5.4 ADLS Path Schema
+
+Job manifests (`.forge.ts`) use a structured path schema for all source and output references:
 
 ```
-[ ] PostgreSQL database created:             airflow database exists
-[ ] Purview account reachable from cluster:  connectivity test returns non-000 HTTP status
-[ ] id-forge-read-{env} has Purview Data Curator role on Purview collection
-[ ] OPENLINEAGE_TRANSPORT env var set in Airflow Helm values (Purview endpoint)
-[ ] Container Insights add-on enabled on orchestration cluster
-[ ] Azure Monitor Agent (AMA) DaemonSet pods Running on all nodes
-[ ] Azure Log Analytics receiving logs from orchestration cluster
-[ ] Azure Managed Grafana accessible and Forge dashboards loaded
-[ ] Airflow scheduler pods Running (x2 HA):  kubectl get pods -n airflow
-[ ] Airflow webserver Running
-[ ] Airflow git-sync pulling DAGs from repo
-[ ] Airflow DAGs listed in scheduler
-[ ] Airflow Key Vault secrets backend working: test connection lookup
-[ ] Run a test DAG task and verify lineage appears in Purview (forge-{env} namespace)
-[ ] Portal API pod Running:                   kubectl get pods -n portal
+abfss://{container}@{storage}/{category}/{entity}/{audience}/{metricsCohort}/{assetName}/{version}/{name}
+```
+
+Example in a `.forge.ts` manifest:
+```typescript
+source: {
+  name: "TlcYellowTrip",
+  version: 1,
+  path: {
+    container: "raw",
+    category: "Transport",
+    entity: "Trip",
+    audience: "Public",
+    metricsCohort: "Rideshare",
+    assetName: "NycTlc",
+  },
+  format: "parquet",
+},
+output: {
+  name: "NycTaxiBronze",
+  version: 1,
+  path: {
+    container: "bronze",
+    category: "Transport",
+    entity: "Trip",
+    audience: "Internal",
+    metricsCohort: "Rideshare",
+    assetName: "NycTaxi",
+  },
+}
+```
+
+---
+
+## 5.5 Purview OpenLineage Integration
+
+Microsoft Purview is the lineage backend — a managed Azure service provisioned via Bicep (Step 03).
+No in-cluster deployment is required. Airflow emits OpenLineage events automatically via the
+`openlineage-airflow` provider.
+
+### Assign Purview Data Curator role
+
+```bash
+PURVIEW_ACCOUNT="purview-forge-{env}"
+
+az purview account add-root-collection-admin \
+  --account-name "${PURVIEW_ACCOUNT}" \
+  --resource-group rg-forge-platform-{env} \
+  --object-id "$(az identity show \
+    --name id-forge-read-{env} \
+    --resource-group rg-forge-platform-{env} \
+    --query principalId -o tsv)"
+```
+
+Or in the Purview governance portal:
+1. Open `https://purview-forge-{env}.purview.azure.com`
+2. Go to **Data Map** → **Collections** → root collection → **Role assignments**
+3. Add `id-forge-read-{env}` to the **Data Curators** role
+
+### Airflow values for OpenLineage
+
+```yaml
+env:
+  - name: AIRFLOW__LINEAGE__BACKEND
+    value: "openlineage.airflow.OpenLineageBackend"
+  - name: OPENLINEAGE_URL
+    value: "https://purview-forge-{env}.purview.azure.com"
+  - name: OPENLINEAGE_TRANSPORT
+    value: >-
+      {"type":"http",
+       "url":"https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events",
+       "auth":{"type":"azure_identity"}}
+  - name: OPENLINEAGE_NAMESPACE
+    value: "forge-{env}"
+```
+
+---
+
+## 5.6 Orchestration Cluster Readiness Checklist
+
+```
+[ ] PostgreSQL airflow database created
+[ ] Airflow scheduler pod Running:         kubectl get pods -n airflow
+[ ] Airflow webserver pod Running
+[ ] Airflow triggerer pod Running
+[ ] Airflow git-sync pulling from branch user/PrProddu/StarRocks
+[ ] Airflow DAGs listed in scheduler:      airflow dags list
+[ ] kubernetes_compute_cluster connection configured
+[ ] Portal API pod Running:                kubectl get pods -n portal
 [ ] Portal Web pod Running
-[ ] Portal accessible at http://forge-portal-{alias}-{env}.{region}.cloudapp.azure.com
+[ ] ingress-nginx controller Running:      kubectl get pods -n ingress-nginx
+[ ] Portal accessible at http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+[ ] Portal login: admin / admin
 [ ] Portal /api/health returns 200
 [ ] Portal /api/pipelines lists DAGs from Airflow
 [ ] Portal /api/status shows both cluster states
+[ ] Purview account reachable from cluster (non-000 HTTP status)
+[ ] id-forge-read-{env} has Purview Data Curator role
 ```
 
 All green → proceed to Step 06 (CI/CD pipeline configuration).

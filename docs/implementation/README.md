@@ -7,9 +7,20 @@
 
 ---
 
-## Implementation Order
+## Quick Start — One Command Deploy
 
-Follow these guides in sequence. Each step has hard dependencies on the previous.
+The entire platform is deployed by a single script:
+
+```bash
+# First-time full deploy (from repo root: D:\Repos\DSEngCoreInfra\Forge)
+bash infra/scripts/forge-up.sh --env dev --alias prproddu --pg-admin-pass <pass> --git-pat <pat>
+```
+
+See [`00-deployment-runbook.md`](./00-deployment-runbook.md) for the full deploy guide including partial re-deploys, teardown, and troubleshooting.
+
+---
+
+## Implementation Order
 
 ```
 Step 01 — ACR Setup (shared registry — run once, before everything else)
@@ -18,12 +29,15 @@ Step 02 — Image Builds (build custom images, import third-party images, push t
   ↓  (Images must be in ACR before pods can start)
 Step 03 — Cluster Setup (Bicep env deployment: networking + AKS + storage + identity + Key Vault, then AKS bootstrap)
   ↓  (Clusters must be running before Helm deployments)
-Step 04 — Deploy Compute Cluster (Spark Operator + Spark Connect + Trino + Hive Metastore)
-  ↓  (Compute cluster must accept SparkApplications before Airflow can submit jobs)
-Step 05 — Deploy Orchestration Cluster (Airflow + Observability + Portal)
-  ↓  (Full platform operational)
+Step 04 — Deploy Compute Cluster (Hive Metastore, Spark Operator, Spark Connect, Trino, Trino Auth Proxy)
+  ↓  (forge-up.sh phase [5/7] handles this automatically)
+Step 05 — Deploy Orchestration Cluster (Airflow + Portal)
+  ↓  (forge-up.sh phase [6/7] handles this automatically)
 Step 06 — CI/CD Pipeline
 ```
+
+> **For day-to-day deploys:** Use `forge-up.sh` directly — it automates Steps 03–05 (infra provision
+> through orchestration deploy). Steps 01–02 (ACR and image builds) are one-time setup tasks.
 
 > **Networking** is not a separate step. VNet, subnets, NSGs, and private DNS zones are provisioned
 > automatically by `infra/bicep/environments/{env}/main.bicep` as part of Step 03.
@@ -36,11 +50,12 @@ Step 06 — CI/CD Pipeline
 | | Document | What it covers |
 |-|----------|---------------|
 | ref | [networking-reference.md](./networking-reference.md) | VNet architecture, subnets, NSGs, private DNS zones — reference only, deployed as part of Step 03 |
+| 00 | [00-deployment-runbook.md](./00-deployment-runbook.md) | **Start here.** forge-up.sh usage, partial re-deploys, teardown |
 | 01 | [01-acr-setup.md](./01-acr-setup.md) | Create shared ACR via `shared/main.bicep`, configure security controls, assign roles |
 | 02 | [02-image-builds.md](./02-image-builds.md) | Build custom images (Spark, Trino, Airflow, Portal), import third-party images, push to ACR |
 | 03 | [03-cluster-setup.md](./03-cluster-setup.md) | Full env Bicep deployment (`dev/main.bicep` or `prod/main.bicep`), AKS bootstrap, workload identity, namespaces |
-| 04 | [04-deploy-compute.md](./04-deploy-compute.md) | Helm deploy Spark Operator, Spark Connect, Trino, Hive Metastore |
-| 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, Observability (Azure Monitor / Managed Grafana), Portal |
+| 04 | [04-deploy-compute.md](./04-deploy-compute.md) | Helm deploy Spark Operator, Spark Connect, Trino, Hive Metastore (automated by forge-up.sh [5/7]) |
+| 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, Portal (automated by forge-up.sh [6/7]) |
 | 06 | [06-cicd.md](./06-cicd.md) | Azure DevOps pipeline definitions for infrastructure and application deployments |
 
 ---
@@ -59,7 +74,7 @@ For personal dev deployments, set `ownerAlias` (e.g. `prproddu`) — it is appen
 | `rg-forge-platform-{env}` | `rg-forge-platform-prproddu-dev` | `rg-forge-platform-prod` |
 | `rg-forge-{env}` | `rg-forge-prproddu-dev` | `rg-forge-prod` |
 | `{compute_cluster}` | `aks-forge-compute-prproddu-dev` | `aks-forge-compute-prod` |
-| `{orch_cluster}` | `aks-forge-orch-prproddu-dev` | `aks-forge-orch-prod` |
+| `{orch_cluster}` | `aks-forge-orchestration-prproddu-dev` | `aks-forge-orchestration-prod` |
 | `{adls_account}` | `forgeadlsprproddudev` | `forgeadlsprod` |
 | `{keyvault}` | `kv-forge-prproddu-dev` | `kv-forge-prod` |
 
@@ -75,7 +90,7 @@ For personal dev deployments, set `ownerAlias` (e.g. `prproddu`) — it is appen
 | Git | ≥ 2.44 | `winget install Git.Git` |
 
 > **No Docker Desktop required.** Images are built using ACR Tasks (`az acr build`) — the build
-> runs in Azure, not locally. See [03-image-builds.md](./03-image-builds.md).
+> runs in Azure, not locally. See [02-image-builds.md](./02-image-builds.md).
 
 **Azure authentication:**
 ```bash

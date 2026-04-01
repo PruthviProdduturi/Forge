@@ -7,6 +7,15 @@
 
 ---
 
+> **Automated:** `forge-up.sh` phase **[5/7]** handles all compute cluster deployments automatically.
+> Run `bash infra/scripts/forge-up.sh --env dev --alias prproddu --skip-infra --git-pat <pat>` to
+> deploy (or re-deploy) all compute components in one step.
+>
+> This document is a reference for the individual Helm commands and troubleshooting. You do not need
+> to run these commands manually unless debugging a specific component.
+
+---
+
 ## Overview
 
 The compute cluster hosts Spark (Operator + Connect server) and Trino. Both environments deploy the same components — the difference is scale:
@@ -392,11 +401,14 @@ The auth proxy is a Flask/MSAL reverse proxy that sits in front of Trino and enf
 
 ### Deploy
 
+This component is deployed automatically by `forge-up.sh` phase [5/7]. It handles federated
+credential creation, VMSS identity attachment, redirect URI registration, session secret creation,
+and the Helm install.
+
+To re-deploy this component in isolation (e.g. after a config change):
 ```bash
-# Automated — handles FC creation, VMSS identity attachment, redirect URI, session secret, Helm
-bash infra/scripts/deploy-auth-proxy.sh --env {env} --alias {alias}
-# or PowerShell:
-./infra/scripts/deploy-auth-proxy.ps1 --env {env} --alias {alias}
+# Re-run the full phase [5/7] component by running forge-up.sh with --skip-infra --skip-build
+bash infra/scripts/forge-up.sh --env {env} --alias {alias} --skip-infra --skip-build --git-pat <pat>
 ```
 
 ### Verify
