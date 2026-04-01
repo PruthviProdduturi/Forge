@@ -20,14 +20,8 @@ import type { ForgeJobManifest } from "../schema.js";
 export function generateDqYaml(manifest: ForgeJobManifest): string {
   const table = manifest.output.table;
   const layer = manifest.layer;
-  const { column, granularity } = manifest.partition;
-
-  // For day granularity: one partition column (the date column itself).
-  // For hour granularity: four derived partition columns.
-  const partitionCols: string[] =
-    granularity === "hour"
-      ? ["year", "month", "day", "hour"]
-      : [column];
+  // Always partition by (partition_date, partition_hour)
+  const partitionCols = ["partition_date", "partition_hour"];
 
   // Build a set of sensible starter rules based on layer and partition columns
   const partitionRules = partitionCols

@@ -105,11 +105,12 @@ function buildEffectiveParams(
       description: "Partition date (yyyy-MM-dd) — set by Airflow data_interval_start",
     };
   }
-  if (manifest.partition.granularity === "hour" && !base["PARTITION_HOUR"]) {
+  // PARTITION_HOUR always present — 0 when date column has no time component
+  if (!base["PARTITION_HOUR"]) {
     base["PARTITION_HOUR"] = {
       type: "int",
       default: 0,
-      description: "Partition hour (0–23) — set by Airflow data_interval_start",
+      description: "Partition hour (0–23) — 0 when date column has no time component",
     };
   }
   return base;

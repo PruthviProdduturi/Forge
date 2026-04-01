@@ -17,7 +17,7 @@ export default defineJob({
   },
   partition: {
     column: "PARTITION_MONTH",
-    granularity: "day",
+    hasHour: false,
   },
 
   output: {

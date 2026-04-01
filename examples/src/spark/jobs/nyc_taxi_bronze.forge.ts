@@ -22,7 +22,7 @@ export default defineJob({
   //   replaceWhere "pickup_datetime = '{PARTITION_DATE}'"
   partition: {
     column: "pickup_datetime",
-    granularity: "day",
+    hasHour: false,
   },
 
   output: {

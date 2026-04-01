@@ -33,7 +33,10 @@ const SourceSchema = z.object({
 
 const PartitionSchema = z.object({
   column: z.string(),
-  granularity: z.enum(["day", "hour"]).default("day"),
+  // hasHour: if the date column contains time (timestamp), the hour component
+  // is extracted and used as the partition hour. If false (date-only column),
+  // PARTITION_HOUR defaults to 0. Both cases always produce (date, hour) partitions.
+  hasHour: z.boolean().default(false),
 });
 
 const OutputSchema = z.object({

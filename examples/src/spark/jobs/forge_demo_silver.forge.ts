@@ -19,7 +19,7 @@ export default defineJob({
   },
   partition: {
     column: "PARTITION_DATE",
-    granularity: "day",
+    hasHour: false,
   },
   output: {
     table: "lakehouse.silver.retail_orders_cleaned",

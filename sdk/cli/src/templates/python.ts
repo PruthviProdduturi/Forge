@@ -171,39 +171,27 @@ function renderWrite(
   const { output, dq, partition } = manifest;
   const mode = output.mode ?? "overwrite";
   const col = partition.column;
-  const gran = partition.granularity;
 
-  // ── Derive partitionBy columns, replaceWhere, and any pre-write mutations ──
-  let partBy: string;
-  let replaceWhere: string;
-  let preMutations: string[] = [];
+  // Always partition by (partition_date, partition_hour).
+  // PARTITION_DATE is always set by Airflow.
+  // PARTITION_HOUR defaults to 0 when the date column has no time component.
+  // When hasHour=true, the hour is extracted from the column; otherwise F.lit(0).
+  const hourExpr = partition.hasHour
+    ? `F.hour(F.col("${col}"))`
+    : `F.lit(0)`;
 
-  if (gran === "hour") {
-    partBy = `"year", "month", "day", "hour"`;
-    replaceWhere = "year = {_pd_year} AND month = {_pd_month} AND day = {_pd_day} AND hour = {PARTITION_HOUR}";
-    preMutations = [
-      `${indent}# Derive integer partition components from PARTITION_DATE (yyyy-MM-dd)`,
-      `${indent}_pd_year, _pd_month, _pd_day = (int(x) for x in PARTITION_DATE.split("-"))`,
-      `${indent}df = (`,
-      `${indent}    df`,
-      `${indent}    .withColumn("year",  F.year(F.col("${col}")))`,
-      `${indent}    .withColumn("month", F.month(F.col("${col}")))`,
-      `${indent}    .withColumn("day",   F.dayofmonth(F.col("${col}")))`,
-      `${indent}    .withColumn("hour",  F.hour(F.col("${col}")))`,
-      `${indent})`,
-    ];
-  } else {
-    // day (default) — partition by the date column directly
-    partBy = `"${col}"`;
-    replaceWhere = `${col} = '{PARTITION_DATE}'`;
-    preMutations = [];
-  }
+  const preMutationBlock = [
+    `${indent}# Stamp partition columns before write`,
+    `${indent}df = (`,
+    `${indent}    df`,
+    `${indent}    .withColumn("partition_date", F.to_date(F.col("${col}")))`,
+    `${indent}    .withColumn("partition_hour", ${hourExpr})`,
+    `${indent})`,
+    ``,
+  ].join("\n");
 
-  // Replace {PLACEHOLDER} with f-string {PLACEHOLDER} interpolation
-  const pyReplaceWhere = replaceWhere.replace(/\{(\w+)\}/g, "{$1}");
-
-  const preMutationBlock =
-    preMutations.length > 0 ? preMutations.join("\n") + "\n" : "";
+  const partBy = `"partition_date", "partition_hour"`;
+  const pyReplaceWhere = `partition_date = '{PARTITION_DATE}' AND partition_hour = {PARTITION_HOUR}`;
 
   const writeLines = [
     `${indent}(`,
@@ -289,11 +277,12 @@ function buildEffectiveParams(
     };
   }
 
-  if (manifest.partition.granularity === "hour" && !base["PARTITION_HOUR"]) {
+  // PARTITION_HOUR is always injected. Defaults to 0 for date-only columns.
+  if (!base["PARTITION_HOUR"]) {
     base["PARTITION_HOUR"] = {
       type: "int",
       default: 0,
-      description: "Partition hour (0–23) — set by Airflow data_interval_start",
+      description: "Partition hour (0–23) — 0 when date column has no time component",
     };
   }
 
@@ -363,7 +352,7 @@ ${manifest.description}
 
 Layer:     ${manifest.layer}
 Table:     ${manifest.output.table}
-Partition: ${manifest.partition.column} (${manifest.partition.granularity})
+Partition: ${manifest.partition.column} → (partition_date, partition_hour) — hour=${manifest.partition.hasHour ? "extracted from column" : "0 (date-only)"}
 Schedule:  ${scheduleStr}
 Params:
 ${paramDocs}
