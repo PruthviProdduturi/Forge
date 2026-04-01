@@ -1,177 +1,274 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sync-jobs.sh — Push generated Spark jobs and DQ rules to ADLS
+# sync-jobs.sh — Scaffold from TypeScript manifests and deploy to Airflow/ADLS
 #
-# Run this after `forge generate` to make the latest changes live.
+# Full pipeline:
+#   1. Discover .forge.ts manifests
+#   2. Run `forge generate` — regenerates Python job, DAG, DQ YAML
+#      Business logic blocks are ALWAYS preserved (forge CLI handles this)
+#   3. Upload Spark .py jobs    → ADLS code container (spark/jobs/)
+#   4. Upload DQ .yaml rules    → ADLS code container (dq/rules/)
+#   5. Commit + push DAG files  → git, Airflow git-sync picks up within 30s
 #
-# What it does:
-#   1. Uploads changed Spark job .py files → abfss://code@{storage}/spark/jobs/
-#   2. Uploads changed DQ rule .yaml files → abfss://code@{storage}/dq/rules/
-#   3. DAG files are picked up automatically by Airflow git-sync (push to git)
+# Source of truth is ALWAYS the .forge.ts manifest.
+# Never edit the generated .py files outside the BUSINESS LOGIC block.
 #
 # Usage:
-#   ./scripts/sync-jobs.sh                        # sync all changed files
-#   ./scripts/sync-jobs.sh --job nyc_taxi_silver  # sync one job only
-#   ./scripts/sync-jobs.sh --all                  # force-sync everything
-#   ./scripts/sync-jobs.sh --dry-run              # show what would be uploaded
+#   ./scripts/sync-jobs.sh                        # all manifests
+#   ./scripts/sync-jobs.sh --job nyc_taxi_silver  # one job only
+#   ./scripts/sync-jobs.sh --dry-run              # preview, no changes
+#   ./scripts/sync-jobs.sh --no-git-push          # skip DAG git push (CI handles it)
 #
 # Requirements:
-#   - az CLI logged in (az login or workload identity in CI)
-#   - FORGE_ENV set (dev | staging | prod), or .env loaded
-#   - OWNER_ALIAS set (used to derive storage account name)
+#   - Node.js ≥ 20  (for forge generate via tsx)
+#   - az CLI logged in (az login or workload identity)
+#   - git configured with push access to origin
+#   - FORGE_ENV and OWNER_ALIAS set (or FORGE_STORAGE_ACCOUNT explicit)
 # =============================================================================
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-
-JOBS_DIR="${REPO_ROOT}/examples/src/spark/jobs"
-DQ_DIR="${REPO_ROOT}/examples/orchestration/dq/rules"
+CLI_ENTRY="${REPO_ROOT}/sdk/cli/src/index.ts"
+MANIFESTS_DIR="${REPO_ROOT}/examples/src/spark/jobs"
 DAGS_DIR="${REPO_ROOT}/orchestration/airflow/dags"
+DQ_RULES_DIR="${REPO_ROOT}/examples/orchestration/dq/rules"
 
 FORGE_ENV="${FORGE_ENV:-dev}"
 OWNER_ALIAS="${OWNER_ALIAS:-}"
 STORAGE_ACCOUNT="${FORGE_STORAGE_ACCOUNT:-}"
 
-# Derive storage account from owner alias if not set explicitly
 if [[ -z "${STORAGE_ACCOUNT}" && -n "${OWNER_ALIAS}" ]]; then
   STORAGE_ACCOUNT="forgeadls${OWNER_ALIAS}${FORGE_ENV}"
 fi
 
-if [[ -z "${STORAGE_ACCOUNT}" ]]; then
-  echo "ERROR: set FORGE_STORAGE_ACCOUNT or OWNER_ALIAS env var" >&2
-  exit 1
-fi
-
 CODE_CONTAINER="code"
-JOBS_DEST="spark/jobs"
-DQ_DEST="dq/rules"
+JOBS_BLOB_PREFIX="spark/jobs"
+DQ_BLOB_PREFIX="dq/rules"
 
 # ---------------------------------------------------------------------------
 # Args
 # ---------------------------------------------------------------------------
 JOB_FILTER=""
-FORCE_ALL=false
 DRY_RUN=false
+NO_GIT_PUSH=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --job)      JOB_FILTER="$2"; shift 2 ;;
-    --all)      FORCE_ALL=true; shift ;;
-    --dry-run)  DRY_RUN=true; shift ;;
-    *)          echo "Unknown arg: $1" >&2; exit 1 ;;
+    --job)           JOB_FILTER="$2"; shift 2 ;;
+    --dry-run)       DRY_RUN=true; shift ;;
+    --no-git-push)   NO_GIT_PUSH=true; shift ;;
+    -h|--help)
+      sed -n '/^# Usage:/,/^# Req/p' "$0" | sed 's/^# \?//'
+      exit 0
+      ;;
+    *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-log()  { echo "[sync-jobs] $*"; }
-warn() { echo "[sync-jobs] WARN: $*" >&2; }
+log()     { echo "[sync-jobs] $*"; }
+warn()    { echo "[sync-jobs] WARN: $*" >&2; }
+section() { echo ""; echo "[sync-jobs] ══ $* ══"; }
+dry()     { [[ "${DRY_RUN}" == "true" ]]; }
 
-upload() {
+run() {
+  if dry; then
+    log "  [dry-run] would run: $*"
+  else
+    "$@"
+  fi
+}
+
+upload_blob() {
   local src="$1"
-  local dest_blob="$2"
-  local filename
-  filename="$(basename "${src}")"
-
-  if [[ "${DRY_RUN}" == "true" ]]; then
-    log "  [dry-run] would upload ${src} → ${CODE_CONTAINER}/${dest_blob}"
+  local blob_name="$2"
+  if dry; then
+    log "  [dry-run] upload → ${CODE_CONTAINER}/${blob_name}"
     return 0
   fi
-
   az storage blob upload \
     --account-name "${STORAGE_ACCOUNT}" \
     --container-name "${CODE_CONTAINER}" \
-    --name "${dest_blob}" \
+    --name "${blob_name}" \
     --file "${src}" \
     --overwrite \
     --auth-mode login \
-    --output none \
-    && log "  ✓ ${filename} → ${CODE_CONTAINER}/${dest_blob}" \
-    || warn "  ✗ failed to upload ${filename}"
-}
-
-# Check whether a file is changed vs the last sync
-# Uses git diff vs HEAD to find modified/added files; --all bypasses this
-is_changed() {
-  local file="$1"
-  if [[ "${FORCE_ALL}" == "true" ]]; then
-    return 0
-  fi
-  # Changed if: staged, unstaged, or untracked
-  git -C "${REPO_ROOT}" diff --name-only HEAD -- "${file}" | grep -q . 2>/dev/null && return 0
-  git -C "${REPO_ROOT}" diff --name-only -- "${file}" | grep -q . 2>/dev/null && return 0
-  git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${file}" | grep -q . 2>/dev/null && return 0
-  return 1
+    --output none
+  log "  ✓ $(basename "${src}") → ${CODE_CONTAINER}/${blob_name}"
 }
 
 # ---------------------------------------------------------------------------
-# Main
+# Validate
 # ---------------------------------------------------------------------------
-log "Storage account : ${STORAGE_ACCOUNT}"
-log "Container       : ${CODE_CONTAINER}"
-log "Environment     : ${FORGE_ENV}"
-log "Force all       : ${FORCE_ALL}"
-log "Dry run         : ${DRY_RUN}"
-[[ -n "${JOB_FILTER}" ]] && log "Job filter      : ${JOB_FILTER}"
-echo ""
+if [[ -z "${STORAGE_ACCOUNT}" ]]; then
+  echo "ERROR: set FORGE_STORAGE_ACCOUNT or OWNER_ALIAS" >&2
+  exit 1
+fi
 
-UPLOADED=0
-SKIPPED=0
+if ! command -v npx &>/dev/null; then
+  echo "ERROR: npx not found — install Node.js ≥ 20" >&2
+  exit 1
+fi
 
-# ── Spark jobs ────────────────────────────────────────────────────────────
-log "=== Spark jobs ==="
-while IFS= read -r -d '' pyfile; do
-  job_name="$(basename "${pyfile}" .py)"
+# ---------------------------------------------------------------------------
+# Step 1 — Discover manifests
+# ---------------------------------------------------------------------------
+section "Discover manifests"
 
-  # Skip manifest files (.forge.ts are .ts not .py — but be safe)
-  [[ "${job_name}" == *.forge ]] && continue
+mapfile -t MANIFEST_FILES < <(find "${MANIFESTS_DIR}" -name "*.forge.ts" | sort)
 
-  # Apply --job filter
-  if [[ -n "${JOB_FILTER}" && "${job_name}" != "${JOB_FILTER}" ]]; then
-    continue
+if [[ ${#MANIFEST_FILES[@]} -eq 0 ]]; then
+  warn "No .forge.ts manifests found in ${MANIFESTS_DIR}"
+  exit 0
+fi
+
+# Apply --job filter
+if [[ -n "${JOB_FILTER}" ]]; then
+  FILTERED=()
+  for mf in "${MANIFEST_FILES[@]}"; do
+    if [[ "$(basename "${mf}" .forge.ts)" == "${JOB_FILTER}" ]]; then
+      FILTERED+=("${mf}")
+    fi
+  done
+  if [[ ${#FILTERED[@]} -eq 0 ]]; then
+    echo "ERROR: no manifest found for job '${JOB_FILTER}'" >&2
+    exit 1
   fi
+  MANIFEST_FILES=("${FILTERED[@]}")
+fi
 
-  if is_changed "${pyfile}" || [[ "${FORCE_ALL}" == "true" ]]; then
-    upload "${pyfile}" "${JOBS_DEST}/${job_name}.py"
-    (( UPLOADED++ )) || true
+log "Manifests to process: ${#MANIFEST_FILES[@]}"
+for mf in "${MANIFEST_FILES[@]}"; do
+  log "  - $(basename "${mf}")"
+done
+
+# ---------------------------------------------------------------------------
+# Step 2 — forge generate (regenerate Python, DAG, DQ YAML)
+# ---------------------------------------------------------------------------
+section "forge generate — scaffold from TypeScript manifests"
+log "Business logic blocks are preserved automatically"
+log ""
+
+GENERATED_PY=()
+GENERATED_DAGS=()
+GENERATED_DQ=()
+
+for manifest in "${MANIFEST_FILES[@]}"; do
+  job_name="$(basename "${manifest}" .forge.ts)"
+  log "→ ${job_name}"
+
+  if dry; then
+    log "  [dry-run] would run: npx tsx ${CLI_ENTRY} generate --job ${job_name} --dir ${MANIFESTS_DIR}"
+    GENERATED_PY+=("${MANIFESTS_DIR}/${job_name}.py")
+    GENERATED_DQ+=("${DQ_RULES_DIR}/${job_name}.yaml")
   else
-    log "  – ${job_name}.py  (unchanged, skipping)"
-    (( SKIPPED++ )) || true
+    # Run forge generate — writes .py and _dag.py into MANIFESTS_DIR,
+    # and DAG into orchestration/airflow/dags/{folder}/
+    npx tsx "${CLI_ENTRY}" generate \
+      --job "${job_name}" \
+      --dir "${MANIFESTS_DIR}" \
+      2>&1 | sed "s/^/    /"
+
+    # Collect generated outputs
+    py_file="${MANIFESTS_DIR}/${job_name}.py"
+    dq_file="${DQ_RULES_DIR}/${job_name}.yaml"
+    [[ -f "${py_file}" ]] && GENERATED_PY+=("${py_file}")
+    [[ -f "${dq_file}" ]] && GENERATED_DQ+=("${dq_file}")
   fi
-done < <(find "${JOBS_DIR}" -maxdepth 1 -name "*.py" -not -name "*.forge.py" -print0 | sort -z)
+done
 
-echo ""
+# Collect generated DAG files (forge generate writes these to DAGS_DIR)
+if ! dry; then
+  mapfile -t GENERATED_DAGS < <(
+    git -C "${REPO_ROOT}" diff --name-only HEAD -- "${DAGS_DIR}" 2>/dev/null
+    git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${DAGS_DIR}" 2>/dev/null
+  )
+fi
 
-# ── DQ rules ─────────────────────────────────────────────────────────────
-log "=== DQ rules ==="
-while IFS= read -r -d '' yamlfile; do
-  rule_name="$(basename "${yamlfile}")"
+# ---------------------------------------------------------------------------
+# Step 3 — Upload Spark jobs to ADLS
+# ---------------------------------------------------------------------------
+section "Upload Spark jobs → ADLS ${CODE_CONTAINER}/${JOBS_BLOB_PREFIX}/"
 
-  if [[ -n "${JOB_FILTER}" ]]; then
-    # Only sync the DQ file matching the job filter
-    [[ "${rule_name}" != "${JOB_FILTER}.yaml" ]] && continue
-  fi
+if [[ ${#GENERATED_PY[@]} -eq 0 ]]; then
+  log "  Nothing to upload"
+else
+  for pyfile in "${GENERATED_PY[@]}"; do
+    [[ -f "${pyfile}" ]] || { warn "  missing: ${pyfile}"; continue; }
+    upload_blob "${pyfile}" "${JOBS_BLOB_PREFIX}/$(basename "${pyfile}")"
+  done
+fi
 
-  if is_changed "${yamlfile}" || [[ "${FORCE_ALL}" == "true" ]]; then
-    upload "${yamlfile}" "${DQ_DEST}/${rule_name}"
-    (( UPLOADED++ )) || true
+# ---------------------------------------------------------------------------
+# Step 4 — Upload DQ rules to ADLS
+# ---------------------------------------------------------------------------
+section "Upload DQ rules → ADLS ${CODE_CONTAINER}/${DQ_BLOB_PREFIX}/"
+
+if [[ ${#GENERATED_DQ[@]} -eq 0 ]]; then
+  log "  Nothing to upload"
+else
+  for yamlfile in "${GENERATED_DQ[@]}"; do
+    [[ -f "${yamlfile}" ]] || { warn "  missing: ${yamlfile}"; continue; }
+    upload_blob "${yamlfile}" "${DQ_BLOB_PREFIX}/$(basename "${yamlfile}")"
+  done
+fi
+
+# ---------------------------------------------------------------------------
+# Step 5 — Commit + push DAG files so Airflow git-sync picks them up
+# ---------------------------------------------------------------------------
+section "Push DAG files → git (Airflow git-sync polls every 30s)"
+
+if [[ "${NO_GIT_PUSH}" == "true" ]]; then
+  log "  --no-git-push set — skipping (CI pipeline handles git push)"
+elif dry; then
+  log "  [dry-run] would git add + commit + push DAG changes"
+else
+  # Stage any changed/new DAG files
+  CHANGED_DAGS=()
+  while IFS= read -r -d '' dagfile; do
+    if git -C "${REPO_ROOT}" diff --quiet HEAD -- "${dagfile}" 2>/dev/null && \
+       ! git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${dagfile}" | grep -q .; then
+      : # unchanged
+    else
+      CHANGED_DAGS+=("${dagfile}")
+    fi
+  done < <(find "${DAGS_DIR}" -name "*.py" -print0)
+
+  if [[ ${#CHANGED_DAGS[@]} -eq 0 ]]; then
+    log "  DAG files unchanged — nothing to push"
   else
-    log "  – ${rule_name}  (unchanged, skipping)"
-    (( SKIPPED++ )) || true
+    log "  Staging ${#CHANGED_DAGS[@]} changed DAG file(s):"
+    for f in "${CHANGED_DAGS[@]}"; do
+      log "    + $(basename "${f}")"
+      git -C "${REPO_ROOT}" add "${f}"
+    done
+
+    BRANCH="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)"
+    COMMIT_MSG="chore(dags): regenerate from .forge.ts manifests [sync-jobs]"
+
+    if [[ -n "${JOB_FILTER}" ]]; then
+      COMMIT_MSG="chore(dags): regenerate ${JOB_FILTER} from manifest [sync-jobs]"
+    fi
+
+    git -C "${REPO_ROOT}" commit -m "${COMMIT_MSG}"
+    git -C "${REPO_ROOT}" push origin "${BRANCH}"
+    log "  ✓ Pushed to ${BRANCH} — Airflow will pick up changes within 30s"
   fi
-done < <(find "${DQ_DIR}" -maxdepth 1 -name "*.yaml" -print0 | sort -z)
+fi
 
+# ---------------------------------------------------------------------------
+# Summary
+# ---------------------------------------------------------------------------
 echo ""
-
-# ── Summary ───────────────────────────────────────────────────────────────
-log "=== Done ==="
-log "Uploaded : ${UPLOADED}"
-log "Skipped  : ${SKIPPED}"
-echo ""
-log "DAG files are synced automatically by Airflow git-sync."
-log "Push your branch and Airflow will pick up DAG changes within 30s."
+log "══════════════════════════════════════════════"
+log "  Jobs regenerated : ${#GENERATED_PY[@]}"
+log "  ADLS uploads     : $((${#GENERATED_PY[@]} + ${#GENERATED_DQ[@]}))"
+log "  Storage account  : ${STORAGE_ACCOUNT}"
+log "  Environment      : ${FORGE_ENV}"
+if [[ "${DRY_RUN}" == "true" ]]; then
+  log "  *** DRY RUN — no changes made ***"
+fi
+log "══════════════════════════════════════════════"
