@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Forge — Post-deployment script
-# Run this immediately after `az deployment sub create` completes.
+# post-provision.sh — Post-provisioning steps
+# Run immediately after provision-infra.sh (called by it automatically).
 #
 # What it does:
 #   1. Tags all public IPs in the AKS node resource groups (MC_ RGs) with

@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Forge — Full environment deployment
-# Runs Bicep deployment then post-deploy steps (IP tagging, kubeconfig fetch).
+# provision-infra.sh — Bicep infrastructure provisioning
+#
+# Provisions all Azure resources (AKS clusters, ACR, ADLS, Postgres, Key Vault)
+# then runs post-provision steps (kubeconfig fetch, S360 IP tagging).
+#
+# Called by forge-up.sh (Phase 1). Also runnable standalone if you only
+# need to re-provision infrastructure without redeploying applications.
 #
 # Usage:
-#   bash infra/scripts/deploy.sh [--env dev] [--alias prproddu01] [--sub <id>]
+#   bash infra/scripts/provision-infra.sh [--env dev] [--alias prproddu] [--sub <id>]
 #
 # Defaults: env=dev, alias=prproddu01, sub=(current az account)
 # =============================================================================
@@ -38,7 +43,7 @@ PARAMS="${REPO_ROOT}/infra/bicep/environments/${ENVIRONMENT}/${ENVIRONMENT}.para
 DEPLOYMENT_NAME="forge-${ENVIRONMENT}-$(date +%Y%m%d%H%M)"
 
 echo ""
-echo "=== Forge deploy ========================================"
+echo "=== Forge provision-infra ========================================"
 echo "  subscription : $SUBSCRIPTION"
 echo "  environment  : $ENVIRONMENT"
 echo "  alias        : $OWNER_ALIAS"
@@ -52,7 +57,7 @@ az account set --subscription "$SUBSCRIPTION"
 # 1. Bicep deployment
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Step 1/2: Bicep deployment"
+echo "--- Step 1/2: Bicep (Azure resource provisioning)"
 az deployment sub create \
   --location northcentralus \
   --template-file "$TEMPLATE" \
@@ -66,8 +71,8 @@ echo "    Bicep deployment complete."
 # 2. Post-deploy (IP tagging + kubeconfig)
 # ---------------------------------------------------------------------------
 echo ""
-echo "--- Step 2/2: Post-deploy"
-bash "${SCRIPT_DIR}/post-deploy.sh" \
+echo "--- Step 2/2: Post-provision (kubeconfigs + IP tags)"
+bash "${SCRIPT_DIR}/post-provision.sh" \
   --env "$ENVIRONMENT" \
   --alias "$OWNER_ALIAS" \
   --sub "$SUBSCRIPTION"

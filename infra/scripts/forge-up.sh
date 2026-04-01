@@ -128,22 +128,22 @@ echo ""
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Bicep infra provisioning (skippable)
-# deploy.sh handles both Bicep + post-deploy (kubeconfigs + IP tags)
+# provision-infra.sh handles both Bicep + post-deploy (kubeconfigs + IP tags)
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_INFRA" == "false" ]]; then
-  echo "━━━ [1/7] Bicep infra + post-deploy ━━━━━━━━━━━━━━━━━━━━"
-  bash "${SCRIPT_DIR}/deploy.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
+  echo "━━━ [1/7] Provision infrastructure ━━━━━━━━━━━━━━━━━━━━"
+  bash "${SCRIPT_DIR}/provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
 else
-  echo "━━━ [1/7] Bicep infra — skipped (--skip-infra) ━━━━━━━━━"
+  echo "━━━ [1/7] Provision infrastructure — skipped (--skip-infra) ━━━━━━━━━"
   echo "         Refreshing kubeconfigs..."
-  bash "${SCRIPT_DIR}/post-deploy.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
+  bash "${SCRIPT_DIR}/post-provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
 fi
 echo ""
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Key Vault secret seeding
 # ---------------------------------------------------------------------------
-echo "━━━ [2/7] Key Vault secret seeding ━━━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [2/7] Seed Key Vault secrets ━━━━━━━━━━━━━━━━━━━━━━"
 
 _kv_seed() {
   local name="$1" value="$2"
@@ -191,7 +191,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Phase 3 — Postgres: create airflow database and user
 # ---------------------------------------------------------------------------
-echo "━━━ [3/7] Postgres: airflow DB setup ━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [3/7] Configure Postgres (Airflow DB) ━━━━━━━━━━━━━━━━━━━━"
 
 # Resolve pg admin password: flag > env var > Key Vault
 if [[ -z "$PG_ADMIN_PASS" ]]; then
@@ -240,7 +240,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Phase 4 — K8s secrets for Airflow (both clusters)
 # ---------------------------------------------------------------------------
-echo "━━━ [4/7] K8s secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [4/7] Create Kubernetes secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 AIRFLOW_DB_CONN="postgresql+psycopg2://airflow:${AIRFLOW_DB_PASS}@${PG_HOST}:5432/airflow?sslmode=require"
 
@@ -312,7 +312,7 @@ echo ""
 # ---------------------------------------------------------------------------
 # Phase 5 — Compute cluster: Helm deploys
 # ---------------------------------------------------------------------------
-echo "━━━ [5/7] Compute cluster Helm deploys ━━━━━━━━━━━━━━━━━━"
+echo "━━━ [5/7] Deploy compute cluster ━━━━━━━━━━━━━━━━━━"
 
 # Resolve managed identity client IDs
 HMS_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
@@ -322,7 +322,7 @@ TRINO_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
 HMS_HOST=$(az keyvault secret show --vault-name "$KV_NAME" \
   --name "hms-postgres-host" --query value -o tsv 2>/dev/null || echo "$PG_HOST")
 
-echo "  [6.1] Hive Metastore..."
+echo "  [5.1] Hive Metastore..."
 helm upgrade --install hive-metastore \
   "${REPO_ROOT}/infra/helm/compute/hive-metastore" \
   --namespace hive-metastore --create-namespace \
@@ -336,7 +336,7 @@ helm upgrade --install hive-metastore \
   --wait --timeout 5m
 echo "    Done"
 
-echo "  [6.2] Spark Operator..."
+echo "  [5.2] Spark Operator..."
 helm upgrade --install spark-operator \
   "oci://${ACR}.azurecr.io/helm/spark-operator" \
   --version 2.5.0 \
@@ -349,7 +349,7 @@ helm upgrade --install spark-operator \
   --wait --timeout 5m
 echo "    Done"
 
-echo "  [6.3] Spark Connect..."
+echo "  [5.3] Spark Connect..."
 helm upgrade --install spark-connect \
   "${REPO_ROOT}/infra/helm/compute/spark-connect" \
   --namespace spark-system \
@@ -360,7 +360,7 @@ helm upgrade --install spark-connect \
   --wait --timeout 5m
 echo "    Done"
 
-echo "  [6.4] Trino..."
+echo "  [5.4] Trino..."
 TRINO_WI_ARG=""
 [[ -n "$TRINO_WI_CLIENT_ID" ]] && TRINO_WI_ARG="--set serviceAccount.annotations.azure\.workload\.identity/client-id=${TRINO_WI_CLIENT_ID}"
 helm upgrade --install trino \
@@ -375,7 +375,7 @@ helm upgrade --install trino \
   --wait --timeout 5m
 echo "    Done"
 
-echo "  [6.5] Trino Auth Proxy..."
+echo "  [5.5] Trino Auth Proxy..."
 # Federated credential setup (IMDS approach)
 MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
   --name "id-forge-trino-${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
@@ -441,13 +441,13 @@ echo ""
 # ---------------------------------------------------------------------------
 # Phase 6 — Orchestration cluster: Helm deploys
 # ---------------------------------------------------------------------------
-echo "━━━ [6/7] Orchestration cluster Helm deploys ━━━━━━━━━━━━"
+echo "━━━ [6/7] Deploy orchestration cluster ━━━━━━━━━━━━"
 
 # Ensure portal managed identity is available
 PORTAL_MI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
   --name "id-forge-portal-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
 
-echo "  [7.1] ingress-nginx..."
+echo "  [6.1] ingress-nginx..."
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update 2>/dev/null || true
 helm repo update ingress-nginx 2>/dev/null || true
 helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -476,7 +476,7 @@ if [[ -n "$EXTERNAL_IP" && -n "$NODE_RG_ORCH" ]]; then
 fi
 echo "    Done"
 
-echo "  [7.2] Airflow..."
+echo "  [6.2] Airflow..."
 # Build portal-api and portal-web images if needed
 if [[ "$SKIP_BUILD" == "false" ]]; then
   echo "    Building portal-api:${API_TAG}..."
@@ -510,7 +510,7 @@ helm upgrade --install airflow \
   --wait --timeout 10m
 echo "    Done"
 
-echo "  [7.3] Portal..."
+echo "  [6.3] Portal..."
 helm upgrade --install forge-portal \
   "${REPO_ROOT}/infra/helm/orchestration/portal" \
   --namespace portal --create-namespace \
@@ -537,12 +537,12 @@ echo ""
 # Phase 7 — sync-jobs.sh: generate + upload DAGs, forge_lib.zip, Spark jobs
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_SYNC" == "false" ]]; then
-  echo "━━━ [7/7] Sync jobs (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
+  echo "━━━ [7/7] Sync pipelines (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
   FORGE_ENV="$ENV" OWNER_ALIAS="$ALIAS" \
     bash "${SCRIPT_DIR}/sync-jobs.sh" --full
   echo ""
 else
-  echo "━━━ [7/7] Sync jobs — skipped (--skip-sync) ━━━━━━━━━━━━━"
+  echo "━━━ [7/7] Sync pipelines — skipped (--skip-sync) ━━━━━━━━━━━━━"
 fi
 
 # ---------------------------------------------------------------------------
@@ -557,12 +557,12 @@ fi
 #   5. Smoke-test Trino: SELECT COUNT(*) from each output table
 # ---------------------------------------------------------------------------
 if [[ "$RUN_TEST" == "true" ]]; then
-  echo "━━━ [8/8 TEST] Seeding raw data + triggering pipelines ━━"
+  echo "━━━ [+] Smoke test: seed raw data + run pipelines ━━"
   echo "  Test date: ${TEST_DATE}"
   echo ""
 
   # ── Step 8.1: Copy NYC TLC sample from Azure Open Datasets → raw container ─
-  echo "  [8.1] Copying NYC TLC sample to raw zone..."
+  echo "  [+.1] Copying NYC TLC sample to raw zone..."
 
   # Source: Azure Open Datasets public ADLS Gen2 (yellow taxi, 2023-01)
   # One month of yellow taxi parquet — ~50 MB, ~3M rows — enough to prove the pipeline
@@ -648,7 +648,7 @@ if [[ "$RUN_TEST" == "true" ]]; then
 
   # ── Step 8.3: Wait for Airflow scheduler to be ready ─────────────────────
   echo ""
-  echo "  [8.2] Waiting for Airflow scheduler pod..."
+  echo "  [+.2] Waiting for Airflow scheduler pod..."
   for i in $(seq 1 24); do
     SCHED_POD=$(kubectl get pod -n airflow --context "$ORCH_CLUSTER" \
       -l component=scheduler --field-selector=status.phase=Running \
@@ -671,7 +671,7 @@ if [[ "$RUN_TEST" == "true" ]]; then
 
     # ── Step 8.5: Trigger bronze → silver → gold ──────────────────────────
     echo ""
-    echo "  [8.3] Triggering pipeline chain: bronze → silver → gold"
+    echo "  [+.3] Triggering pipeline chain: bronze → silver → gold"
 
     TEST_OK=true
     _trigger_and_wait "nyc_taxi_bronze" 25 || TEST_OK=false
@@ -686,7 +686,7 @@ if [[ "$RUN_TEST" == "true" ]]; then
 
     # ── Step 8.6: Smoke-test Trino ────────────────────────────────────────
     echo ""
-    echo "  [8.4] Trino smoke test..."
+    echo "  [+.4] Trino smoke test..."
     TRINO_POD=$(kubectl get pod -n trino --context "$COMPUTE_CLUSTER" \
       -l app=trino,component=coordinator \
       -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
