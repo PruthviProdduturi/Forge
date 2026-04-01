@@ -1,0 +1,103 @@
+# DQ rules for gold/retail/daily_sales
+# Applied by @track decorator inside ForgeDemoGold._daily_sales()
+# Critical rules fail the Spark job; warning rules log and continue.
+#
+# Note: product_performance and regional_metrics gold tables share this rules
+# file (RULES_PATH constant in the job).  Rules expressed in terms of
+# daily_sales columns are skipped by forge_dq when the column is absent —
+# add separate rule files per table if stricter isolation is required.
+
+version: "v1"
+dataset: gold/retail/daily_sales
+description: "Quality rules for the Forge demo retail gold layer (daily_sales)"
+owner: data-engineering
+tags: [forge-demo, gold, retail, daily]
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Completeness: partition key must always be present.
+  # replaceWhere on order_date requires the column to be non-null.
+  # ---------------------------------------------------------------------------
+  - name: order_date_not_null
+    type: not_null
+    column: order_date
+    severity: critical
+    description: Partition column must always be populated; NULL breaks replaceWhere.
+
+  # ---------------------------------------------------------------------------
+  # Validity — numeric ranges
+  # Gold aggregations are derived from valid silver data, so these checks
+  # are post-condition guards against aggregation logic bugs.
+  # ---------------------------------------------------------------------------
+  - name: total_orders_positive
+    type: value_range
+    column: total_orders
+    min: 1
+    severity: critical
+    description: >
+      A day with zero orders should never produce a gold row.  A value < 1
+      indicates an aggregation error or an empty silver partition.
+
+  - name: total_revenue_positive
+    type: value_range
+    column: total_revenue
+    min: 0.01
+    severity: critical
+    description: >
+      Total revenue must be positive.  A zero or negative value means either
+      all orders on this day were zero-value (data error) or a numeric
+      overflow occurred in the aggregation.
+
+  - name: cancellation_rate_valid
+    type: value_range
+    column: cancellation_rate
+    min: 0.0
+    max: 1.0
+    severity: critical
+    description: >
+      cancellation_rate = cancelled_orders / total_orders.  Must be in [0, 1].
+      A value outside this range indicates an arithmetic error in the job.
+
+  - name: avg_order_value_reasonable
+    type: value_range
+    column: avg_order_value
+    min: 0.01
+    max: 1000000
+    severity: warning
+    description: >
+      Average order value should be a plausible retail figure.  The upper
+      bound of £1 000 000 is intentionally generous to avoid false positives
+      on high-value B2B days; tune per business domain.
+
+  # ---------------------------------------------------------------------------
+  # Volume — revenue anomaly detection
+  # Flags date partitions where total_revenue deviates significantly from the
+  # 30-day rolling baseline (Z-score method).
+  # ---------------------------------------------------------------------------
+  - name: revenue_anomaly
+    type: anomaly
+    metric: total_revenue_sum
+    lookback_days: 30
+    z_score_threshold: 3.0
+    severity: warning
+    description: >
+      Detects unusually low or high daily revenue compared to the 30-day
+      history.  A |Z| > 3.0 (three-sigma) triggers a warning for review.
+      Requires at least 7 prior runs to produce meaningful results.
+
+# =============================================================================
+# Anomaly Detection
+#
+# Uses Z-score (Statistical Process Control) to flag unusual metric values.
+# Requires at least 7 historical runs before producing results.
+# =============================================================================
+
+anomaly_detection:
+  enabled: true
+  lookback_days: 30        # Daily cadence — 30 days of rolling history
+  z_score_threshold: 3.0  # |Z| > 3 → ~0.27% false-positive rate (three-sigma)
+  # Metrics monitored automatically by forge_dq:
+  #   rows_written          — total row count per run (one row per date in gold)
+  #   total_revenue_sum     — sum of total_revenue across the partition
+  #   total_orders_sum      — sum of total_orders across the partition

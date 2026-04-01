@@ -1,0 +1,93 @@
+{
+  "name": "forge-cli-vscode",
+  "displayName": "Forge CLI",
+  "description": "VS Code extension for the Forge Platform job scaffolding CLI",
+  "version": "0.1.0",
+  "publisher": "forge-platform",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Programming Languages", "Snippets"],
+  "keywords": ["forge", "spark", "data-engineering", "scaffolding", "delta"],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:typescript"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "forge.generate",
+        "title": "Forge: Generate job artefacts",
+        "icon": "$(play)"
+      },
+      {
+        "command": "forge.init",
+        "title": "Forge: Init new job manifest"
+      },
+      {
+        "command": "forge.check",
+        "title": "Forge: Check — diff generated files (CI)",
+        "icon": "$(checklist)"
+      }
+    ],
+    "languages": [
+      {
+        "id": "typescript",
+        "extensions": [".forge.ts"],
+        "aliases": ["Forge Manifest", "forge.ts"]
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "forge.generate",
+          "when": "resourceFilename =~ /\\.forge\\.ts$/",
+          "group": "navigation"
+        },
+        {
+          "command": "forge.check",
+          "when": "resourceFilename =~ /\\.forge\\.ts$/",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "forge.generate",
+          "when": "resourceFilename =~ /\\.forge\\.ts$/",
+          "group": "forge"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Forge CLI",
+      "properties": {
+        "forge.cliPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the forge CLI binary. Defaults to npx @forge/cli."
+        },
+        "forge.outputDir": {
+          "type": "string",
+          "default": "examples",
+          "description": "Root output directory for generated artefacts."
+        },
+        "forge.manifestDir": {
+          "type": "string",
+          "default": "examples/src/spark/jobs",
+          "description": "Directory containing .forge.ts manifest files."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -watch -p tsconfig.json",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

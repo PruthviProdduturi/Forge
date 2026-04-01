@@ -1,0 +1,22 @@
+{
+  "name": "@forge/cli",
+  "version": "0.1.0",
+  "description": "Forge job scaffolding CLI",
+  "type": "module",
+  "bin": { "forge": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "generate": "tsx src/index.ts generate"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "cronstrue": "^2.50.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
