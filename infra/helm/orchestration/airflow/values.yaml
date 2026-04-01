@@ -1,0 +1,173 @@
+# =============================================================================
+# Apache Airflow — Helm Values (chart 1.20.0 / Airflow 3.1.8)
+#
+# Deployed via forge-up.sh — do not run helm directly.
+# forge-up.sh creates all prerequisite K8s secrets before this chart installs.
+#
+# Prerequisite secrets (created by forge-up.sh):
+#   airflow-db-credentials      → key: connection  (full SQLAlchemy URL)
+#   airflow-webserver-secret    → key: webserver-secret-key
+#   airflow-git-credentials     → keys: GIT_SYNC_USERNAME, GIT_SYNC_PASSWORD
+#   airflow-compute-kubeconfig  → key: config  (compute cluster kubeconfig)
+#
+# Image pulled from ACR (no public registry access):
+#   oci://forgeacr{alias}.azurecr.io/helm/airflow:1.20.0
+#   forgeacr{alias}.azurecr.io/airflow:3.1.8
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Executor — LocalExecutor for dev (tasks run inside the scheduler process)
+# Switch to KubernetesExecutor in prod (separate pod per task)
+# SparkKubernetesOperator works with any executor — it always talks to the
+# compute cluster via the kubernetes_compute_cluster Airflow connection.
+# ---------------------------------------------------------------------------
+executor: "LocalExecutor"
+
+# ---------------------------------------------------------------------------
+# Images — all pulled from ACR
+# ---------------------------------------------------------------------------
+images:
+  airflow:
+    repository: forgeacr.azurecr.io/airflow   # overridden at deploy time
+    tag: "3.1.8"
+    pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Metadata DB — external PostgreSQL Flexible Server (no embedded Postgres)
+# Password injected from K8s secret created by forge-up.sh
+# ---------------------------------------------------------------------------
+postgresql:
+  enabled: false
+
+data:
+  metadataSecretName: airflow-db-credentials
+  resultBackendSecretName: airflow-db-credentials
+
+# ---------------------------------------------------------------------------
+# DAG delivery — git-sync from Azure DevOps repo
+# forge-up.sh creates the airflow-git-credentials secret with PAT token.
+# Syncs every 30s; subPath must point to the dags folder inside the repo.
+# ---------------------------------------------------------------------------
+dags:
+  gitSync:
+    enabled: true
+    repo: "https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"  # configurable via --git-repo
+    branch: "user/PrProddu/StarRocks"  # configurable via --git-branch
+    subPath: "Forge/orchestration/airflow/dags"
+    depth: 1
+    credentialsSecret: airflow-git-credentials
+    period: 30s
+
+# ---------------------------------------------------------------------------
+# Webserver
+# ---------------------------------------------------------------------------
+webserver:
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  # Secret key for Flask session signing — from K8s secret
+  secretKey: ""
+  secretKeySecretName: airflow-webserver-secret
+  secretKeySecretKey: webserver-secret-key
+  # Default admin user for dev (change password post-deploy via UI)
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@forge.local
+    firstName: Admin
+    lastName: User
+    password: admin
+
+# ---------------------------------------------------------------------------
+# Scheduler — single replica for dev (HA: 2 replicas in prod)
+# ---------------------------------------------------------------------------
+scheduler:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+
+# ---------------------------------------------------------------------------
+# Triggerer — handles deferred operators
+# ---------------------------------------------------------------------------
+triggerer:
+  enabled: true
+  replicas: 1
+
+# ---------------------------------------------------------------------------
+# DAG Processor — Airflow 3.x requires a separate dag-processor component
+# ---------------------------------------------------------------------------
+dagProcessor:
+  enabled: true
+  replicas: 1
+
+# ---------------------------------------------------------------------------
+# Workers — not used with LocalExecutor
+# ---------------------------------------------------------------------------
+workers:
+  replicas: 0
+
+# ---------------------------------------------------------------------------
+# Flower — not used (no CeleryExecutor)
+# ---------------------------------------------------------------------------
+flower:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Compute cluster Airflow connection
+#
+# SparkKubernetesOperator uses kubernetes_conn_id="kubernetes_compute_cluster"
+# to submit SparkApplication CRDs to the compute cluster.
+# The kubeconfig is mounted from the airflow-compute-kubeconfig K8s secret.
+# ---------------------------------------------------------------------------
+env:
+  - name: AIRFLOW_CONN_KUBERNETES_COMPUTE_CLUSTER
+    value: "kubernetes://?in_cluster=False&kube_config_path=%2Fopt%2Fairflow%2Fkubeconfig%2Fconfig"
+  - name: FORGE_ENV
+    value: "dev"   # overridden at deploy time
+
+extraVolumes:
+  - name: compute-kubeconfig
+    secret:
+      secretName: airflow-compute-kubeconfig
+
+extraVolumeMounts:
+  - name: compute-kubeconfig
+    mountPath: /opt/airflow/kubeconfig
+    readOnly: true
+
+# ---------------------------------------------------------------------------
+# Logs — stdout (captured by Azure Monitor Agent → Log Analytics)
+# ---------------------------------------------------------------------------
+logs:
+  persistence:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# Redis — not used (no CeleryExecutor)
+# ---------------------------------------------------------------------------
+redis:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# StatsD — disabled for dev
+# ---------------------------------------------------------------------------
+statsd:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Kubernetes RBAC — needed for KubernetesExecutor task pods (and for
+# SparkKubernetesOperator to create SparkApplication CRDs via the connection)
+# ---------------------------------------------------------------------------
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
+  name: airflow
