@@ -1,19 +1,23 @@
 """Platform configuration API — Admin only.
 
-Allows an Admin to read and update runtime platform settings (auth provider,
-Azure AD client ID / tenant ID) without restarting the pod.  Changes are
-written to ``platform_override.json`` next to the running process and take
-effect immediately via the in-memory override dict.
+Reads and writes Azure AD auth configuration to Azure Key Vault:
 
-In production, prefer env vars / Key Vault over this endpoint.  The file is
-intentionally not persisted across pod restarts in production — it is a dev
-convenience so you can flip the auth provider from the portal UI.
+  forge-portal-auth-provider   → "local" | "azure_ad"
+  forge-portal-aad-client-id   → Azure AD App Registration Client ID
+  forge-portal-aad-tenant-id   → Azure AD Tenant ID
+
+Auth logic:
+  - If the KV secret forge-portal-auth-provider == "azure_ad" AND
+    forge-portal-aad-client-id is non-empty → portal uses Azure SSO.
+  - Otherwise → local username/password auth.
+
+The portal-api managed identity needs Key Vault Secrets Officer on the vault
+(granted in identity.bicep / keyvault.bicep).  For local dev, falls back to
+an in-memory dict when KV is not configured (KEY_VAULT_URL env var absent).
 """
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
+from functools import lru_cache
 from typing import Annotated, Any
 
 import structlog
@@ -25,19 +29,109 @@ from app.core.config import get_settings
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/platform", tags=["platform"])
+settings = get_settings()
 
-_OVERRIDE_FILE = Path(os.getenv("FORGE_OVERRIDE_FILE", "platform_override.json"))
+# ---------------------------------------------------------------------------
+# Local dev fallback (no KV configured)
+# ---------------------------------------------------------------------------
+# Persisted to a JSON sidecar file so auth config survives backend restarts
+# during local development.  In production this dict is never used — KV handles
+# all reads and writes.
+import json as _json, pathlib as _pathlib
 
-# In-memory cache of overrides applied this session
-_overrides: dict[str, Any] = {}
+_LOCAL_OVERRIDES_FILE = _pathlib.Path(__file__).parent.parent.parent / ".forge-dev-config.json"
 
-# Load any persisted overrides on import
-if _OVERRIDE_FILE.exists():
+def _load_local_overrides() -> dict[str, str]:
     try:
-        _overrides = json.loads(_OVERRIDE_FILE.read_text())
+        return _json.loads(_LOCAL_OVERRIDES_FILE.read_text()) if _LOCAL_OVERRIDES_FILE.exists() else {}
+    except Exception:
+        return {}
+
+def _save_local_overrides(data: dict[str, str]) -> None:
+    try:
+        _LOCAL_OVERRIDES_FILE.write_text(_json.dumps(data, indent=2))
     except Exception:
         pass
 
+_local_overrides: dict[str, str] = _load_local_overrides()
+
+# ---------------------------------------------------------------------------
+# Key Vault helpers
+# ---------------------------------------------------------------------------
+
+_KV_SECRET_PROVIDER  = "forge-portal-auth-provider"
+_KV_SECRET_CLIENT_ID = "forge-portal-aad-client-id"
+_KV_SECRET_TENANT_ID = "forge-portal-aad-tenant-id"
+
+
+@lru_cache(maxsize=1)
+def _kv_client():  # type: ignore[return]
+    """Return an Azure SecretClient, or None when KV is not configured."""
+    kv_url = settings.key_vault_url
+    if not kv_url:
+        return None
+    try:
+        from azure.identity import ManagedIdentityCredential  # type: ignore
+        from azure.keyvault.secrets import SecretClient       # type: ignore
+        credential = ManagedIdentityCredential(client_id=settings.azure_client_id or None)
+        return SecretClient(vault_url=kv_url, credential=credential)
+    except Exception as exc:
+        log.warning("kv_client_init_failed", error=str(exc))
+        return None
+
+
+def _kv_get(name: str, default: str = "") -> str:
+    client = _kv_client()
+    if client is None:
+        return _local_overrides.get(name, default)
+    try:
+        return client.get_secret(name).value or default
+    except Exception:
+        return _local_overrides.get(name, default)
+
+
+def _kv_set(name: str, value: str) -> None:
+    client = _kv_client()
+    if client is None:
+        _local_overrides[name] = value
+        _save_local_overrides(_local_overrides)
+        log.info("kv_local_override", secret=name)
+        return
+    try:
+        client.set_secret(name, value)
+        log.info("kv_secret_updated", secret=name)
+    except Exception as exc:
+        log.error("kv_set_failed", secret=name, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to write secret {name!r} to Key Vault: {exc}",
+        ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Public helper — used by auth.py GET /api/auth/provider
+# ---------------------------------------------------------------------------
+
+def get_auth_config_from_kv() -> dict[str, str]:
+    """Return current auth config. Hot-read from KV — no in-memory cache.
+
+    Called on every GET /api/auth/provider so the frontend always gets
+    the live value without a pod restart.
+    """
+    # Invalidate lru_cache of _kv_client if KV URL changed (pod restart covers this)
+    provider  = _kv_get(_KV_SECRET_PROVIDER,  "local")
+    client_id = _kv_get(_KV_SECRET_CLIENT_ID, settings.azure_client_id or "")
+    tenant_id = _kv_get(_KV_SECRET_TENANT_ID, settings.azure_tenant_id or "common")
+    return {
+        "auth_provider":  provider,
+        "azure_client_id": client_id,
+        "azure_tenant_id": tenant_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Auth guard
+# ---------------------------------------------------------------------------
 
 def _is_admin(user: dict[str, Any]) -> bool:
     roles = user.get("roles", user.get("role", []))
@@ -52,6 +146,10 @@ def _require_admin(current_user: Annotated[dict[str, Any], Depends(get_current_u
     return current_user
 
 
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
 class AuthConfigRequest(BaseModel):
     auth_provider: str          # "local" | "azure_ad"
     azure_client_id: str = ""
@@ -63,22 +161,24 @@ class AuthConfigResponse(BaseModel):
     azure_client_id: str
     azure_tenant_id: str
     aad_configured: bool        # True when client_id is non-empty
+    kv_backed: bool             # True when Key Vault is configured
 
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @router.get("/auth-config", response_model=AuthConfigResponse)
 async def get_auth_config(
     _: Annotated[dict[str, Any], Depends(_require_admin)],
 ) -> AuthConfigResponse:
-    """Return current auth configuration (Admin only)."""
-    settings = get_settings()
-    client_id = _overrides.get("azure_client_id", settings.azure_client_id) or ""
-    tenant_id = _overrides.get("azure_tenant_id", settings.azure_tenant_id) or ""
-    provider = _overrides.get("auth_provider", settings.auth_provider)
+    cfg = get_auth_config_from_kv()
     return AuthConfigResponse(
-        auth_provider=provider,
-        azure_client_id=client_id,
-        azure_tenant_id=tenant_id,
-        aad_configured=bool(client_id),
+        auth_provider=cfg["auth_provider"],
+        azure_client_id=cfg["azure_client_id"],
+        azure_tenant_id=cfg["azure_tenant_id"],
+        aad_configured=bool(cfg["azure_client_id"]),
+        kv_backed=bool(settings.key_vault_url),
     )
 
 
@@ -87,11 +187,11 @@ async def save_auth_config(
     body: AuthConfigRequest,
     _: Annotated[dict[str, Any], Depends(_require_admin)],
 ) -> AuthConfigResponse:
-    """Save auth provider settings (Admin only).
+    """Write auth config to Key Vault (or local override in dev).
 
-    Writes to the in-memory override dict and persists to
-    ``platform_override.json``.  The ``/api/auth/provider`` endpoint reads
-    from this override so the frontend picks up the new provider on next load.
+    After saving:
+    - GET /api/auth/provider immediately reflects the new config
+    - No pod restart needed — the next browser load picks up the new provider
     """
     if body.auth_provider not in ("local", "azure_ad"):
         raise HTTPException(status_code=400, detail="auth_provider must be 'local' or 'azure_ad'")
@@ -99,24 +199,24 @@ async def save_auth_config(
     if body.auth_provider == "azure_ad" and not body.azure_client_id.strip():
         raise HTTPException(status_code=400, detail="azure_client_id is required when auth_provider is azure_ad")
 
-    _overrides["auth_provider"] = body.auth_provider
-    _overrides["azure_client_id"] = body.azure_client_id.strip()
-    _overrides["azure_tenant_id"] = body.azure_tenant_id.strip() or "common"
+    client_id = body.azure_client_id.strip()
+    tenant_id = body.azure_tenant_id.strip() or "common"
 
-    try:
-        _OVERRIDE_FILE.write_text(json.dumps(_overrides, indent=2))
-    except OSError as exc:
-        log.warning("platform_override_write_failed", error=str(exc))
+    _kv_set(_KV_SECRET_PROVIDER,  body.auth_provider)
+    _kv_set(_KV_SECRET_CLIENT_ID, client_id)
+    _kv_set(_KV_SECRET_TENANT_ID, tenant_id)
 
     log.info(
-        "auth_config_updated",
+        "auth_config_saved",
         provider=body.auth_provider,
-        client_id=body.azure_client_id[:8] + "…" if body.azure_client_id else "",
+        client_id=client_id[:8] + "…" if client_id else "",
+        kv_backed=bool(settings.key_vault_url),
     )
 
     return AuthConfigResponse(
-        auth_provider=_overrides["auth_provider"],
-        azure_client_id=_overrides["azure_client_id"],
-        azure_tenant_id=_overrides["azure_tenant_id"],
-        aad_configured=bool(_overrides["azure_client_id"]),
+        auth_provider=body.auth_provider,
+        azure_client_id=client_id,
+        azure_tenant_id=tenant_id,
+        aad_configured=bool(client_id),
+        kv_backed=bool(settings.key_vault_url),
     )

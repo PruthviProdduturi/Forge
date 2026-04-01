@@ -649,7 +649,7 @@ export default function AboutPage() {
           <FeatureCard
             icon="fa-table"
             color="#dd00a1"
-            title="Trino 468"
+            title="Trino 479"
             body="Federated SQL across Delta Lake, Iceberg, and external data sources. Scales horizontally on demand with per-query cost tracking."
           />
           <FeatureCard
@@ -721,7 +721,7 @@ export default function AboutPage() {
             <ChartPill icon="fa-bolt" label="Spark 4.1" color="#e25a1c" />
             <ChartPill icon="fa-layer-group" label="Delta Lake 4.0" color="#003366" />
             <ChartPill icon="fa-snowflake" label="Iceberg 1.6.1" color="#2874A6" />
-            <ChartPill icon="fa-table" label="Trino 468" color="#dd00a1" />
+            <ChartPill icon="fa-table" label="Trino 479" color="#dd00a1" />
             <ChartPill icon="fa-calendar-check" label="Airflow 3.1" color="#017cee" />
           </div>
         </div>
@@ -831,7 +831,7 @@ export default function AboutPage() {
                 {[
                   { label: "Spark Operator 2.5", color: "#e25a1c", icon: "fa-bolt" },
                   { label: "Spark Connect (gRPC)", color: "#f97316", icon: "fa-plug" },
-                  { label: "Trino 468", color: "#dd00a1", icon: "fa-table-columns" },
+                  { label: "Trino 479", color: "#dd00a1", icon: "fa-table-columns" },
                   { label: "Hive Metastore 3.1", color: "#b45309", icon: "fa-sitemap" },
                 ].map(c => (
                   <div key={c.label} style={{
@@ -1091,7 +1091,7 @@ export default function AboutPage() {
               {[
                 "Spark Operator 2.5",
                 "Spark Connect server",
-                "Trino 468 (coordinator + workers)",
+                "Trino 479 (coordinator + workers)",
               ].map((item) => (
                 <li
                   key={item}

@@ -61,8 +61,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const handleRefresh = useCallback(() => {
-    router.refresh();
-  }, [router]);
+    window.location.reload();
+  }, []);
 
   const handleSignOut = useCallback(async () => {
     await logout();
@@ -108,9 +108,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {platformInfo?.env && (
             <div className="header-dropdown header-dropdown-right">
               <button
-                className="header-icon-btn"
+                className="header-env-btn"
                 type="button"
-                style={{ display: "flex", alignItems: "center", gap: 5 }}
                 title={`Environment: ${platformInfo.env}`}
               >
                 <span style={{
@@ -119,10 +118,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   background: platformInfo.env === "prod" ? "#fee2e2" : "#dcfce7",
                   color: platformInfo.env === "prod" ? "#dc2626" : "#16a34a",
                   border: `1px solid ${platformInfo.env === "prod" ? "#fca5a5" : "#86efac"}`,
+                  display: "inline-flex", alignItems: "center", gap: 4,
                 }}>
                   {platformInfo.env ?? "dev"}
+                  <i className="fas fa-chevron-down" style={{ fontSize: 8, opacity: 0.6 }} aria-hidden="true" />
                 </span>
-                <i className="fas fa-chevron-down" style={{ fontSize: 9, opacity: 0.5 }} aria-hidden="true" />
               </button>
               <div className="header-dropdown-menu" role="menu" style={{ minWidth: 280 }}>
                 <div style={{ padding: "10px 16px 6px", borderBottom: "1px solid #f1f5f9" }}>
@@ -148,20 +148,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
                 >
                   <i className="fas fa-server" aria-hidden="true" />
-                  Platform settings
+                  Platform
                 </Link>
               </div>
             </div>
           )}
-
-          <Link
-            href="/about"
-            className={`header-icon-btn${isActive("/about") ? " header-btn-active" : ""}`}
-            title="About Forge"
-            aria-label="About Forge"
-          >
-            <i className="fas fa-circle-question" aria-hidden="true" />
-          </Link>
 
           <button
             className="header-icon-btn"
@@ -173,7 +164,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <i className="fas fa-rotate" aria-hidden="true" />
           </button>
 
-          {/* Settings dropdown */}
+          {/* About */}
+          <Link
+            href="/about"
+            className={`header-icon-btn${isActive("/about") ? " header-btn-active" : ""}`}
+            title="About Forge"
+            aria-label="About Forge"
+          >
+            <i className="fas fa-circle-info" aria-hidden="true" />
+          </Link>
+
+          {/* Gear — app settings */}
           <div className="header-dropdown header-dropdown-right">
             <button
               className={`header-icon-btn${isActive("/settings") ? " header-btn-active" : ""}`}
@@ -184,26 +185,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <i className="fas fa-gear" aria-hidden="true" />
             </button>
             <div className="header-dropdown-menu" role="menu">
-              <button
-                onClick={() => setThemeModalOpen(true)}
-                role="menuitem"
-                type="button"
-              >
+              <button onClick={() => setThemeModalOpen(true)} role="menuitem" type="button">
                 <i className="fas fa-palette" aria-hidden="true" />
                 Themes
               </button>
-              <Link
-                href="/settings"
-                role="menuitem"
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
-              >
+              <div className="header-dropdown-divider" />
+              <Link href="/settings" role="menuitem"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}>
                 <i className="fas fa-server" aria-hidden="true" />
-                Platform settings
+                Platform
+              </Link>
+              <Link href="/settings/auth" role="menuitem"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}>
+                <i className="fas fa-shield-halved" aria-hidden="true" />
+                Auth
               </Link>
             </div>
           </div>
 
-          {/* User dropdown */}
+          {/* User avatar — profile + sign out */}
           <div className="header-dropdown header-dropdown-right">
             <button
               className="user-avatar-btn"
@@ -212,17 +212,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
             >
               {user?.initials ?? "??"}
             </button>
-            <div
-              className="header-dropdown-menu user-dropdown-menu"
-              role="menu"
-            >
+            <div className="header-dropdown-menu user-dropdown-menu" role="menu">
               <div className="user-dropdown-header">
-                <div className="user-dropdown-name">
-                  {user?.name ?? "Unknown User"}
-                </div>
-                {user?.email && (
-                  <div className="user-dropdown-email">{user.email}</div>
-                )}
+                <div className="user-dropdown-name">{user?.name ?? "Unknown User"}</div>
+                {user?.email && <div className="user-dropdown-email">{user.email}</div>}
                 {role && (
                   <div className="role-badge">
                     <i className="fas fa-shield-halved" aria-hidden="true" />
@@ -231,19 +224,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 )}
               </div>
               <div className="header-dropdown-divider" />
-              <Link
-                href="/settings"
-                role="menuitem"
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
-              >
-                <i className="fas fa-gear" aria-hidden="true" />
-                Settings
-              </Link>
-              <button
-                onClick={handleSignOut}
-                role="menuitem"
-                type="button"
-              >
+              <button onClick={handleSignOut} role="menuitem" type="button">
                 <i className="fas fa-right-from-bracket" aria-hidden="true" />
                 Sign out
               </button>

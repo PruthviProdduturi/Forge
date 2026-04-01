@@ -30,7 +30,8 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXT_PUBLIC_AZURE_TENANT_ID=${AZURE_TENANT_ID} \
     NEXT_PUBLIC_AZURE_REDIRECT_URI=${WEB_URL}
 
-COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json* ./
+RUN npm ci --frozen-lockfile
 COPY . .
 
 RUN npm run build

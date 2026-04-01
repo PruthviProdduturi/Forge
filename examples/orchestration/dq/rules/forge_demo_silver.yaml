@@ -1,0 +1,142 @@
+# DQ rules for silver/retail/orders_cleaned
+# Applied by @track decorator inside ForgeDemoSilver.run()
+# Critical rules fail the Spark job; warning rules log and continue.
+
+version: "v1"
+dataset: silver/retail/orders_cleaned
+description: "Quality rules for the Forge demo retail orders silver layer"
+owner: data-engineering
+primary_key: [order_id]
+tags: [forge-demo, silver, retail, daily]
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  # Completeness: core identity columns must not be NULL.
+  # After null-drop transforms these should always be zero — a non-zero count
+  # indicates a bug in the silver transform.
+  # ---------------------------------------------------------------------------
+  - name: order_id_not_null
+    type: not_null
+    column: order_id
+    severity: critical
+    description: Every order must have an order_id; NULL means the surrogate key failed.
+
+  - name: customer_id_not_null
+    type: not_null
+    column: customer_id
+    severity: critical
+    description: Every order must be attributed to a customer.
+
+  - name: order_date_not_null
+    type: not_null
+    column: order_date
+    severity: critical
+    description: Partition column must always be populated; NULL breaks replaceWhere.
+
+  # ---------------------------------------------------------------------------
+  # Uniqueness: order_id must be globally unique after dedup.
+  # dropDuplicates(["order_id"]) in the job makes this a post-condition check.
+  # ---------------------------------------------------------------------------
+  - name: order_id_unique
+    type: unique_key
+    columns: [order_id]
+    severity: critical
+    description: Duplicate order_ids indicate a dedup failure in the silver transform.
+
+  # ---------------------------------------------------------------------------
+  # Validity — numeric ranges
+  # All thresholds reflect plausible retail order data; adjust per domain.
+  # ---------------------------------------------------------------------------
+  - name: quantity_positive
+    type: value_range
+    column: quantity
+    min: 1
+    max: 10000
+    severity: critical
+    description: >
+      Quantity must be at least 1 (fractional / zero quantities indicate a
+      data entry error) and capped at 10 000 to catch unit-of-measure mix-ups.
+
+  - name: unit_price_positive
+    type: value_range
+    column: unit_price
+    min: 0.01
+    max: 100000
+    severity: critical
+    description: >
+      Unit prices below £0.01 are effectively free and almost certainly wrong.
+      The £100 000 ceiling catches currency-conversion or precision errors.
+
+  - name: total_amount_positive
+    type: value_range
+    column: total_amount
+    min: 0.01
+    severity: critical
+    description: >
+      total_amount = round(quantity * unit_price, 2).  A value below £0.01
+      means either quantity or unit_price failed their own checks upstream.
+
+  # ---------------------------------------------------------------------------
+  # Validity — accepted values
+  # ---------------------------------------------------------------------------
+  - name: status_valid
+    type: accepted_values
+    column: status
+    values:
+      - pending
+      - confirmed
+      - shipped
+      - delivered
+      - cancelled
+    severity: critical
+    description: >
+      Status must belong to the known retail order lifecycle vocabulary.
+      Any other value indicates an unmapped source system code.
+
+  - name: region_valid
+    type: accepted_values
+    column: region
+    values:
+      - North
+      - South
+      - East
+      - West
+      - Central
+    severity: warning
+    description: >
+      Region should map to one of the five defined sales territories.
+      A warning (not critical) allows new regions to be reviewed before
+      adding them to the accepted set.
+
+  # ---------------------------------------------------------------------------
+  # Volume — anomaly detection for daily row count
+  # Flags partitions where the row count deviates significantly from the
+  # 30-day rolling baseline (Z-score method).
+  # ---------------------------------------------------------------------------
+  - name: row_count_anomaly
+    type: anomaly
+    metric: rows_written
+    lookback_days: 30
+    z_score_threshold: 3.0
+    severity: warning
+    description: >
+      Detects unusually low or high order volumes compared to the 30-day
+      history.  A |Z| > 3.0 (three-sigma) triggers a warning for review.
+      Requires at least 7 prior runs to produce meaningful results.
+
+# =============================================================================
+# Anomaly Detection
+#
+# Uses Z-score (Statistical Process Control) to flag unusual metric values.
+# Requires at least 7 historical runs before producing results.
+# =============================================================================
+
+anomaly_detection:
+  enabled: true
+  lookback_days: 30        # Daily cadence — 30 days of rolling history
+  z_score_threshold: 3.0  # |Z| > 3 → ~0.27% false-positive rate (three-sigma)
+  # Metrics monitored automatically by forge_dq:
+  #   rows_written          — total row count per run
+  #   null_rate per column  — null fraction per column per run
+  #   total_amount_mean     — mean order value per run (drift detection)

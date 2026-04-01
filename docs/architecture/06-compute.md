@@ -779,7 +779,7 @@ Forge uses these connectors:
 
 | Connector | Catalog Name | Data Source | Notes |
 |-----------|--------------|-------------|-------|
-| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 468; reads Delta log |
+| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 479; reads Delta log |
 | `hive` | `bronze` | bronze/ Delta files | Legacy Hive-compatible for Bronze layer |
 | `tpch` | `tpch` | In-memory benchmark data | Benchmarking and query testing only |
 

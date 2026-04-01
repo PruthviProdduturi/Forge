@@ -1,6 +1,9 @@
 # Bicep
 *.azuredeploy.json
 
+# Local dev config (portal auth settings persisted across backend restarts)
+.forge-dev-config.json
+
 # Python
 __pycache__/
 *.py[cod]

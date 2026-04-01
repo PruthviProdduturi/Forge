@@ -96,7 +96,7 @@ az acr build --registry $ACR --image "hive-metastore:3.1.3" --file infra/docker/
 az acr build --registry $ACR --image "spark:4.1.1" --file infra/docker/spark/Dockerfile .
 
 # Trino
-az acr build --registry $ACR --image "trino:468" --file infra/docker/trino/Dockerfile infra/docker/trino/
+az acr build --registry $ACR --image "trino:479" --file infra/docker/trino/Dockerfile infra/docker/trino/
 
 # Trino Auth Proxy (Flask/MSAL OAuth2 proxy — no client secret, S360 compliant)
 az acr build --registry $ACR --image "trino-auth-proxy:1.2" `
@@ -113,7 +113,7 @@ az acr repository list --name $ACR -o table
 
 az acr repository show-tags --name $ACR --repository hive-metastore      -o table  # Expected: 3.1.3
 az acr repository show-tags --name $ACR --repository spark                -o table  # Expected: 4.1.1
-az acr repository show-tags --name $ACR --repository trino                -o table  # Expected: 468
+az acr repository show-tags --name $ACR --repository trino                -o table  # Expected: 479
 az acr repository show-tags --name $ACR --repository trino-auth-proxy     -o table  # Expected: 1.2
 az acr repository show-tags --name $ACR --repository airflow              -o table  # Expected: 3.1.8
 ```
@@ -477,7 +477,7 @@ helm upgrade --install trino `
   --namespace trino `
   --values infra/helm/compute/trino/values.yaml `
   --set image.repository=${ACR}.azurecr.io/trino `
-  --set image.tag=468 `
+  --set image.tag=479 `
   --set "serviceAccount.annotations.azure\.workload\.identity/client-id=$TRINO_CLIENT_ID" `
   --kube-context aks-forge-compute-prproddu-dev
 ```
@@ -546,7 +546,7 @@ Before proceeding to orchestration workloads (Airflow, DQ, Portal):
 ```
 [ ] forge-shared: Succeeded
 [ ] forge-dev: Succeeded
-[ ] All custom images in ACR: hive-metastore:3.1.3, spark:4.1.1, trino:468, trino-auth-proxy:1.2, airflow:3.1.8
+[ ] All custom images in ACR: hive-metastore:3.1.3, spark:4.1.1, trino:479, trino-auth-proxy:1.2, airflow:3.1.8
 [ ] Spark Operator images in ACR: spark-operator-controller:2.5.0, spark-operator-kubectl:2.5.0
 [ ] All 3 Helm charts in ACR: helm/spark-operator, helm/trino, helm/airflow
 [ ] Both AKS clusters: all nodes Ready

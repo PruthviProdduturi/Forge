@@ -44,6 +44,7 @@ param tags object = {}
 var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 var storageBlobDataReaderRoleId      = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
 var kvSecretsUserRoleId              = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+var kvSecretsOfficerRoleId           = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
 
 // ---------------------------------------------------------------------------
 // Existing resource references
@@ -443,14 +444,16 @@ resource kvDqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
   }
 }
 
-resource kvPortalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
-  name: guid(idPortal.id, kvSecretsUserRoleId, keyVaultId)
+// Portal needs Secrets Officer (not just User) so it can set auth-config secrets
+// from the Settings UI without requiring an operator to manually seed KV.
+resource kvPortalSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
+  name: guid(idPortal.id, kvSecretsOfficerRoleId, keyVaultId)
   scope: keyVaultRef
   properties: {
-    roleDefinitionId: kvSecretsUserRoleId
+    roleDefinitionId: kvSecretsOfficerRoleId
     principalId: idPortal.properties.principalId
     principalType: 'ServicePrincipal'
-    description: 'Portal — Key Vault Secrets User'
+    description: 'Portal — Key Vault Secrets Officer (reads + writes auth-config secrets)'
   }
 }
 

@@ -150,14 +150,15 @@ resource dqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-resource portalSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.portal, kvSecretsUserRoleId, keyVault.id)
+// Portal needs Secrets Officer so it can write auth-config secrets from the Settings UI.
+resource portalSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(workloadPrincipalIds.portal, kvSecretsOfficerRoleId, keyVault.id)
   scope: keyVault
   properties: {
-    roleDefinitionId: kvSecretsUserRoleId
+    roleDefinitionId: kvSecretsOfficerRoleId
     principalId: workloadPrincipalIds.portal
     principalType: 'ServicePrincipal'
-    description: 'Portal workload identity — Key Vault Secrets User'
+    description: 'Portal workload identity — Key Vault Secrets Officer (auth-config read/write)'
   }
 }
 

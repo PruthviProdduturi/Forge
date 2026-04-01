@@ -16,14 +16,47 @@ settings = get_settings()
 router = APIRouter(prefix="/api", tags=["health"])
 
 
-async def _check_adls() -> bool:
-    """Ping ADLS by checking if the storage account is reachable."""
+def _cluster_internal(s: str) -> bool:
+    """True when the address is a K8s cluster-internal DNS name.
+    These only resolve from inside a pod — not from a dev laptop.
+    """
+    return ".svc.cluster.local" in s
+
+
+async def _check_airflow() -> bool | None:
+    """None = in-cluster only (cannot check from outside)."""
+    if _cluster_internal(settings.airflow_url):
+        return None
+    return await airflow_client.ping()
+
+
+async def _check_trino() -> bool | None:
+    if _cluster_internal(settings.trino_host):
+        return None
+    return await asyncio.to_thread(trino_client.ping)
+
+
+async def _check_spark_connect() -> bool | None:
     import httpx
+    url = settings.spark_connect_url
+    if not url or _cluster_internal(url):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
+            resp = await client.get(url)
+            return resp.status_code < 500
+    except Exception:
+        return False
+
+
+async def _check_adls() -> bool | None:
+    import httpx
+    if not settings.adls_account:
+        return None
     try:
         url = f"https://{settings.adls_account}.dfs.core.windows.net/"
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(url)
-            # 400 is fine — it means the endpoint is reachable but auth is needed
             return resp.status_code < 500
     except Exception:
         return False
@@ -31,19 +64,27 @@ async def _check_adls() -> bool:
 
 @router.get("/health")
 async def health_check() -> dict[str, Any]:
-    """Check health of all platform services."""
-    airflow_ok, trino_ok, adls_ok = await asyncio.gather(
+    """Check health of all platform services.
+
+    Each check is one of:
+      true  — reachable and healthy
+      false — configured with a real host but unreachable
+      null  — using a cluster-internal DNS name; only resolvable from inside a pod
+    """
+    airflow_ok, trino_ok, adls_ok, spark_ok = await asyncio.gather(
         _check_airflow(),
-        asyncio.to_thread(trino_client.ping),
+        _check_trino(),
         _check_adls(),
+        _check_spark_connect(),
     )
 
-    all_ok = airflow_ok and trino_ok and adls_ok
+    # Only non-null checks count toward overall status
+    configured = [v for v in [airflow_ok, trino_ok, adls_ok] if v is not None]
+    all_ok = all(configured) if configured else True
+
     log.info(
         "health_check",
-        airflow=airflow_ok,
-        trino=trino_ok,
-        adls=adls_ok,
+        airflow=airflow_ok, trino=trino_ok, spark_connect=spark_ok, adls=adls_ok,
         status="ok" if all_ok else "degraded",
     )
 
@@ -64,10 +105,7 @@ async def health_check() -> dict[str, Any]:
         "checks": {
             "airflow": airflow_ok,
             "trino": trino_ok,
+            "spark_connect": spark_ok,
             "adls": adls_ok,
         },
     }
-
-
-async def _check_airflow() -> bool:
-    return await airflow_client.ping()

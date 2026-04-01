@@ -8,7 +8,7 @@
 #     --namespace trino --create-namespace \
 #     --values infra/helm/compute/trino/values.yaml \
 #     --set image.repository=forgeacr{alias}.azurecr.io/trino \
-#     --set image.tag=468 \
+#     --set image.tag=479 \
 #     --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID}
 #
 # WI_CLIENT_ID is the clientId of id-forge-trino-{env} managed identity.
@@ -16,7 +16,7 @@
 
 image:
   repository: forgeacr.azurecr.io/trino
-  tag: "468"
+  tag: "479"
   pullPolicy: IfNotPresent
 
 # ----------------------------------------------------------------------------

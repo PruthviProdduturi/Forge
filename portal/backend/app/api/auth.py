@@ -1,6 +1,7 @@
 """Authentication API routes."""
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, Any
 
 import structlog
@@ -34,15 +35,17 @@ class ProviderResponse(BaseModel):
 
 @router.get("/provider", response_model=ProviderResponse)
 async def get_provider() -> ProviderResponse:
-    """Return auth provider configuration for the frontend.
+    """Return auth provider config for the frontend.
 
-    Checks platform overrides first (set via /api/platform/auth-config),
-    then falls back to env-var-backed Settings.
+    Hot-reads from Key Vault on every call so the frontend picks up changes
+    immediately without a pod restart.  Falls back to env vars / local
+    overrides when KV is not configured (local dev).
     """
-    from app.api.platform import _overrides  # runtime overrides written by admin UI
-    provider = _overrides.get("auth_provider", settings.auth_provider)
-    client_id = _overrides.get("azure_client_id", settings.azure_client_id) or None
-    tenant_id = _overrides.get("azure_tenant_id", settings.azure_tenant_id) or None
+    from app.api.platform import get_auth_config_from_kv
+    cfg = await asyncio.to_thread(get_auth_config_from_kv)
+    provider  = cfg["auth_provider"]
+    client_id = cfg["azure_client_id"] or None
+    tenant_id = cfg["azure_tenant_id"] or None
     return ProviderResponse(
         provider=provider,
         azure_client_id=client_id,

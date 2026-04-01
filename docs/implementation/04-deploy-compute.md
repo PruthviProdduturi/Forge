@@ -297,7 +297,7 @@ helm upgrade --install trino \
   --create-namespace \
   --values infra/helm/compute/trino/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/trino \
-  --set image.tag=468 \
+  --set image.tag=479 \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 10m
 ```

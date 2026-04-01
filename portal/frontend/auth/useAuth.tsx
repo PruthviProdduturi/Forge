@@ -254,7 +254,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const result = await msalInstance.handleRedirectPromise();
     if (!result) return false;
 
-    const token = result.accessToken || result.idToken;
+    // Use the ID token — it is signed with the tenant's published JWKS keys
+    // and contains the user's identity + app roles.  The access token is for
+    // Microsoft Graph (User.Read scope) and is signed with MS-internal keys
+    // that cannot be verified against the standard tenant JWKS endpoint.
+    const token = result.idToken || result.accessToken;
     const claims = parseJwtPayload(result.idToken);
     const user = extractUser({
       ...claims,
@@ -292,7 +296,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         ...loginRequest,
         account: accounts[0],
       });
-      return result.accessToken || result.idToken;
+      // Prefer the ID token — signed with tenant JWKS keys and contains app roles.
+      return result.idToken || result.accessToken;
     } catch {
       return null;
     }
@@ -305,9 +310,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     const token = localStorage.getItem(LOCAL_TOKEN_KEY);
     const exp = Number(localStorage.getItem(LOCAL_TOKEN_EXP_KEY) ?? 0);
-    if (!token || Date.now() > exp) return null;
-    return token;
-  }, [state.provider, acquireAzureToken]);
+    if (token && Date.now() < exp) return token;
+    // In dev-bypass mode state.token is the literal string "dev" — not a real
+    // JWT.  Never forward it to the backend; return null so the caller knows
+    // there is no valid session and can surface a meaningful error.
+    const inMemory = state.token;
+    if (!inMemory || inMemory === "dev") return null;
+    return inMemory;
+  }, [state.provider, state.token, acquireAzureToken]);
 
   // ── Login dispatcher ──────────────────────────────────────────────────────
   // Use state.provider (resolved on mount) rather than re-fetching, matching
@@ -332,8 +342,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // ── Logout ────────────────────────────────────────────────────────────────
   const logout = useCallback(async (): Promise<void> => {
+    const currentProvider = state.provider;
     clearCache();
-    if (state.provider === "azure_ad") {
+    if (currentProvider === "azure_ad") {
       try {
         await ensureMsalInitialized();
         const msalInstance = getMsalInstance();
@@ -346,16 +357,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // fall through
       }
     }
+    // Fetch the live provider so the login page shows the correct sign-in
+    // option (e.g. if admin just switched from local → azure_ad).
+    // We do NOT re-run full initialize() here because that would pick up
+    // stale MSAL accounts and silently authenticate as Viewer.
+    const freshProvider = await resolveProvider().catch(() => currentProvider ?? "local");
     setState({
       isConnecting: false,
       isAuthenticated: false,
       noAccess: false,
-      provider: null,
+      provider: freshProvider ?? currentProvider ?? "local",
       user: null,
       role: null,
       token: null,
     });
-  }, [state.provider]);
+  }, [state.provider, resolveProvider]);
 
   // ── Refresh auth state ────────────────────────────────────────────────────
   const refreshAuth = useCallback(async (): Promise<void> => {
@@ -365,29 +381,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   // ── Dev admin bypass ─────────────────────────────────────────────────────
-  // When the backend is unreachable, auto-login as a local dev admin so the
-  // portal is immediately usable without a running backend. In production the
-  // backend is always running, so this path is never reached.
-  const loginDevAdmin = useCallback(() => {
-    setState({
-      isConnecting: false,
-      isAuthenticated: true,
-      noAccess: false,
-      provider: "local",
-      user: { name: "Dev Admin", email: "admin@forge.local", initials: "DA" },
-      role: "Admin",
-      token: "dev",
-    });
-  }, []);
+  // Called when resolveProvider() returns null (backend unreachable).
+  // First tries to log in with the default dev credentials — if the backend
+  // just became reachable this produces a real JWT and all API calls work.
+  // Only falls back to the fake "dev" token when the backend is truly down.
+  const loginDevAdmin = useCallback(async () => {
+    try {
+      await loginLocal("admin", "admin");
+    } catch {
+      // Backend still unreachable or credentials changed — use offline bypass.
+      // API calls will fail with 401 until the user signs in properly, but the
+      // UI is at least navigable.
+      setState({
+        isConnecting: false,
+        isAuthenticated: true,
+        noAccess: false,
+        provider: "local",
+        user: { name: "Dev Admin", email: "admin@forge.local", initials: "DA" },
+        role: "Admin",
+        token: "dev",
+      });
+    }
+  }, [loginLocal]);
 
   // ── Initialization ────────────────────────────────────────────────────────
   const initialize = useCallback(async (): Promise<void> => {
     try {
+      // Fast path: if there is a valid local JWT, use it immediately as a
+      // master key. This works even when the KV provider is set to "azure_ad",
+      // preventing admins from being locked out of the auth settings page while
+      // they are reconfiguring the provider.
+      const localToken = localStorage.getItem(LOCAL_TOKEN_KEY);
+      const localExp = Number(localStorage.getItem(LOCAL_TOKEN_EXP_KEY) ?? 0);
+      if (localToken && Date.now() < localExp) {
+        const claims = parseJwtPayload(localToken);
+        const role = extractRole(claims);
+        const user = extractUser(claims);
+        writeCache({ provider: "local", user, role, expiresAt: localExp });
+        setState({
+          isConnecting: false,
+          isAuthenticated: true,
+          noAccess: false,
+          provider: "local",
+          user,
+          role,
+          token: localToken,
+        });
+        // Still resolve provider in background so the login page knows which
+        // provider to show if the user logs out.
+        resolveProvider().catch(() => {});
+        return;
+      }
+
       const resolvedOrNull = await resolveProvider();
 
       // Backend unreachable — use dev admin bypass
       if (resolvedOrNull === null) {
-        loginDevAdmin();
+        await loginDevAdmin();
         return;
       }
 
@@ -403,48 +453,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const redirectHandled = await handleAzureRedirect();
         if (redirectHandled) return;
 
-        // Check for existing Azure session
-        try {
-          await ensureMsalInitialized();
-          const msalInstance = getMsalInstance();
-          const accounts = msalInstance.getAllAccounts();
-          if (accounts.length > 0) {
-            const token = await acquireAzureToken();
-            if (token) {
-              const claims = parseJwtPayload(token);
-              const acc = accounts[0];
-              const user = extractUser({
-                ...claims,
-                name: acc.name ?? claims["name"],
-                email:
-                  acc.username ??
-                  (claims["email"] as string) ??
-                  (claims["preferred_username"] as string),
-              });
-              const role = extractRole(claims);
-              const expMs = Date.now() + 3600_000;
-              writeCache({ provider: "azure_ad", user, role, expiresAt: expMs });
-              setState({
-                isConnecting: false,
-                isAuthenticated: true,
-                noAccess: false,
-                provider: "azure_ad",
-                user,
-                role,
-                token,
-              });
-              return;
+        // Only silently re-authenticate if we have an explicit prior Azure AD
+        // cache entry. Without it the user must click "Sign in with Microsoft"
+        // — prevents silently resolving to "Viewer" when MSAL has stale accounts
+        // from earlier browser sessions where app roles weren't yet assigned.
+        const azureCache = readCache();
+        if (azureCache?.provider === "azure_ad") {
+          try {
+            await ensureMsalInitialized();
+            const msalInstance = getMsalInstance();
+            const accounts = msalInstance.getAllAccounts();
+            if (accounts.length > 0) {
+              const token = await acquireAzureToken();
+              if (token) {
+                const claims = parseJwtPayload(token);
+                const acc = accounts[0];
+                const user = extractUser({
+                  ...claims,
+                  name: acc.name ?? claims["name"],
+                  email:
+                    acc.username ??
+                    (claims["email"] as string) ??
+                    (claims["preferred_username"] as string),
+                });
+                const role = extractRole(claims);
+                // Use the token's own exp claim so the cache matches the actual
+                // token lifetime (Azure AD tokens are typically 60–90 min but
+                // MSAL silently refreshes them, so we honour whatever it returns).
+                const expMs = claims["exp"]
+                  ? (claims["exp"] as number) * 1000
+                  : Date.now() + 3600_000;
+                writeCache({ provider: "azure_ad", user, role, expiresAt: expMs });
+                setState({
+                  isConnecting: false,
+                  isAuthenticated: true,
+                  noAccess: false,
+                  provider: "azure_ad",
+                  user,
+                  role,
+                  token,
+                });
+                return;
+              }
             }
+          } catch {
+            // no existing Azure session
           }
-        } catch {
-          // no existing Azure session
         }
       }
 
-      // Check cache
+      // Check cache — discard immediately if the provider has changed since it
+      // was written (e.g. switched from azure_ad → local or vice-versa).
+      // A mismatched cache is always stale; force a fresh login.
       const cache = readCache();
       if (cache) {
+        if (cache.provider !== provider) {
+          clearCache();
+          setState({
+            isConnecting: false,
+            isAuthenticated: false,
+            noAccess: false,
+            provider,
+            user: null,
+            role: null,
+            token: null,
+          });
+          return;
+        }
+
         let token: string | null = null;
+        let resolvedRole = cache.role;
+
         if (cache.provider === "local") {
           token = localStorage.getItem(LOCAL_TOKEN_KEY);
           const exp = Number(localStorage.getItem(LOCAL_TOKEN_EXP_KEY) ?? 0);
@@ -461,14 +540,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             });
             return;
           }
+          // Always re-derive role from the live JWT — never trust the cached
+          // role. A cache written during an earlier Azure AD session (before
+          // app roles were assigned) would otherwise bleed through.
+          resolvedRole = extractRole(parseJwtPayload(token));
         }
+
         setState({
           isConnecting: false,
           isAuthenticated: true,
           noAccess: false,
           provider: cache.provider,
           user: cache.user,
-          role: cache.role,
+          role: resolvedRole,
           token,
         });
         return;
@@ -505,6 +589,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initializedRef.current = true;
     initialize();
   }, [initialize]);
+
 
   const value: AuthContextValue = {
     ...state,

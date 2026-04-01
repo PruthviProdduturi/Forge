@@ -1,0 +1,6 @@
+apiVersion: v2
+name: forge-portal
+description: Forge Developer Portal — FastAPI backend + Next.js frontend
+type: application
+version: 1.0.0
+appVersion: "1.0"

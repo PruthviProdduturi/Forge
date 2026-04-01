@@ -169,9 +169,12 @@ def get_dq_dataset(safe_name: str, limit: int = 50) -> list[dict[str, Any]]:
 
 
 def ping() -> bool:
-    """Return True if Trino is reachable."""
+    """Return True if Trino HTTP endpoint is reachable (no query executed)."""
+    import httpx
     try:
-        rows = query("SELECT 1")
-        return len(rows) > 0
+        scheme = "https" if settings.forge_env != "dev" else "http"
+        url = f"{scheme}://{settings.trino_host}:{settings.trino_port}/v1/info"
+        resp = httpx.get(url, timeout=5, verify=False)
+        return resp.status_code < 500
     except Exception:
         return False

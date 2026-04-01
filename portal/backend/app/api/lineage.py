@@ -19,8 +19,8 @@ CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 
 @router.get("/search")
 async def search_lineage(
+    current_user: CurrentUser,
     q: str = Query(..., min_length=1),
-    current_user: CurrentUser = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """Search the Purview catalog."""
     try:
@@ -34,7 +34,7 @@ async def search_lineage(
 @router.get("/{qualified_name:path}")
 async def get_lineage(
     qualified_name: str,
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser,
     direction: str = Query("BOTH"),
     depth: int = Query(3, ge=1, le=10),
 ) -> dict[str, Any]:

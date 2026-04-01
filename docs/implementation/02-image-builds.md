@@ -17,7 +17,7 @@
 4. [Enabling ACR Tasks (public access)](#4-enabling-acr-tasks-public-access)
 5. [Custom Images](#5-custom-images)
    - [spark:4.1.1](#51-spark411)
-   - [trino:468](#52-trino468)
+   - [trino:479](#52-trino479)
    - [airflow:3.1.8](#53-airflow318)
    - [portal-api](#54-portal-api)
    - [portal-web](#55-portal-web)
@@ -99,7 +99,7 @@ Custom images have a Dockerfile in `infra/docker/<name>/`. Each image uses `az a
 | Image | Version | Dockerfile |
 |-------|---------|-----------|
 | `spark` | `4.1.1` | `infra/docker/spark/Dockerfile` |
-| `trino` | `468` | `infra/docker/trino/Dockerfile` |
+| `trino` | `479` | `infra/docker/trino/Dockerfile` |
 | `airflow` | `3.1.8` | `infra/docker/airflow/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |
@@ -147,12 +147,12 @@ az acr build \
 
 ---
 
-### 5.2 trino:468
+### 5.2 trino:479
 
 **Purpose:** Trino coordinator and worker pods for ad-hoc SQL queries against Delta tables in the Silver and Gold layers.
 
 **What is included:**
-- Official `trinodb/trino:468` base (includes Delta Lake connector)
+- Official `trinodb/trino:479` base (includes Delta Lake connector)
 - Custom `catalog-discovery` plugin — dynamic per-tenant catalog registration without static property files (Forge-built JAR; build context includes a `.gitkeep` placeholder if not yet built)
 - Proper file ownership on plugin directories for the `trino` user
 - Shell access removed for the `trino` user (`/sbin/nologin`) — security hardening
@@ -164,7 +164,7 @@ interactive SQL queries — meaningful lineage is captured upstream at the Spark
 ```bash
 az acr build \
   --registry $ACR \
-  --image trino:468 \
+  --image trino:479 \
   --file infra/docker/trino/Dockerfile \
   infra/docker/trino/
 ```
@@ -332,7 +332,7 @@ rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
 | Chart | Chart Version | App Version | ACR path |
 |-------|--------------|-------------|----------|
 | `spark-operator` | `2.5.0` | Spark Operator 2.5.0 | `oci://{acr}.azurecr.io/helm/spark-operator:2.5.0` |
-| `trino` | `1.36.0` | Trino 468 | `oci://{acr}.azurecr.io/helm/trino:1.36.0` |
+| `trino` | `1.36.0` | Trino 479 | `oci://{acr}.azurecr.io/helm/trino:1.36.0` |
 | `airflow` | `1.20.0` | Airflow 3.1.8 | `oci://{acr}.azurecr.io/helm/airflow:1.20.0` |
 
 ---

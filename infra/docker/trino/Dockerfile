@@ -1,6 +1,6 @@
 # =============================================================================
-# Forge — Trino 468 Image
-# Base: trinodb/trino:468
+# Forge — Trino 479 Image
+# Base: trinodb/trino:479
 #
 # Additions over the official image:
 #   - Custom catalog-discovery plugin (Forge-built JAR)
@@ -17,7 +17,7 @@
 # Build context: infra/docker/trino/
 # =============================================================================
 
-FROM trinodb/trino:468
+FROM trinodb/trino:479
 
 # ----------------------------------------------------------------------------
 # Switch to root for installation steps
@@ -72,6 +72,6 @@ USER trino
 # Metadata
 # ----------------------------------------------------------------------------
 LABEL org.opencontainers.image.title="forge-trino" \
-      org.opencontainers.image.version="468" \
-      org.opencontainers.image.description="Trino 468 for the Forge data platform" \
+      org.opencontainers.image.version="479" \
+      org.opencontainers.image.description="Trino 479 for the Forge data platform" \
       org.opencontainers.image.vendor="Forge Platform Team"

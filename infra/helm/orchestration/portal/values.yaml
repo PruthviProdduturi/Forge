@@ -1,0 +1,106 @@
+# =============================================================================
+# Forge Portal — Helm Values
+#
+# Deploys two containers into the `portal` namespace on the orchestration cluster:
+#   portal-api   FastAPI backend  (port 8080)
+#   portal-web   Next.js frontend (port 3001)
+#
+# Both are exposed behind NGINX ingress at:
+#   http://<host>/       → portal-web
+#   http://<host>/api/*  → portal-api
+#
+# The frontend uses relative /api/* paths — no CORS needed when same-origin.
+#
+# Deploy:
+#   bash infra/scripts/deploy-portal.sh --env dev --alias prproddu
+#
+# Prerequisites:
+#   - ingress-nginx controller installed (infra/scripts/deploy-portal.sh does this)
+#   - cluster-bootstrap applied (creates portal namespace + portal-api SA)
+#   - ACR images pushed: portal-api:1.0, portal-web:1.0
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# API (FastAPI backend)
+# ---------------------------------------------------------------------------
+api:
+  image:
+    repository: ""   # e.g. forgeacrprproddu.azurecr.io/portal-api
+    tag: "1.0"
+    pullPolicy: Always
+
+  replicaCount: 2
+
+  serviceAccount:
+    name: portal-api   # pre-created by cluster-bootstrap with workload identity
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  env:
+    forgeEnv: "dev"
+    adlsAccount: ""               # e.g. forgeadlsprproddudev
+    subscriptionId: ""
+    resourceGroup: ""             # e.g. rg-forge-dev
+    ownerAlias: ""                # e.g. prproddu
+    computeClusterName: ""        # e.g. aks-forge-compute-prproddu-dev
+    orchClusterName: ""           # e.g. aks-forge-orchestration-prproddu-dev
+    authProvider: "local"         # "local" | "azure_ad"
+    azureTenantId: ""
+    azureClientId: ""             # portal app registration client ID (for AAD auth)
+    airflowUrl: "http://airflow-webserver.airflow.svc.cluster.local:8080"
+    # Trino and Spark Connect run on the compute cluster (separate AKS cluster).
+    # .svc.cluster.local DNS does NOT resolve cross-cluster.
+    # Set these to the internal LoadBalancer IP/hostname of each service so the
+    # portal API pod can reach them for health checks and queries.
+    trinoHost: ""                 # internal LB IP/hostname of Trino on compute cluster
+    trinoPort: "8080"
+    sparkConnectUrl: ""           # internal LB URL of Spark Connect, e.g. http://10.x.x.x:4040
+    # Resource group names — used by cost endpoint (auto-derived from ownerAlias+forgeEnv if blank)
+    computeRg: ""                 # e.g. rg-forge-compute-prproddu-dev
+    orchRg: ""                    # e.g. rg-forge-orchestration-prproddu-dev
+    corsOrigins: ""               # comma-separated; leave blank to use defaults
+    keyVaultUrl: ""              # e.g. https://kv-forge-prproddu-dev.vault.azure.net/
+
+# ---------------------------------------------------------------------------
+# Web (Next.js frontend)
+# ---------------------------------------------------------------------------
+web:
+  image:
+    repository: ""   # e.g. forgeacrprproddu.azurecr.io/portal-web
+    tag: "1.0"
+    pullPolicy: Always
+
+  replicaCount: 2
+
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  # Public hostname — set by deploy script.
+  # e.g. forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+  host: ""
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Node placement — orchestration worker pool
+# ---------------------------------------------------------------------------
+nodeSelector:
+  agentpool: workerpool
+
+tolerations: []

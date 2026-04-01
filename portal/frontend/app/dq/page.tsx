@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 
-const ACCENT = "#d97706";
+const ACCENT = "var(--forge-primary)";
 
 interface DQSummary {
   dataset: string;
@@ -82,7 +82,7 @@ export default function DataQualityPage() {
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)" }}>
       {/* Hero */}
       <div style={{
-        background: `linear-gradient(135deg, ${ACCENT} 0%, #0f172a 100%)`,
+        background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
         padding: "48px 1.5rem 40px",
       }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>

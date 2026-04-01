@@ -4,8 +4,6 @@ import { useState, useCallback } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 
-const ACCENT = "#7c3aed";
-
 interface SearchResult {
   id: string;
   name: string;
@@ -33,19 +31,23 @@ interface LineageData {
 
 function NodeCard({ node, direction }: { node: LineageNode; direction: "upstream" | "downstream" }) {
   const isUp = direction === "upstream";
-  const color = isUp ? "#3b82f6" : "#8b5cf6";
+  const colorVar = isUp ? "var(--forge-primary)" : "var(--forge-secondary)";
+  const bgVar = isUp
+    ? "rgba(var(--forge-primary-rgb), 0.08)"
+    : "rgba(var(--forge-secondary-rgb), 0.08)";
+
   return (
     <div style={{
       background: "#fff", border: "1px solid #e2e8f0",
-      borderLeft: `3px solid ${color}`, borderRadius: 10,
+      borderLeft: `3px solid ${colorVar}`, borderRadius: 10,
       padding: "12px 16px", marginBottom: 8,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        <i className={`fas ${isUp ? "fa-arrow-up" : "fa-arrow-down"}`} style={{ color, fontSize: 11 }} />
+        <i className={`fas ${isUp ? "fa-arrow-up" : "fa-arrow-down"}`} style={{ color: colorVar, fontSize: 11 }} />
         <span style={{ fontWeight: 600, color: "#0f172a", fontSize: 14 }}>{node.name}</span>
         <span style={{
           marginLeft: "auto", padding: "1px 7px", borderRadius: 6,
-          fontSize: 10, fontWeight: 600, background: `${color}15`, color,
+          fontSize: 10, fontWeight: 600, background: bgVar, color: colorVar,
         }}>
           {node.type || "Dataset"}
         </span>
@@ -108,10 +110,10 @@ export default function LineagePage() {
   }, [getToken]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)" }}>
+    <div style={{ minHeight: "100vh" }}>
       {/* Hero */}
       <div style={{
-        background: `linear-gradient(135deg, ${ACCENT} 0%, #0f172a 100%)`,
+        background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
         padding: "48px 1.5rem 40px",
       }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -156,7 +158,7 @@ export default function LineagePage() {
               style={{
                 padding: "12px 20px", borderRadius: 10, border: "none",
                 background: searching ? "rgba(255,255,255,0.2)" : "#fff",
-                color: searching ? "rgba(255,255,255,0.6)" : ACCENT,
+                color: searching ? "rgba(255,255,255,0.6)" : "var(--forge-primary)",
                 fontSize: 14, fontWeight: 700, cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 8,
                 whiteSpace: "nowrap",
@@ -201,7 +203,7 @@ export default function LineagePage() {
                   onClick={() => handleSelect(r)}
                   style={{
                     background: "#fff", border: "1px solid #e2e8f0",
-                    borderTop: `3px solid ${ACCENT}`, borderRadius: 10,
+                    borderTop: "3px solid var(--forge-primary)", borderRadius: 10,
                     padding: "14px 18px", cursor: "pointer",
                     boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
                     transition: "box-shadow 0.15s",
@@ -212,10 +214,10 @@ export default function LineagePage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                     <div style={{
                       width: 32, height: 32, borderRadius: 8,
-                      background: `${ACCENT}15`,
+                      background: "rgba(var(--forge-primary-rgb), 0.08)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}>
-                      <i className="fas fa-table" style={{ color: ACCENT, fontSize: 13 }} />
+                      <i className="fas fa-table" style={{ color: "var(--forge-primary)", fontSize: 13 }} />
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 14 }}>{r.name}</div>
@@ -228,7 +230,7 @@ export default function LineagePage() {
                     </div>
                     <span style={{
                       padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600,
-                      background: `${ACCENT}15`, color: ACCENT,
+                      background: "rgba(var(--forge-primary-rgb), 0.08)", color: "var(--forge-primary)",
                     }}>
                       {r.type || "DataSet"}
                     </span>
@@ -259,17 +261,17 @@ export default function LineagePage() {
             {/* Selected entity header */}
             <div style={{
               background: "#fff", border: "1px solid #e2e8f0",
-              borderTop: `3px solid ${ACCENT}`, borderRadius: 12,
+              borderTop: "3px solid var(--forge-primary)", borderRadius: 12,
               padding: "20px 24px", marginBottom: 28,
               boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{
                   width: 40, height: 40, borderRadius: 10,
-                  background: `${ACCENT}15`,
+                  background: "rgba(var(--forge-primary-rgb), 0.08)",
                   display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                  <i className="fas fa-table" style={{ color: ACCENT, fontSize: 16 }} />
+                  <i className="fas fa-table" style={{ color: "var(--forge-primary)", fontSize: 16 }} />
                 </div>
                 <div>
                   <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a" }}>{selectedEntity.name}</div>
@@ -279,7 +281,8 @@ export default function LineagePage() {
                 </div>
                 <span style={{
                   marginLeft: "auto", padding: "3px 10px", borderRadius: 8,
-                  fontSize: 12, fontWeight: 600, background: `${ACCENT}15`, color: ACCENT,
+                  fontSize: 12, fontWeight: 600,
+                  background: "rgba(var(--forge-primary-rgb), 0.08)", color: "var(--forge-primary)",
                 }}>
                   {selectedEntity.type || "DataSet"}
                 </span>
@@ -309,10 +312,11 @@ export default function LineagePage() {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
                     <div style={{
-                      width: 28, height: 28, borderRadius: 7, background: "#eff6ff",
+                      width: 28, height: 28, borderRadius: 7,
+                      background: "rgba(var(--forge-primary-rgb), 0.1)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}>
-                      <i className="fas fa-arrow-up" style={{ color: "#3b82f6", fontSize: 11 }} />
+                      <i className="fas fa-arrow-up" style={{ color: "var(--forge-primary)", fontSize: 11 }} />
                     </div>
                     <span style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>Upstream</span>
                     <span style={{ fontSize: 12, color: "#94a3b8" }}>({lineageData.upstream.length})</span>
@@ -332,10 +336,11 @@ export default function LineagePage() {
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
                     <div style={{
-                      width: 28, height: 28, borderRadius: 7, background: "#f5f3ff",
+                      width: 28, height: 28, borderRadius: 7,
+                      background: "rgba(var(--forge-secondary-rgb), 0.1)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                     }}>
-                      <i className="fas fa-arrow-down" style={{ color: "#8b5cf6", fontSize: 11 }} />
+                      <i className="fas fa-arrow-down" style={{ color: "var(--forge-secondary)", fontSize: 11 }} />
                     </div>
                     <span style={{ fontWeight: 700, fontSize: 14, color: "#0f172a" }}>Downstream</span>
                     <span style={{ fontSize: 12, color: "#94a3b8" }}>({lineageData.downstream.length})</span>

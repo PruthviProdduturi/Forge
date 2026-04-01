@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# RBAC for portal-api to read pod/deployment status across orchestration
+# namespaces via the in-cluster Kubernetes API.
+#
+# Binds to the portal-api ServiceAccount (pre-created by cluster-bootstrap).
+# ---------------------------------------------------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forge-portal-reader
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: forge-portal-reader
+subjects:
+  - kind: ServiceAccount
+    name: portal-api
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: forge-portal-reader
+  apiGroup: rbac.authorization.k8s.io

@@ -40,12 +40,12 @@ body {
     "Helvetica Neue", sans-serif;
   background: linear-gradient(
       135deg,
-      #eef2f7 0%,
-      #e8f0fb 35%,
-      #f0f6ff 65%,
-      #eff0f7 100%
+      rgba(var(--forge-primary-rgb), 0.04) 0%,
+      rgba(var(--forge-primary-rgb), 0.07) 35%,
+      rgba(var(--forge-primary-rgb), 0.03) 65%,
+      rgba(var(--forge-primary-rgb), 0.05) 100%
     )
-    fixed;
+    #f5f8fc fixed;
   color: #334155;
   min-height: 100vh;
   line-height: 1.5;
@@ -120,7 +120,7 @@ main {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.2rem;
   flex-shrink: 0;
 }
 
@@ -177,6 +177,22 @@ main {
 .header-btn .far {
   font-size: 13px;
   opacity: 0.85;
+}
+
+/* Env badge button — natural width, not a fixed square */
+.header-env-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 4px;
+  height: 34px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+.header-env-btn:hover {
+  background: rgba(30, 58, 95, 0.06);
 }
 
 /* Icon-only header buttons */
@@ -412,7 +428,83 @@ main {
   }
 }
 
-/* ─── Loading spinner ──────────────────────────────────────────────────────── */
+/* ─── Forge Loader ─────────────────────────────────────────────────────────── */
+.forge-loader-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: linear-gradient(
+    135deg,
+    rgba(var(--forge-primary-rgb), 0.04) 0%,
+    rgba(var(--forge-primary-rgb), 0.07) 50%,
+    rgba(var(--forge-primary-rgb), 0.03) 100%
+  ) #f5f8fc;
+}
+
+.forge-loader-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.forge-loader-mark {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The ring + ticks revolve at a measured pace — not frantic */
+.forge-loader-ring {
+  animation: forge-loader-revolve 1.4s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes forge-loader-revolve {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.forge-loader-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #64748b;
+  letter-spacing: 0.01em;
+}
+
+/* Indeterminate shimmer bar */
+.forge-loader-bar {
+  width: 160px;
+  height: 3px;
+  border-radius: 99px;
+  background: rgba(var(--forge-primary-rgb), 0.12);
+  overflow: hidden;
+  position: relative;
+}
+
+.forge-loader-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 99px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--forge-primary) 40%,
+    rgba(var(--forge-primary-rgb), 0.6) 60%,
+    transparent 100%
+  );
+  animation: forge-loader-sweep 1.6s ease-in-out infinite;
+}
+
+@keyframes forge-loader-sweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(200%); }
+}
+
+/* ─── Legacy loading spinner (kept for inline uses) ────────────────────────── */
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -432,9 +524,7 @@ main {
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 .loading-text {
@@ -452,11 +542,11 @@ main {
   padding: 2rem 1rem;
   background: linear-gradient(
     135deg,
-    #eef2f7 0%,
-    #e8f0fb 35%,
-    #f0f6ff 65%,
-    #eff0f7 100%
-  );
+    rgba(var(--forge-primary-rgb), 0.08) 0%,
+    rgba(var(--forge-primary-rgb), 0.12) 40%,
+    rgba(var(--forge-primary-rgb), 0.05) 70%,
+    rgba(var(--forge-primary-rgb), 0.09) 100%
+  ) #f5f8fc;
 }
 
 .login-card {
@@ -479,6 +569,11 @@ main {
   gap: 0.5rem;
   margin-bottom: 2rem;
   text-align: center;
+}
+
+.login-logo .forge-logo-btn:hover,
+.header-left .forge-logo-btn:hover {
+  background: none;
 }
 
 

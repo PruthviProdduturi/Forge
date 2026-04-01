@@ -1,0 +1,50 @@
+# =============================================================================
+# ingress-nginx — Helm Values for Forge Orchestration Cluster
+#
+# Gets a public Azure LoadBalancer IP with a DNS label so the portal is
+# reachable at: http://forge-portal-{alias}-{env}.northcentralus.cloudapp.azure.com
+#
+# The DNS label is set by deploy-portal.sh via --set at deploy time.
+# This file sets everything else; only dnsLabel is variable.
+#
+# Chart: oci://registry-1.docker.io/bitnamicharts/nginx-ingress-controller
+#   or: https://kubernetes.github.io/ingress-nginx (ingress-nginx/ingress-nginx)
+# =============================================================================
+
+controller:
+  replicaCount: 2
+
+  # Azure LoadBalancer — public IP with DNS label
+  service:
+    type: LoadBalancer
+    annotations:
+      # Set at deploy time: forge-portal-{alias}-{env}
+      # Results in: forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+      service.beta.kubernetes.io/azure-dns-label-name: ""   # overridden by --set
+
+  # Schedule on the orchestration worker pool
+  nodeSelector:
+    kubernetes.io/os: linux
+    agentpool: workerpool
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # Preserve client source IPs
+  config:
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"
+    use-proxy-protocol: "false"
+
+  # Admission webhook needs to be reachable — keep enabled
+  admissionWebhooks:
+    enabled: true
+
+defaultBackend:
+  enabled: true
+  replicaCount: 1

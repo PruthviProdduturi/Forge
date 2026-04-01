@@ -8,7 +8,7 @@ import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cost, datasets, dq, health, lineage, pipelines, platform
+from app.api import auth, cost, datasets, dq, health, lineage, pipelines, platform, status
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -78,6 +78,7 @@ app.include_router(dq.router)
 app.include_router(lineage.router)
 app.include_router(cost.router)
 app.include_router(platform.router)
+app.include_router(status.router)
 
 
 @app.get("/")

@@ -77,27 +77,50 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
           </button>
         </div>
 
-        <div className="modal-section-label" style={{ marginTop: 0 }}>Theme color</div>
-        <div className="color-picker-row">
-          <input
-            type="color"
-            className="color-input"
-            value={localColor}
-            onChange={(e) => applyColor(e.target.value)}
-            aria-label="Color picker"
-          />
-          <input
-            type="text"
-            className="color-hex-input"
-            value={hexInput}
-            onChange={handleHexChange}
-            maxLength={7}
-            placeholder="#1e3a5f"
-            spellCheck={false}
-            aria-label="Hex color value"
-          />
+        <div className="modal-section-label" style={{ marginTop: 0 }}>Custom colour</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <label
+            htmlFor="forge-color-picker"
+            style={{
+              width: 44, height: 44, borderRadius: 10, border: "2px solid #e2e8f0",
+              background: localColor, cursor: "pointer", flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              position: "relative", overflow: "hidden",
+              transition: "box-shadow 0.15s",
+              boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+            }}
+            title="Click to open colour picker"
+          >
+            <input
+              id="forge-color-picker"
+              type="color"
+              value={localColor}
+              onChange={(e) => applyColor(e.target.value)}
+              aria-label="Color picker"
+              style={{
+                position: "absolute", inset: 0, width: "100%", height: "100%",
+                opacity: 0, cursor: "pointer", padding: 0, border: "none",
+              }}
+            />
+          </label>
+          <div style={{ flex: 1 }}>
+            <input
+              type="text"
+              className="color-hex-input"
+              value={hexInput}
+              onChange={handleHexChange}
+              maxLength={7}
+              placeholder="#1e3a5f"
+              spellCheck={false}
+              aria-label="Hex color value"
+            />
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
+              Click the swatch to pick any colour
+            </div>
+          </div>
         </div>
 
+        <div className="modal-section-label" style={{ marginTop: "1rem" }}>Presets</div>
         <div className="color-presets" role="list" aria-label="Preset colors">
           {PRESET_COLORS.map((c) => (
             <button

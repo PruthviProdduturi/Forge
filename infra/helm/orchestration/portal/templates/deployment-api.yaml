@@ -1,0 +1,101 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: portal-api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app: portal-api
+  template:
+    metadata:
+      labels:
+        app: portal-api
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.api.serviceAccount.name }}
+      containers:
+        - name: portal-api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: FORGE_ENV
+              value: {{ .Values.api.env.forgeEnv | quote }}
+            - name: ADLS_ACCOUNT
+              value: {{ .Values.api.env.adlsAccount | quote }}
+            - name: SUBSCRIPTION_ID
+              value: {{ .Values.api.env.subscriptionId | quote }}
+            - name: RESOURCE_GROUP
+              value: {{ .Values.api.env.resourceGroup | quote }}
+            - name: OWNER_ALIAS
+              value: {{ .Values.api.env.ownerAlias | quote }}
+            - name: COMPUTE_CLUSTER_NAME
+              value: {{ .Values.api.env.computeClusterName | quote }}
+            - name: ORCH_CLUSTER_NAME
+              value: {{ .Values.api.env.orchClusterName | quote }}
+            - name: AUTH_PROVIDER
+              value: {{ .Values.api.env.authProvider | quote }}
+            - name: AZURE_TENANT_ID
+              value: {{ .Values.api.env.azureTenantId | quote }}
+            - name: AZURE_CLIENT_ID
+              value: {{ .Values.api.env.azureClientId | quote }}
+            - name: AIRFLOW_URL
+              value: {{ .Values.api.env.airflowUrl | quote }}
+            {{- if .Values.api.env.trinoHost }}
+            - name: TRINO_HOST
+              value: {{ .Values.api.env.trinoHost | quote }}
+            {{- end }}
+            {{- if .Values.api.env.trinoPort }}
+            - name: TRINO_PORT
+              value: {{ .Values.api.env.trinoPort | quote }}
+            {{- end }}
+            {{- if .Values.api.env.sparkConnectUrl }}
+            - name: SPARK_CONNECT_URL
+              value: {{ .Values.api.env.sparkConnectUrl | quote }}
+            {{- end }}
+            {{- if .Values.api.env.computeRg }}
+            - name: COMPUTE_RG
+              value: {{ .Values.api.env.computeRg | quote }}
+            {{- end }}
+            {{- if .Values.api.env.orchRg }}
+            - name: ORCH_RG
+              value: {{ .Values.api.env.orchRg | quote }}
+            {{- end }}
+            {{- if .Values.api.env.corsOrigins }}
+            - name: CORS_ORIGINS
+              value: {{ .Values.api.env.corsOrigins | quote }}
+            {{- end }}
+            {{- if .Values.api.env.keyVaultUrl }}
+            - name: KEY_VAULT_URL
+              value: {{ .Values.api.env.keyVaultUrl | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- end }}

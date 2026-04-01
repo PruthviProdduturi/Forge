@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { ForgeLogo } from "../../components/ForgeLogo";
+import { ForgeLoader } from "../../components/ForgeLoader";
 
 export function LoginPage() {
   // Use the provider already resolved by AuthProvider on mount — no second fetch needed.
@@ -13,6 +14,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showLocalFallback, setShowLocalFallback] = useState(false);
 
   const handleLocalLogin = useCallback(
     async (e: React.FormEvent) => {
@@ -49,16 +51,7 @@ export function LoginPage() {
   }, [login]);
 
   if (isConnecting || providerLoading) {
-    return (
-      <div className="login-container">
-        <div
-          style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}
-        >
-          <div className="loading-spinner" />
-          <span className="loading-text">Connecting…</span>
-        </div>
-      </div>
-    );
+    return <ForgeLoader text="Connecting…" />;
   }
 
   return (
@@ -81,7 +74,7 @@ export function LoginPage() {
         )}
 
         {/* Azure AD login */}
-        {provider === "azure_ad" && (
+        {provider === "azure_ad" && !showLocalFallback && (
           <div className="login-form">
             <p
               style={{
@@ -134,11 +127,22 @@ export function LoginPage() {
                 </>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => setShowLocalFallback(true)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 11.5, color: "#94a3b8", marginTop: 8,
+                width: "100%", textAlign: "center", padding: "4px 0",
+              }}
+            >
+              Sign in with admin credentials
+            </button>
           </div>
         )}
 
         {/* Local / Google login */}
-        {(provider === "local" || provider === "google" || provider === null) && (
+        {(provider === "local" || provider === "google" || provider === null || showLocalFallback) && (
           <form className="login-form" onSubmit={handleLocalLogin} noValidate>
             <div className="login-field">
               <label htmlFor="forge-username">Username</label>
