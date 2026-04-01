@@ -62,12 +62,14 @@ done
 # Derived names
 # ---------------------------------------------------------------------------
 ACR="forgeacr${ALIAS}"
-RESOURCE_GROUP="rg-forge-${ENV}"
+RESOURCE_GROUP="rg-forge-${ALIAS}-${ENV}"
 ORCH_CLUSTER="aks-forge-orchestration-${ALIAS}-${ENV}"
 COMPUTE_CLUSTER="aks-forge-compute-${ALIAS}-${ENV}"
 DNS_LABEL="forge-portal-${ALIAS}-${ENV}"
 LOCATION=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
   --query location -o tsv 2>/dev/null || echo "northcentralus")
+NODE_RG=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
+  --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 PUBLIC_HOST="${DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 KUBE_CONTEXT="aks-forge-orchestration-${ALIAS}-${ENV}"
 
@@ -200,6 +202,24 @@ done
 
 if [[ -z "$EXTERNAL_IP" ]]; then
   echo "  WARN: external IP not yet assigned — portal will be accessible once Azure allocates the IP"
+fi
+
+# Set DNS label directly on the Azure public IP resource.
+# The Helm annotation requests this label but Azure sometimes doesn't apply it
+# automatically — setting it explicitly ensures the FQDN resolves.
+if [[ -n "$EXTERNAL_IP" && -n "$NODE_RG" ]]; then
+  PIP_NAME=$(az network public-ip list \
+    --resource-group "$NODE_RG" \
+    --query "[?ipAddress=='${EXTERNAL_IP}'].name" -o tsv 2>/dev/null || echo "")
+  if [[ -n "$PIP_NAME" ]]; then
+    echo "  Setting DNS label on public IP: $PIP_NAME"
+    az network public-ip update \
+      --resource-group "$NODE_RG" \
+      --name "$PIP_NAME" \
+      --dns-name "$DNS_LABEL" \
+      --output none
+    echo "  ✓ FQDN: ${PUBLIC_HOST}"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
