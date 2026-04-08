@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     orch_cluster_name: str = ""      # e.g. aks-forge-orchestration-prproddu-dev
 
     # Auth
-    auth_provider: str = "local"  # "local" | "azure_ad"
+    auth_provider: str = "azure_ad"  # "local" | "azure_ad"
     local_admin_user: str = "admin"
     local_admin_password: str = "admin"  # dev default; override via LOCAL_ADMIN_PASSWORD env var or KV secret in prod
     jwt_secret: str = "forge-dev-secret-change-in-prod"
@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 480
 
     # Airflow
-    airflow_url: str = "http://airflow-webserver.airflow.svc.cluster.local:8080"
+    airflow_url: str = "http://airflow-api-server.airflow.svc.cluster.local:8080"
     airflow_username: str = "admin"
     airflow_password: str = "admin"
 

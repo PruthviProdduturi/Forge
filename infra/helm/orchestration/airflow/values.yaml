@@ -5,10 +5,22 @@
 # forge-up.sh creates all prerequisite K8s secrets before this chart installs.
 #
 # Prerequisite secrets (created by forge-up.sh):
-#   airflow-db-credentials      → key: connection  (full SQLAlchemy URL)
+#   airflow-db-credentials      → key: connection  (full SQLAlchemy URL with AAD token)
 #   airflow-webserver-secret    → key: webserver-secret-key
-#   airflow-git-credentials     → keys: GIT_SYNC_USERNAME, GIT_SYNC_PASSWORD
+#   airflow-git-credentials     → keys: GIT_SYNC_USERNAME, GITSYNC_USERNAME,
+#                                        GIT_SYNC_PASSWORD, GITSYNC_PASSWORD
 #   airflow-compute-kubeconfig  → key: config  (compute cluster kubeconfig)
+#   airflow-oauth-credentials   → key: client-id  (app reg client ID; no secret —
+#                                        workload identity federated token used instead)
+#
+# AAD token strategy:
+#   forge-up.sh pre-injects an AAD token into airflow-db-credentials before helm
+#   runs (so migrateDatabaseJob can connect). The secret is mounted as a volume
+#   at /opt/airflow/db-secret/. AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD reads
+#   from this file — Kubernetes auto-refreshes mounted secrets within ~1 min of
+#   a secret update, so the airflow-token-refresh CronJob (also deployed by
+#   forge-up.sh) keeps connections alive across the 1h token expiry window.
+#   pool_recycle (3000s) ensures new connections are opened before 1h is up.
 #
 # Image pulled from ACR (no public registry access):
 #   oci://forgeacr{alias}.azurecr.io/helm/airflow:1.20.0
@@ -33,15 +45,41 @@ images:
     pullPolicy: IfNotPresent
 
 # ---------------------------------------------------------------------------
-# Metadata DB — external PostgreSQL Flexible Server (no embedded Postgres)
-# Password injected from K8s secret created by forge-up.sh
+# Metadata DB — external PostgreSQL Flexible Server (AAD-only, no password)
+#
+# metadataSecretName is set to ~ (null) so the chart does NOT inject
+# AIRFLOW__DATABASE__SQL_ALCHEMY_CONN directly from the secret. Instead, we use
+# AIRFLOW__DATABASE__SQL_ALCHEMY_CONN_CMD (below) to read from the mounted
+# secret file. This allows the CronJob to refresh the token in the secret and
+# have all Airflow processes pick up the new value automatically (Kubernetes
+# refreshes mounted secret files within ~1 min; pool_recycle handles the rest).
 # ---------------------------------------------------------------------------
 postgresql:
   enabled: false
 
 data:
+  # Chart injects AIRFLOW__DATABASE__SQL_ALCHEMY_CONN via secretKeyRef on all
+  # containers (including init containers like wait-for-airflow-migrations).
+  # The token-init Job (forge-up.sh [7.0]) pre-populates this secret with a
+  # fresh AAD token before helm runs. The token-refresh CronJob ([7.4]) keeps
+  # it current — pods pick up the new token on their next restart.
   metadataSecretName: airflow-db-credentials
-  resultBackendSecretName: airflow-db-credentials
+
+# Connection pool: recycle before the AAD token expires (1h = 3600s, recycle at 50min)
+config:
+  database:
+    sql_alchemy_pool_recycle: "3000"
+    sql_alchemy_pool_pre_ping: "True"
+  core:
+    # Dev guardrails — keep dev cheap and predictable.
+    # 10 DAGs max; no historical backfill; DAGs auto-expire after 5 days.
+    parallelism: "20"                   # max concurrent tasks across all DAGs (10 jobs × 2)
+    max_active_tasks_per_dag: "5"       # per-DAG task concurrency cap
+    max_active_runs_per_dag: "2"        # per-DAG concurrent run cap
+    catchup_by_default: "False"         # never backfill missed runs
+    dag_policy_package_name: "forge_dev_policy"  # enforces 5-day end_date on every DAG
+  scheduler:
+    parsing_processes: "2"              # 2 parsers sufficient for ≤10 DAGs
 
 # ---------------------------------------------------------------------------
 # DAG delivery — git-sync from Azure DevOps repo
@@ -50,8 +88,8 @@ data:
 # ---------------------------------------------------------------------------
 dags:
   gitSync:
-    enabled: true
-    repo: "https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"  # configurable via --git-repo
+    enabled: false
+    repo: "https://dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"  # configurable via --git-repo
     branch: "user/PrProddu/StarRocks"  # configurable via --git-branch
     subPath: "Forge/orchestration/airflow/dags"
     depth: 1
@@ -61,30 +99,27 @@ dags:
 # ---------------------------------------------------------------------------
 # Webserver
 # ---------------------------------------------------------------------------
+# Webserver secret key — moved to root level in chart 1.14+ (removed from webserver block)
+webserverSecretKeySecretName: airflow-webserver-secret
+webserverSecretKeySecretKey: webserver-secret-key
+
 webserver:
   replicas: 1
   service:
     type: ClusterIP
-    port: 8080
-  # Secret key for Flask session signing — from K8s secret
-  secretKey: ""
-  secretKeySecretName: airflow-webserver-secret
-  secretKeySecretKey: webserver-secret-key
-  # Default admin user for dev (change password post-deploy via UI)
+  waitForMigrations:
+    enabled: false
+  # No local admin user — AAD OAuth only (AUTH_TYPE = AUTH_OAUTH in webserverConfig)
   defaultUser:
-    enabled: true
-    role: Admin
-    username: admin
-    email: admin@forge.local
-    firstName: Admin
-    lastName: User
-    password: admin
+    enabled: false
 
 # ---------------------------------------------------------------------------
 # Scheduler — single replica for dev (HA: 2 replicas in prod)
 # ---------------------------------------------------------------------------
 scheduler:
   replicas: 1
+  waitForMigrations:
+    enabled: false
   resources:
     requests:
       cpu: "500m"
@@ -99,6 +134,8 @@ scheduler:
 triggerer:
   enabled: true
   replicas: 1
+  waitForMigrations:
+    enabled: false
 
 # ---------------------------------------------------------------------------
 # DAG Processor — Airflow 3.x requires a separate dag-processor component
@@ -106,6 +143,12 @@ triggerer:
 dagProcessor:
   enabled: true
   replicas: 1
+  waitForMigrations:
+    enabled: false
+
+apiServer:
+  waitForMigrations:
+    enabled: false
 
 # ---------------------------------------------------------------------------
 # Workers — not used with LocalExecutor
@@ -120,6 +163,96 @@ flower:
   enabled: false
 
 # ---------------------------------------------------------------------------
+# Migrate DB Job — needs the DB secret mounted so SQL_ALCHEMY_CONN_CMD works.
+# forge-up.sh pre-injects the AAD token into airflow-db-credentials before
+# this Job runs, so the migration can connect to Postgres on first deploy.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# AAD OAuth webserver config
+# Uses Microsoft as the OAuth provider. client_id and client_secret are
+# injected via env vars from the airflow-oauth-credentials K8s secret.
+# Prerequisite: create client secret on app reg d0ce7c35-... and store in
+# Key Vault as forge-airflow-oauth-secret.
+# ---------------------------------------------------------------------------
+webserverConfig: |
+  import os
+  import logging
+  from flask_appbuilder.security.manager import AUTH_OAUTH
+
+  log = logging.getLogger(__name__)
+
+  AUTH_TYPE = AUTH_OAUTH
+  AUTH_USER_REGISTRATION = True
+  AUTH_USER_REGISTRATION_ROLE = "Viewer"
+  AUTH_ROLES_SYNC_AT_LOGIN = True
+
+  _tenant = os.environ.get("AZURE_TENANT_ID", "common")
+  _client_id = os.environ.get("AIRFLOW__WEBSERVER__OAUTH_CLIENT_ID", "")
+
+  OAUTH_PROVIDERS = [
+    {
+      "name": "microsoft",
+      "icon": "fa-windows",
+      "token_key": "access_token",
+      "remote_app": {
+        "client_id": _client_id,
+        "api_base_url": f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/",
+        "access_token_url": f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/token",
+        "authorize_url": f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/authorize",
+        "jwks_uri": f"https://login.microsoftonline.com/{_tenant}/discovery/v2.0/keys",
+        "request_token_url": None,
+        "client_kwargs": {"scope": "openid profile email"},
+      },
+    }
+  ]
+
+  # ---------------------------------------------------------------------------
+  # Workload-identity OAuth manager — same pattern as Trino UI AAD (S360-compliant).
+  # Reads AZURE_FEDERATED_TOKEN_FILE (injected by AKS workload identity) and uses
+  # it as client_assertion when exchanging the auth code for tokens.
+  # No client_secret. No certificate. forge-up.sh registers the matching federated
+  # credential on the app registration automatically.
+  # ---------------------------------------------------------------------------
+  try:
+    from airflow.providers.fab.auth_manager.security_manager.override import (
+        FabAirflowSecurityManagerOverride as _Base,
+    )
+  except ImportError:
+    from airflow.auth.managers.fab.security_manager.override import (
+        FabAirflowSecurityManagerOverride as _Base,
+    )
+
+  class WorkloadIdentityOAuthManager(_Base):
+    def init_oauth(self):
+      super().init_oauth()
+      remote = self.oauth_remotes.get("microsoft")
+      if remote is None:
+        return
+      _orig = remote.authorize_access_token
+      def _with_fed_assertion(**kwargs):
+        fed_path = os.environ.get("AZURE_FEDERATED_TOKEN_FILE", "")
+        if fed_path and os.path.exists(fed_path):
+          try:
+            with open(fed_path) as _f:
+              kwargs["client_assertion"] = _f.read().strip()
+            kwargs["client_assertion_type"] = (
+              "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+            )
+          except Exception:
+            log.exception("Could not read federated token file")
+        else:
+          log.warning("AZURE_FEDERATED_TOKEN_FILE not available — token exchange may fail")
+        return _orig(**kwargs)
+      remote.authorize_access_token = _with_fed_assertion
+
+  CUSTOM_SECURITY_MANAGER = WorkloadIdentityOAuthManager
+
+migrateDatabaseJob:
+  # Disabled — migrations are run as a controlled Job in forge-up.sh [7.0]
+  # before helm installs pods, so wait-for-airflow-migrations passes immediately.
+  enabled: false
+
+# ---------------------------------------------------------------------------
 # Compute cluster Airflow connection
 #
 # SparkKubernetesOperator uses kubernetes_conn_id="kubernetes_compute_cluster"
@@ -131,15 +264,46 @@ env:
     value: "kubernetes://?in_cluster=False&kube_config_path=%2Fopt%2Fairflow%2Fkubeconfig%2Fconfig"
   - name: FORGE_ENV
     value: "dev"   # overridden at deploy time
+  - name: FORGE_DEV_MAX_DAGS_PER_USER
+    value: "5"     # per-user DAG limit in dev; enforced by forge_dev_policy plugin
+  - name: FORGE_DEV_MAX_SCHEDULE_DAYS
+    value: "5"     # DAGs auto-expire after this many days from start_date
+  # SQL_ALCHEMY_CONN_CMD: Airflow evaluates this command to get the connection
+  # string. Reading from the mounted secret file means Kubernetes' automatic
+  # secret sync (within ~1 min of a secret update) keeps the token fresh.
+  # pool_recycle (3000s) ensures connections are dropped and re-opened before
+  # the 1h AAD token expiry — new connections call this command for a fresh URL.
+  # SQL_ALCHEMY_CONN is injected by the chart via secretKeyRef (metadataSecretName above)
+  # Use pod IP as hostname so the log server URL (http://<podIP>:8793/...) is
+  # correctly constructed. Without this, Airflow uses socket.getfqdn() which
+  # returns empty in K8s, producing broken log URLs like http://:8793/...
+  - name: AIRFLOW__CORE__HOSTNAME_CALLABLE
+    value: "airflow.utils.net.get_host_ip_address"
+extraEnv: |
+  - name: AIRFLOW__WEBSERVER__OAUTH_CLIENT_ID
+    valueFrom:
+      secretKeyRef:
+        name: airflow-oauth-credentials
+        key: client-id
+        optional: true
 
 extraVolumes:
   - name: compute-kubeconfig
     secret:
       secretName: airflow-compute-kubeconfig
+  # Dev DAG policy — enforces 5-day end_date, no catchup, max 2 active runs.
+  # Applied at parse time to every DAG. ConfigMap created by forge-up.sh.
+  - name: forge-dev-policy
+    configMap:
+      name: forge-dev-dag-policy
 
 extraVolumeMounts:
   - name: compute-kubeconfig
     mountPath: /opt/airflow/kubeconfig
+    readOnly: true
+  - name: forge-dev-policy
+    mountPath: /opt/airflow/plugins/forge_dev_policy.py
+    subPath: forge_dev_policy.py
     readOnly: true
 
 # ---------------------------------------------------------------------------

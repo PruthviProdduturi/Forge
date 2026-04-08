@@ -62,7 +62,7 @@ class PlatformConfig:
         Return a fully qualified ABFS URI for a path inside a container.
 
         Args:
-            container: One of bronze | silver | gold | sandbox | checkpoints | code
+            container: One of bronze | silver | gold | sandbox | code
             path:      Optional path within the container (leading slash stripped).
 
         Returns:

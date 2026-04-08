@@ -459,14 +459,21 @@ The frontend uses relative `/api/*` paths — because both pods are served behin
 | `KEY_VAULT_URL` | Key Vault URL for auth config secrets |
 | `AZURE_CLIENT_ID` | Managed identity client ID for workload identity |
 
-### Deployment Scripts
+### Deployment
 
-The portal is deployed using one of two scripts depending on the operator's shell:
+The portal is deployed as part of the full platform bring-up:
 
-- **`infra/scripts/deploy-portal.sh`** — Bash (Linux / WSL / Cloud Shell)
-- **`infra/scripts/deploy-portal.ps1`** — PowerShell (Windows)
+```bash
+bash infra/scripts/forge-up.sh --env dev --alias <alias> ...
+```
 
-Both scripts: install the NGINX ingress controller (if not present), build and push container images to ACR, and run `helm upgrade --install` for the `infra/helm/orchestration/portal` chart.
+Portal is Phase [7/8] of `forge-up.sh`. To redeploy portal only (skip infra provisioning and pipeline sync):
+
+```bash
+bash infra/scripts/forge-up.sh --env dev --alias <alias> --skip-infra --skip-sync
+```
+
+This installs the NGINX ingress controller (if not present), builds and pushes container images to ACR, and runs `helm upgrade --install` for the `infra/helm/orchestration/portal` chart.
 
 ### Helm Chart
 

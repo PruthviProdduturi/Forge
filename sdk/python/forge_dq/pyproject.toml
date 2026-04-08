@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "forge-dq"
+version         = "1.0.0"
+description     = "Forge Data Quality framework — profiling, rule validation, and anomaly detection for Spark pipelines"
+readme          = "README.md"
+license         = { text = "MIT" }
+requires-python = ">=3.11"
+
+dependencies = [
+    "pyspark>=4.1.0",
+    "delta-spark>=4.0.0",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "pyarrow>=16.0",
+    "openlineage-python>=1.18.0",
+]
+
+[project.optional-dependencies]
+airflow = [
+    "apache-airflow>=2.9",
+    "apache-airflow-providers-cncf-kubernetes>=8.4",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Repository = "https://dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["forge_dq*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true

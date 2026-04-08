@@ -27,10 +27,11 @@ Deep-dive into how each part of the platform is designed. Read in order for the 
 
 ## Implementation
 
-Step-by-step guides for building and deploying the platform. Follow in order.
+Step-by-step guides for **building and deploying** the platform from zero. Follow in order for initial setup; use `forge-up.sh` for day-to-day deploys.
 
 | Step | Document | What it covers |
 |------|----------|---------------|
+| 0 | [`00-forge-up.md`](./implementation/00-forge-up.md) | **Start here for deploys.** forge-up.sh flags, partial re-deploys, smoke test, teardown |
 | 1 | [`01-acr-setup.md`](./implementation/01-acr-setup.md) | Create ACR, private endpoint, Defender, assign pull/push roles |
 | 2 | [`02-image-builds.md`](./implementation/02-image-builds.md) | Build all custom images (Spark, Trino, Airflow, Portal), import third-party images, push to ACR |
 | 3 | [`03-cluster-setup.md`](./implementation/03-cluster-setup.md) | Bicep provisioning + AKS bootstrap (both clusters), workload identity, CSI secrets, namespaces |
@@ -45,6 +46,18 @@ Step-by-step guides for building and deploying the platform. Follow in order.
 | Document | Audience |
 |----------|---------|
 | [`developer-experience.md`](./guides/developer-experience.md) | Data engineers: VS Code + Spark Connect setup, DAG authoring, DQ rules, pipeline workflow, CLI reference |
+
+---
+
+## Runbooks
+
+Incident response guides for on-call engineers.
+
+| Runbook | Covers |
+|---------|--------|
+| [`01-airflow-down.md`](./runbooks/01-airflow-down.md) | Scheduler crash, DB connectivity, git-sync failures, SparkKubernetesOperator failures |
+| [`02-dq-failure.md`](./runbooks/02-dq-failure.md) | DQ critical failures blocking pipeline, threshold calibration, emergency bypass procedure |
+| [`03-adls-connectivity.md`](./runbooks/03-adls-connectivity.md) | 403 errors, missing role assignments, workload identity issues, storage firewall |
 
 ---
 
@@ -65,4 +78,4 @@ Step-by-step guides for building and deploying the platform. Follow in order.
 | [`reference/forge-logo.png`](./reference/forge-logo.png) | Forge logo (PNG) |
 | [`reference/forge-logo.svg`](./reference/forge-logo.svg) | Forge logo (SVG — for docs, presentations) |
 
-> Regenerate DOCX files after doc changes: `python infra/scripts/generate_docs.py`
+> Regenerate DOCX files after doc changes: `python infra/scripts/generate-docs.py`

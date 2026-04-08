@@ -82,10 +82,8 @@ resource cCode 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-0
   name: 'code'
 }
 
-resource cCheckpoints 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
-  parent: blobService
-  name: 'checkpoints'
-}
+// No separate checkpoints container — checkpoints live at code/checkpoints/<pipeline_id>/
+// Spark already has Contributor on code, which covers the checkpoints prefix.
 
 resource keyVaultRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (keyVaultId != '') {
   name: last(split(keyVaultId, '/'))
@@ -125,8 +123,8 @@ resource fcSparkBatchJobs 'Microsoft.ManagedIdentity/userAssignedIdentities/fede
 
 // Spark runs on the compute cluster only; no orchestration federated credential needed
 
-// RBAC — spark: Contributor on bronze, silver, gold, code, checkpoints
-// Spark produces all medallion layers (bronze→silver→gold transformations).
+// RBAC — spark: Contributor on bronze, silver, gold, code
+// code container covers checkpoints (code/checkpoints/) and forge_lib.zip.
 // Scoped directly to each container — no ABAC conditions required.
 resource sparkBronzeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idSpark.id, storageBlobDataContributorRoleId, cBronze.id)
@@ -172,16 +170,7 @@ resource sparkGoldContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' =
   }
 }
 
-resource sparkCheckpointsContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idSpark.id, storageBlobDataContributorRoleId, cCheckpoints.id)
-  scope: cCheckpoints
-  properties: {
-    roleDefinitionId: storageBlobDataContributorRoleId
-    principalId: idSpark.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'Spark — Storage Blob Data Contributor on checkpoints'
-  }
-}
+// sparkCodeContrib above already covers code/checkpoints/ — no separate assignment needed.
 
 // ---------------------------------------------------------------------------
 // Managed Identity — trino
@@ -475,6 +464,7 @@ output identities object = {
     id: idAirflow.id
     clientId: idAirflow.properties.clientId
     principalId: idAirflow.properties.principalId
+    name: idAirflow.name
   }
   dq: {
     id: idDq.id

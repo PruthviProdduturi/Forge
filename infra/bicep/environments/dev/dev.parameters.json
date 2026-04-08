@@ -1,30 +1,53 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
+
+  "forge": {
+    "_comment": "forge-up.sh runtime config — read by the deploy script, ignored by Bicep",
+
+    "alias":         "",
+    "clientId":      "d0ce7c35-cc10-4ae7-b6be-60d002f43059",
+    "allowedDomain": "microsoft.com",
+
+    "gitRepo":       "https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra",
+    "gitBranch":     "user/PrProddu/StarRocks",
+
+    "sparkTag":      "1.0",
+    "trinoTag":      "1.0",
+    "airflowTag":    "1.1",
+    "hmsTag":        "1.0",
+    "apiTag":        "1.0",
+    "webTag":        "1.0"
+  },
+
   "parameters": {
-    "environment":                { "value": "dev" },
-    "location":                   { "value": "northcentralus" },
+
+    "environment":   { "value": "dev" },
+    "location":      { "value": "westcentralus" },
+    "ownerAlias":    { "value": "" },
+
     "tenantId":                   { "value": "72f988bf-86f1-41af-91ab-2d7cd011db47" },
     "adminGroupObjectIds":        { "value": ["b9fe1db5-56c8-40cd-a661-27ef360605f0"] },
     "platformAdminGroupObjectId": { "value": "b9fe1db5-56c8-40cd-a661-27ef360605f0" },
-    "ownerAlias":                 { "value": "prproddu" },
-    "logRetentionDays":           { "value": 90 },
+
     "kubernetesVersion":          { "value": "1.32" },
     "storageReplicationType":     { "value": "LRS" },
-    "tags":                       { "value": { "owner": "platform-team" } },
+    "logRetentionDays":           { "value": 90 },
+    "kvAllowPublicNetworkAccess": { "value": true },
 
-    "computeSystemVmSize":        { "value": "Standard_D4s_v5" },
-    "computeSystemNodeCount":     { "value": 1 },
-    "sparkVmSize":                { "value": "Standard_E8s_v5" },
-    "sparkMaxNodes":              { "value": 5 },
-    "trinoVmSize":                { "value": "Standard_D4s_v5" },
-    "trinoMaxNodes":              { "value": 5 },
+    "tags": { "value": { "owner": "platform-team", "environment": "dev" } },
 
-    "orchSystemVmSize":           { "value": "Standard_D4s_v5" },
-    "orchSystemNodeCount":        { "value": 1 },
-    "orchWorkerVmSize":           { "value": "Standard_D4s_v5" },
-    "orchWorkerMaxNodes":         { "value": 3 },
+    "computeSystemVmSize":  { "value": "Standard_D4s_v5" },
+    "computeSystemNodeCount": { "value": 1 },
+    "sparkVmSize":          { "value": "Standard_E8s_v5" },
+    "sparkMaxNodes":        { "value": 10 },
+    "trinoVmSize":          { "value": "Standard_D4s_v5" },
+    "trinoMaxNodes":        { "value": 5 },
 
-    "kvAllowPublicNetworkAccess": { "value": true }
+    "orchSystemVmSize":     { "value": "Standard_D4s_v5" },
+    "orchSystemNodeCount":  { "value": 1 },
+    "orchWorkerVmSize":     { "value": "Standard_D4s_v5" },
+    "orchWorkerMaxNodes":   { "value": 3 }
+
   }
 }

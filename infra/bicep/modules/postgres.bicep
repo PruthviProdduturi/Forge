@@ -40,6 +40,15 @@ param hmsManagedIdentityPrincipalId string
 @description('Display name of the HMS managed identity — used as the PostgreSQL AAD principal name.')
 param hmsManagedIdentityName string
 
+@description('Principal ID (object ID) of the Airflow managed identity — registered as a PostgreSQL AAD admin so Airflow pods can authenticate via workload identity token.')
+param airflowManagedIdentityPrincipalId string
+
+@description('Display name of the Airflow managed identity.')
+param airflowManagedIdentityName string
+
+@description('Object ID of the platform administrator AAD group — allows engineers to run database setup commands via az postgres flexible-server execute with their AAD identity.')
+param platformAdminGroupObjectId string
+
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
@@ -95,7 +104,6 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
 // ---------------------------------------------------------------------------
 // HMS AAD administrator
 // HMS managed identity authenticates via JDBC AAD token exchange.
-// The name must be the object ID (principal ID) of the AAD principal.
 // ---------------------------------------------------------------------------
 resource hmsAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
   parent: postgresServer
@@ -108,11 +116,56 @@ resource hmsAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2
 }
 
 // ---------------------------------------------------------------------------
+// Airflow AAD administrator
+// Airflow pods authenticate via workload identity token (no password).
+// The connection string uses the managed identity name as the PostgreSQL user
+// and an AAD access token (scope: ossrdbms-aad) as the password.
+// ---------------------------------------------------------------------------
+resource airflowAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
+  parent: postgresServer
+  name: airflowManagedIdentityPrincipalId
+  dependsOn: [hmsAadAdmin]  // Azure requires serial writes per server
+  properties: {
+    principalType: 'ServicePrincipal'
+    principalName: airflowManagedIdentityName
+    tenantId: tenant().tenantId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Platform admin group — allows engineers to run setup SQL via az CLI AAD auth
+// ---------------------------------------------------------------------------
+resource platformAdminAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
+  parent: postgresServer
+  name: platformAdminGroupObjectId
+  dependsOn: [airflowAadAdmin]
+  properties: {
+    principalType: 'Group'
+    principalName: 'forge-platform-admins'
+    tenantId: tenant().tenantId
+  }
+}
+
+// ---------------------------------------------------------------------------
 // HMS database
 // ---------------------------------------------------------------------------
 resource hmsDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
   parent: postgresServer
   name: 'hms_db'
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Airflow metadata database
+// Created at provision time — no password user needed. Airflow pods connect
+// via managed identity token (airflowAadAdmin registered above).
+// ---------------------------------------------------------------------------
+resource airflowDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'airflow'
   properties: {
     charset: 'UTF8'
     collation: 'en_US.utf8'

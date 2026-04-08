@@ -152,22 +152,11 @@ resource containerCode 'Microsoft.Storage/storageAccounts/blobServices/container
     publicAccess: 'None'
     metadata: {
       tier: 'code'
-      description: 'Job artifacts and scripts'
+      description: 'Job artifacts, scripts, forge_lib.zip, Airflow logs, and Spark Structured Streaming checkpoints (code/checkpoints/)'
     }
   }
 }
-
-resource containerCheckpoints 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' = {
-  parent: blobService
-  name: 'checkpoints'
-  properties: {
-    publicAccess: 'None'
-    metadata: {
-      tier: 'operational'
-      description: 'Spark/Flink streaming checkpoints'
-    }
-  }
-}
+// No separate checkpoints container — checkpoints live at code/checkpoints/<pipeline_id>/
 
 // ---------------------------------------------------------------------------
 // Lifecycle Management Policy
@@ -262,7 +251,7 @@ resource lifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2
             }
           }
         }
-        // Checkpoints — delete after 90 days
+        // Checkpoints (under code/checkpoints/) — delete after 90 days
         {
           name: 'checkpoints-cleanup'
           enabled: true
@@ -270,7 +259,7 @@ resource lifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2
           definition: {
             filters: {
               blobTypes: ['blockBlob']
-              prefixMatch: ['checkpoints/']
+              prefixMatch: ['code/checkpoints/']
             }
             actions: {
               baseBlob: {
@@ -437,7 +426,6 @@ output containerIds object = {
   gold: containerGold.id
   sandbox: containerSandbox.id
   code: containerCode.id
-  checkpoints: containerCheckpoints.id
 }
 
 output privateEndpointDfsId string = pepDfs.id

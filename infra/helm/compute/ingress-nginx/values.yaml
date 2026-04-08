@@ -1,0 +1,72 @@
+# =============================================================================
+# ingress-nginx — Helm Values for Forge Compute Cluster
+#
+# Single public IP for all compute services on dedicated ports:
+#   8080  → trino-auth-proxy (Trino UI + API, AAD-protected)
+#   9083  → hive-metastore   (Thrift, TCP proxy)
+#   15002 → spark-connect    (gRPC, TCP proxy)
+#
+# DNS label set at deploy time via --set:
+#   forge-compute-{alias}-{env}.{region}.cloudapp.azure.com
+# =============================================================================
+
+controller:
+  replicaCount: 1
+
+  service:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-dns-label-name: ""   # overridden by --set at deploy time
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-protocol: "tcp"
+    # Expose TCP ports alongside 80/443
+    ports:
+      http: 80
+      https: 443
+    targetPorts:
+      http: http
+      https: https
+
+  # TCP port mappings — proxied by nginx to ClusterIP services
+  # ConfigMap is created by the tcp section below
+  extraArgs:
+    tcp-services-configmap: "$(POD_NAMESPACE)/tcp-services"
+
+  # Schedule on the compute worker pool (spark nodes would work but systempool is safer)
+  nodeSelector:
+    kubernetes.io/os: linux
+    agentpool: systempool
+
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  config:
+    use-forwarded-headers: "true"
+    compute-full-forwarded-for: "true"
+
+  admissionWebhooks:
+    enabled: false   # no Ingress resources on compute — only TCP port mapping
+
+defaultBackend:
+  enabled: true
+  replicaCount: 1
+  nodeSelector:
+    kubernetes.io/os: linux
+    agentpool: systempool
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
+
+# TCP services — each port on the LoadBalancer proxied to a ClusterIP service
+tcp:
+  8080: "trino/trino-auth-proxy:8080"
+  9083: "hive-metastore/hive-metastore:9083"
+  15002: "spark-system/spark-connect:15002"

@@ -16,22 +16,21 @@ settings = get_settings()
 router = APIRouter(prefix="/api", tags=["health"])
 
 
-def _cluster_internal(s: str) -> bool:
-    """True when the address is a K8s cluster-internal DNS name.
-    These only resolve from inside a pod — not from a dev laptop.
-    """
-    return ".svc.cluster.local" in s
+def _running_in_cluster() -> bool:
+    """True when this process is running inside a Kubernetes pod."""
+    import os
+    return os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 
 async def _check_airflow() -> bool | None:
-    """None = in-cluster only (cannot check from outside)."""
-    if _cluster_internal(settings.airflow_url):
+    """None = cluster-internal URL but running outside cluster."""
+    if ".svc.cluster.local" in settings.airflow_url and not _running_in_cluster():
         return None
     return await airflow_client.ping()
 
 
 async def _check_trino() -> bool | None:
-    if _cluster_internal(settings.trino_host):
+    if ".svc.cluster.local" in settings.trino_host and not _running_in_cluster():
         return None
     return await asyncio.to_thread(trino_client.ping)
 
@@ -39,7 +38,7 @@ async def _check_trino() -> bool | None:
 async def _check_spark_connect() -> bool | None:
     import httpx
     url = settings.spark_connect_url
-    if not url or _cluster_internal(url):
+    if not url or (".svc.cluster.local" in url and not _running_in_cluster()):
         return None
     try:
         async with httpx.AsyncClient(timeout=5.0, verify=False) as client:

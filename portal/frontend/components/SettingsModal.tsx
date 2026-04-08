@@ -410,7 +410,7 @@ function PlatformRow({
       {highlight ? (
         <span style={{
           padding: "1px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700,
-          background: highlight === "prod" ? "#fee2e2" : "#dcfce7",
+          background: highlight === "red" ? "#fee2e2" : "#dcfce7",
           color: highlight === "red" ? "#dc2626" : "#16a34a",
         }}>
           {value}

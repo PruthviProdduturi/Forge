@@ -3,10 +3,10 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": {
-      "value": "northcentralus"
+      "value": "westcentralus"
     },
     "ownerAlias": {
-      "value": "prproddu"
+      "value": ""
     },
     "tags": {
       "value": {

@@ -1,14 +1,12 @@
 # =============================================================================
 # ingress-nginx — Helm Values for Forge Orchestration Cluster
 #
-# Gets a public Azure LoadBalancer IP with a DNS label so the portal is
-# reachable at: http://forge-portal-{alias}-{env}.northcentralus.cloudapp.azure.com
+# Single public IP for all orchestration services:
+#   80    → forge-portal (HTTP Ingress, portal web + API)
+#   8080  → airflow-webserver (TCP proxy — AAD-protected via WorkloadIdentity)
 #
-# The DNS label is set by deploy-portal.sh via --set at deploy time.
-# This file sets everything else; only dnsLabel is variable.
-#
-# Chart: oci://registry-1.docker.io/bitnamicharts/nginx-ingress-controller
-#   or: https://kubernetes.github.io/ingress-nginx (ingress-nginx/ingress-nginx)
+# DNS label set at deploy time via --set:
+#   forge-portal-{alias}-{env}.{region}.cloudapp.azure.com
 # =============================================================================
 
 controller:
@@ -19,8 +17,15 @@ controller:
     type: LoadBalancer
     annotations:
       # Set at deploy time: forge-portal-{alias}-{env}
-      # Results in: forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+      # Results in: forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
       service.beta.kubernetes.io/azure-dns-label-name: ""   # overridden by --set
+      # Azure LB HTTP health probe on nodePort returns 404 → backends marked unhealthy → traffic dropped.
+      # TCP probe just checks the port accepts connections — correct for a reverse proxy.
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-protocol: "tcp"
+
+  # TCP port mappings for non-HTTP services (ConfigMap created by tcp section below)
+  extraArgs:
+    tcp-services-configmap: "$(POD_NAMESPACE)/tcp-services"
 
   # Schedule on the orchestration worker pool
   nodeSelector:
@@ -48,3 +53,7 @@ controller:
 defaultBackend:
   enabled: true
   replicaCount: 1
+
+# TCP services — port 8080 on the LoadBalancer proxied to Airflow webserver
+tcp:
+  8080: "airflow/airflow-api-server:8080"

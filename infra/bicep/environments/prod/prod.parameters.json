@@ -1,34 +1,70 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
+
+  "forge": {
+    "_comment": "forge-up.sh runtime config — read by the deploy script, ignored by Bicep",
+
+    "alias":         "REPLACE_WITH_ALIAS",
+    "clientId":      "REPLACE_WITH_AAD_APP_CLIENT_ID",
+    "allowedDomain": "microsoft.com",
+
+    "gitRepo":       "REPLACE_WITH_PIPELINES_REPO_URL",
+    "gitBranch":     "main",
+
+    "apiTag":        "1.0",
+    "webTag":        "1.0",
+    "sparkTag":      "1.0",
+    "trinoTag":      "1.0",
+    "airflowTag":    "1.0"
+  },
+
   "parameters": {
-    "environment": {
-      "value": "prod"
-    },
-    "location": {
-      "value": "northcentralus"
-    },
-    "tenantId": {
-      "value": "REPLACE_WITH_TENANT_ID"
-    },
-    "adminGroupObjectIds": {
-      "value": [
-        "REPLACE_WITH_AKS_ADMIN_GROUP_OBJECT_ID"
-      ]
-    },
-    "platformAdminGroupObjectId": {
-      "value": "REPLACE_WITH_PLATFORM_ADMIN_GROUP_OBJECT_ID"
-    },
-    "ownerAlias": {
-      "value": ""
-    },
-    "logRetentionDays": {
-      "value": 90
-    },
-    "tags": {
-      "value": {
-        "owner": "platform-team"
-      }
-    }
+
+    "environment":   { "value": "prod" },
+    "location":      { "value": "northcentralus" },
+    "ownerAlias":    { "value": "REPLACE_WITH_ALIAS" },
+
+    "tenantId":                   { "value": "72f988bf-86f1-41af-91ab-2d7cd011db47" },
+    "adminGroupObjectIds":        { "value": ["REPLACE_WITH_AKS_ADMIN_GROUP_OBJECT_ID"] },
+    "platformAdminGroupObjectId": { "value": "REPLACE_WITH_PLATFORM_ADMIN_GROUP_OBJECT_ID" },
+
+    "kubernetesVersion":          { "value": "1.32" },
+    "storageReplicationType":     { "value": "ZRS" },
+    "logRetentionDays":           { "value": 365 },
+    "kvAllowPublicNetworkAccess": { "value": false },
+
+    "tags": { "value": { "owner": "platform-team", "environment": "prod", "managedBy": "bicep" } },
+
+    "_comment_compute": "Compute cluster — Spark + Trino. E96s_v5 fits 22 executors per node (4 vCPU / 28g each, zero waste).",
+
+    "computeSystemVmSize":    { "value": "Standard_D8s_v5" },
+    "computeSystemNodeCount": { "value": 3 },
+
+    "sparkVmSize":     { "value": "Standard_E96s_v5" },
+    "sparkMinNodes":   { "value": 1 },
+    "sparkMaxNodes":   { "value": 10 },
+
+    "trinoVmSize":     { "value": "Standard_E32s_v5" },
+    "trinoMinNodes":   { "value": 3 },
+    "trinoMaxNodes":   { "value": 10 },
+
+    "_comment_orch": "Orchestration cluster — Airflow + Portal + Ingress. 150+ jobs, KubernetesExecutor.",
+
+    "orchSystemVmSize":     { "value": "Standard_D8s_v5" },
+    "orchSystemNodeCount":  { "value": 3 },
+
+    "orchAirflowVmSize":    { "value": "Standard_D8s_v5" },
+    "orchAirflowMinNodes":  { "value": 3 },
+    "orchAirflowMaxNodes":  { "value": 5 },
+
+    "orchTaskVmSize":       { "value": "Standard_D4s_v5" },
+    "orchTaskMinNodes":     { "value": 2 },
+    "orchTaskMaxNodes":     { "value": 8 },
+
+    "_comment_postgres": "PostgreSQL — prod needs PgBouncer for 150+ concurrent task connections.",
+    "postgresVCores":       { "value": 8 },
+    "postgresStorageGb":    { "value": 256 }
+
   }
 }

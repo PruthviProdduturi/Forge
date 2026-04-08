@@ -20,11 +20,9 @@ export function configureMsal(clientId: string, tenantId = "common"): void {
         process.env.NEXT_PUBLIC_AZURE_REDIRECT_URI || window.location.origin,
       postLogoutRedirectUri:
         process.env.NEXT_PUBLIC_AZURE_REDIRECT_URI || window.location.origin,
-      navigateToLoginRequestUrl: true,
     },
     cache: {
       cacheLocation: "sessionStorage",
-      storeAuthStateInCookie: false,
     },
   };
 

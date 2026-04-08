@@ -223,7 +223,7 @@ metadata:
     azure.workload.identity/client-id: "<managed-identity-client-id>"
 ```
 
-This means every task pod automatically receives an OIDC token for the `id-forge-read-{env}` managed identity, giving it access to Key Vault secrets and the checkpoints ADLS container — the only Azure resources task pods need directly.
+This means every task pod automatically receives an OIDC token for the `id-forge-read-{env}` managed identity, giving it access to Key Vault secrets and the `code` ADLS container — the only Azure resources task pods need directly.
 
 ### RBAC Role
 
@@ -884,7 +884,7 @@ Airflow task logs are the primary diagnostic tool when a task fails. In Forge, l
 ```ini
 [logging]
 remote_logging = True
-remote_base_log_folder = abfss://checkpoints@<account>.dfs.core.windows.net/airflow-logs
+remote_base_log_folder = abfss://code@<account>.dfs.core.windows.net/airflow-logs
 remote_log_conn_id = adls_default
 ```
 
@@ -1155,3 +1155,98 @@ DAG Python files themselves do not need to be updated for a minor Airflow versio
 - **Major version (2.x → 3.x):** A compatibility sweep of all DAGs is required. Run `airflow upgrade-check` (included in the Airflow CLI) to enumerate all deprecated API usages.
 
 The `git-sync` sidecar means DAG files do not need redeployment separately from the image upgrade — they are always the latest Git commit.
+
+---
+
+## 16. Dev Environment Guardrails
+
+Dev is a shared, cost-controlled environment. The following rules are enforced automatically by the **`forge_dev_policy`** Airflow plugin, which runs at DAG parse time. They cannot be overridden by individual DAG authors — they are platform-level controls.
+
+### Per-User DAG Limit
+
+Each engineer may have **at most 5 active DAGs** in dev at any time. Attempting to register a 6th DAG causes a parse-time error:
+
+```
+[forge-dev-policy] User 'alias' already has 5 active DAG(s) in dev (limit: 5).
+Delete an existing DAG before registering a new one.
+```
+
+To add a new DAG: delete or deactivate an existing one via the Airflow UI or `airflow dags delete <dag_id>`.
+
+### Auto-Expire After 5 Days
+
+Every DAG in dev has its `end_date` capped to `start_date + 5 days`. After that window, no new runs are triggered. The DAG stays visible in the UI but becomes inactive.
+
+To extend a DAG: update its `start_date` and re-sync. This is intentional — it forces engineers to be explicit about what is actively running in dev.
+
+### No Catchup
+
+`catchup = False` is enforced on all DAGs in dev regardless of what the DAG file specifies. Missed schedule intervals are never backfilled.
+
+### Start Date Ceiling
+
+DAGs with a `start_date` older than 30 days are rejected at parse time. This prevents accidental large backfill windows if catchup is somehow re-enabled.
+
+### Concurrency Caps
+
+Set at the Airflow config level (not per-DAG):
+
+| Setting | Dev Value | Prod Value |
+|---------|-----------|------------|
+| `parallelism` (total concurrent tasks) | 20 | 200 |
+| `max_active_runs_per_dag` | 2 | 5 |
+| `max_active_tasks_per_dag` | 5 | unlimited |
+
+### None of These Apply in Prod
+
+The policy checks `FORGE_ENV` at startup. In prod, the function returns immediately — no restrictions are applied.
+
+---
+
+## 17. Production Sizing — 150+ Scheduled Jobs
+
+### Executor
+
+Prod uses **KubernetesExecutor**: each task gets a dedicated pod. No shared scheduler process, no single point of failure, horizontal scaling with cluster autoscaler.
+
+### Orchestration Cluster Node Pools
+
+| Pool | VM Size | Nodes | Runs |
+|------|---------|-------|------|
+| System | Standard_D8s_v5 (8c/32g) | 3 fixed | K8s system pods |
+| Airflow | Standard_D8s_v5 (8c/32g) | 3–5 autoscale | Scheduler, webserver, triggerer, DAG processor, portal |
+| Task | Standard_D4s_v5 (4c/16g) | 2–8 autoscale | KubernetesExecutor task pods (non-Spark) |
+
+Spark tasks submit SparkApplication CRDs to the **compute cluster** — they do not consume orchestration node capacity.
+
+### Airflow Component Replicas (Prod)
+
+| Component | Replicas | CPU | RAM |
+|-----------|----------|-----|-----|
+| Scheduler | 2 | 4 vCPU | 8 GB |
+| DAG Processor | 2 | 4 vCPU | 8 GB |
+| Webserver | 2 | 2 vCPU | 4 GB |
+| Triggerer | 2 | 2 vCPU | 4 GB |
+
+### PostgreSQL (Prod)
+
+| Setting | Value |
+|---------|-------|
+| SKU | General Purpose, 8 vCores |
+| RAM | 64 GB |
+| Storage | 256 GB |
+| Connection pooling | PgBouncer required |
+
+At 150+ concurrent tasks, each KubernetesExecutor task pod holds a Postgres connection. PgBouncer pools these into a smaller set of real server connections — without it, Postgres runs out of connections under peak load.
+
+### Key Airflow Config Differences (Dev vs Prod)
+
+| Setting | Dev | Prod |
+|---------|-----|------|
+| Executor | LocalExecutor | KubernetesExecutor |
+| `parallelism` | 20 | 200 |
+| Scheduler replicas | 1 | 2 |
+| DAG Processor replicas | 1 | 2 |
+| Per-user DAG limit | 5 | None |
+| Auto-expire | 5 days | None |
+| PgBouncer | No | Yes |

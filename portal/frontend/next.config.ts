@@ -23,7 +23,7 @@ const nextConfig: NextConfig = {
         | { cacheGroups?: Record<string, unknown> }
         | false
         | undefined;
-      if (splitChunks && splitChunks !== false) {
+      if (splitChunks) {
         splitChunks.cacheGroups = {
           ...(splitChunks.cacheGroups ?? {}),
           msal: {

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { ForgeLogo } from "../../components/ForgeLogo";
 import { useTheme } from "../../contexts/ThemeContext";
 
@@ -459,7 +460,7 @@ export default function AboutPage() {
               flexWrap: "wrap",
             }}
           >
-            <a
+            <Link
               href="/docs"
               style={{
                 display: "inline-flex",
@@ -479,8 +480,8 @@ export default function AboutPage() {
             >
               <i className="fas fa-book-open" aria-hidden="true" />
               Read the Docs
-            </a>
-            <a
+            </Link>
+            <Link
               href="/docs/guides/developer-experience"
               style={{
                 display: "inline-flex",
@@ -501,7 +502,7 @@ export default function AboutPage() {
             >
               <i className="fas fa-code" aria-hidden="true" />
               Developer Guide
-            </a>
+            </Link>
           </div>
         </div>
       </section>

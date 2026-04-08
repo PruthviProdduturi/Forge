@@ -26,7 +26,7 @@ Forge uses a **two-repo model in production**. Everything in one repo during dev
 │  ├── helm/            ← Spark, Trino, Airflow charts     │
 │  └── docker/          ← Spark, Trino, Airflow images     │
 │                                                         │
-│  publishes → forge_lib.zip to ADLS code/lib/ on release │
+│  publishes → forge-sdk + forge-dq wheels to Azure Artifacts │
 └─────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
@@ -71,13 +71,11 @@ Forge uses a **two-repo model in production**. Everything in one repo during dev
 ║                                                                        ║
 ║  1. git diff since last deploy → changed .forge.ts files only         ║
 ║  2. forge generate → re-scaffold .py (preserve BL), DAG, DQ YAML     ║
-║  3. Build forge_lib.zip from sdk/python/forge_sdk/ + forge_dq/        ║
-║     (only when sdk/python/ changed)                                    ║
-║                                                                        ║
-║  ADLS uploads (authenticated via workload identity):                  ║
+║  3. ADLS uploads (authenticated via workload identity):               ║
 ║  ├── code/spark/jobs/{name}.py       ← Spark job entry point         ║
-║  ├── code/lib/forge_lib.zip          ← shared library (if changed)   ║
 ║  └── code/dq/rules/{name}.yaml      ← DQ rules                       ║
+║  NOTE: forge-sdk + forge-dq are baked into the Spark image.          ║
+║        SDK changes → Spark image rebuild (forge-up.sh Phase 5).      ║
 ║                                                                        ║
 ║  Git push:                                                             ║
 ║  └── src/airflow/dags/{ingestion|transformation}/  ← Airflow picks   ║
@@ -166,11 +164,7 @@ sync-jobs.sh triggered (CI/CD on merge, or manual)
         │     → regenerates DAG (fully managed)
         │     → skips DQ YAML if it already exists (yours to extend)
         │
-        │  4. If sdk/python/ changed since last deploy:
-        │     zip forge_sdk/ forge_dq/ → forge_lib.zip
-        │     az storage blob upload → ADLS code/lib/forge_lib.zip
-        │
-        │  5. az storage blob upload:
+        │  4. az storage blob upload:
         │     → ADLS code/spark/jobs/{name}.py
         │     → ADLS code/dq/rules/{name}.yaml
         │
@@ -183,7 +177,7 @@ sync-jobs.sh triggered (CI/CD on merge, or manual)
         ▼
 ADLS state/deployments_dev.jsonl:
   {"deploy_id":"deploy-20260401T120000Z-d9f1100a","commit":"d9f1100a...","env":"dev",
-   "jobs":"nyc_taxi_silver","lib_rebuilt":false,"dag_push":true}
+   "jobs":"nyc_taxi_silver","dag_push":true}
 ```
 
 ---
@@ -207,10 +201,6 @@ SparkApplication CRD (compute cluster, namespace: spark-jobs)
         │  mainApplicationFile:
         │    abfss://code@{storage}.dfs.core.windows.net/spark/jobs/nyc_taxi_silver.py
         │
-        │  sparkConf:
-        │    spark.submit.pyFiles:
-        │      abfss://code@{storage}.dfs.core.windows.net/lib/forge_lib.zip
-        │
         │  envFrom:
         │    forge-platform-config (ConfigMap)  ← FORGE_ENV, FORGE_STORAGE_ACCOUNT
         │    PARTITION_DATE: {{ data_interval_start.strftime('%Y-%m-%d') }}
@@ -219,11 +209,10 @@ Spark Operator launches pods
         │
         │  Driver pod:
         │  ├── pulls nyc_taxi_silver.py from ADLS (mainApplicationFile)
-        │  └── pulls forge_lib.zip from ADLS (spark.submit.pyFiles)
+        │  └── forge_sdk + forge_dq already installed in image (no ADLS download)
         │
         │  Executor pods (spot, auto-scaled):
-        │  └── forge_lib.zip distributed automatically by Spark
-        │      → forge_sdk and forge_dq available on all executors
+        │  └── same image — forge_sdk + forge_dq available immediately
         ▼
 nyc_taxi_silver.py runs
         │
@@ -302,8 +291,6 @@ ADLS Gen2  (single storage account per environment)
 │   │   ├── nyc_taxi_bronze.py
 │   │   ├── nyc_taxi_silver.py
 │   │   └── nyc_taxi_gold.py
-│   ├── lib/
-│   │   └── forge_lib.zip   ← forge_sdk + forge_dq shared library
 │   └── dq/rules/
 │       ├── nyc_taxi_silver.yaml
 │       └── nyc_taxi_gold.yaml
@@ -342,7 +329,7 @@ ADLS Gen2  (single storage account per environment)
 | Storage account env var | `FORGE_STORAGE_ACCOUNT=forgeadlsprproddudev` | Set per-environment in CI |
 | Spark Connect | Available (dev only) | Not deployed |
 | sync-jobs.sh target | `FORGE_ENV=dev` | `FORGE_ENV=prod` |
-| forge_lib.zip location | `code/lib/forge_lib.zip` in dev ADLS | `code/lib/forge_lib.zip` in prod ADLS |
+| SDK distribution | forge-sdk + forge-dq baked into Spark image | Same — versioned wheels via Azure Artifacts |
 | Airflow git-sync | Points to same repo, `src/airflow/dags/` | Points to pipelines repo, `src/airflow/dags/` |
 
 ---
@@ -363,7 +350,7 @@ Grafana Platform Overview (live during a run):
   DQ Pass Rate 7d:   ████████████████████  99.8%
   Active Spark Jobs: ██░░░░░░░░░░░░░░░░░░  1
   Gold Freshness:    ████████████████████  PASS (all datasets within SLA)
-  forge_lib.zip:     v1.2.3 — deployed 2026-04-01 (last SDK release)
+  SDK version:       forge-sdk==1.0.0 forge-dq==1.0.0 (baked in Spark image)
 ```
 
 ---

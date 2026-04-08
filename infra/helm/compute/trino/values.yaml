@@ -55,7 +55,7 @@ coordinator:
 # Dev sizing: D4s_v5 (4 vCPU / 16 GiB per node)
 # ----------------------------------------------------------------------------
 worker:
-  replicas: 1
+  replicas: 3
   jvm:
     maxHeapSize: "7G"
   resources:

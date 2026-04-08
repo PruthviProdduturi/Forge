@@ -129,6 +129,13 @@ ENV AIRFLOW__CORE__LOAD_EXAMPLES="False" \
 # ----------------------------------------------------------------------------
 # Metadata
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# S360 compliance: remove packages not required by Forge that are flagged by
+# Microsoft security scanning. These are transitive dependencies pulled in by
+# the apache/airflow base image or its providers — not used by this platform.
+# ----------------------------------------------------------------------------
+RUN pip uninstall -y litellm || true
+
 LABEL org.opencontainers.image.title="forge-airflow" \
       org.opencontainers.image.version="3.1.8" \
       org.opencontainers.image.description="Airflow 3.1.8 with Kubernetes, Azure, and OpenLineage providers for the Forge data platform" \

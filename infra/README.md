@@ -75,7 +75,6 @@ helm/
 | `post-provision.sh` | Kubeconfig fetch + S360 IP tagging |
 | `sync-jobs.sh` | DAG/lib sync to ADLS + git push |
 | `portal-dev.sh` | Local portal development (no AKS needed) |
-| `build-spark-image.sh` | Rebuild and push the Spark Docker image |
 | `generate-docs.py` | Export architecture docs |
 
 ### Deploy everything

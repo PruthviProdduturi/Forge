@@ -7,7 +7,7 @@
 
 ---
 
-> **Automated:** `forge-up.sh` phase **[6/7]** handles all orchestration cluster deployments
+> **Automated:** `forge-up.sh` phase **[7/8]** handles all orchestration cluster deployments
 > automatically (ingress-nginx, Airflow, Portal).
 > Run `bash infra/scripts/forge-up.sh --env dev --alias prproddu --skip-infra --git-pat <pat>` to
 > deploy (or re-deploy) all orchestration components in one step.
@@ -120,18 +120,14 @@ kubectl exec -n airflow deploy/airflow-scheduler \
 
 Bronze ingestion jobs go to `ingestion/`, Silver/Gold transformation jobs go to `transformation/`.
 
-### forge_lib.zip
+### SDK Distribution
 
-The Forge SDK is packaged as `forge_lib.zip` and uploaded to
-`abfss://code@{storage}/lib/forge_lib.zip` by `sync-jobs.sh`. Every SparkApplication has
-`spark.submit.pyFiles` pointing to it — no image rebuild is required when the SDK changes.
-
-Built from: `sdk/python/forge_sdk/` + `forge_dq/`
+`forge_sdk` and `forge_dq` are proper pip packages baked into the Spark Docker image at build time — no runtime ADLS download, no `spark.submit.pyFiles`. When the SDK changes, rebuild the Spark image via `forge-up.sh` Phase 5 (or `--skip-infra --skip-sync` to rebuild images only).
 
 ### Deploying updated pipelines
 
 ```bash
-# Sync all jobs (generates DAGs + uploads forge_lib.zip + pushes DAG files)
+# Sync all jobs (generates DAGs + uploads job scripts + pushes DAG files)
 FORGE_ENV=dev OWNER_ALIAS=prproddu bash infra/scripts/sync-jobs.sh
 ```
 

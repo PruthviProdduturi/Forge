@@ -54,8 +54,6 @@ tolerations:
     value: trino
     effect: NoSchedule
 
-# ClusterIP — port-forward access only.
-# kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino
 service:
   type: ClusterIP
   port: 8080

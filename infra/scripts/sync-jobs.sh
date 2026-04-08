@@ -7,13 +7,12 @@
 #   2. forge generate  — re-scaffold Python job, DAG, DQ YAML from .forge.ts
 #                        Business logic blocks are ALWAYS preserved
 #      Copy DAGs: examples/src/airflow/dags/ → orchestration/airflow/dags/
-#   3. Build forge_lib.zip — packages forge_sdk/ + forge_dq/ from sdk/python/
-#                            Rebuilt only when sdk/python/ changed since last deploy
-#   4. Upload forge_lib.zip → ADLS code/lib/  (if rebuilt)
-#      Upload Spark .py     → ADLS code/spark/jobs/
+#   3. Upload Spark .py     → ADLS code/spark/jobs/
 #      Upload DQ .yaml      → ADLS code/dq/rules/
-#   5. Commit + push DAG files → git (Airflow git-sync picks up within 30s)
-#   6. Write deployment record → ADLS state container
+#      NOTE: forge-sdk and forge-dq are baked into the Spark image — no zip upload.
+#            SDK changes require a Spark image rebuild via forge-up.sh Phase 5.
+#   4. Commit + push DAG files → git (Airflow git-sync picks up within 30s)
+#   5. Write deployment record → ADLS state container
 #      - state/last_deploy_{env}.json  — last commit SHA (pointer for next run)
 #      - state/deployments_{env}.jsonl — append-only deployment history
 #
@@ -49,8 +48,6 @@ GENERATED_DAGS_DIR="${EXAMPLES_DIR}/src/airflow/dags"
 # git-sync reads from here — sync-jobs.sh copies from GENERATED_DAGS_DIR to here
 DAGS_DIR="${REPO_ROOT}/orchestration/airflow/dags"
 DQ_RULES_DIR="${EXAMPLES_DIR}/src/dq/rules"
-SDK_PYTHON_DIR="${REPO_ROOT}/sdk/python"
-LIB_BLOB_PREFIX="lib"
 
 FORGE_ENV="${FORGE_ENV:-dev}"
 OWNER_ALIAS="${OWNER_ALIAS:-}"
@@ -350,53 +347,13 @@ if ! dry; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3 — Build + upload forge_lib.zip (forge_sdk + forge_dq)
 # ---------------------------------------------------------------------------
-# forge_lib.zip is distributed to every Spark executor via spark.submit.pyFiles.
-# It contains forge_sdk/ and forge_dq/ from sdk/python/.
-# Rebuilt only when sdk/python/ changed since last deploy (or --full / first run).
-# ---------------------------------------------------------------------------
-section "forge_lib.zip → ADLS ${CODE_CONTAINER}/${LIB_BLOB_PREFIX}/"
-
-LIB_REBUILT=false
-
-# Determine if the SDK changed
-SDK_CHANGED=false
-if [[ "${FULL_DEPLOY}" == "true" ]] || [[ -z "${LAST_COMMIT:-}" ]]; then
-  SDK_CHANGED=true
-  log "  Reason: first run or --full"
-else
-  _sdk_changes=$(git -C "${REPO_ROOT}" diff --name-only "${LAST_COMMIT}...${CURRENT_COMMIT}" -- "sdk/python/" 2>/dev/null | wc -l)
-  if [[ "${_sdk_changes}" -gt 0 ]]; then
-    SDK_CHANGED=true
-    log "  Reason: ${_sdk_changes} file(s) changed in sdk/python/"
-  fi
-fi
-
-if [[ "${SDK_CHANGED}" == "true" ]]; then
-  if dry; then
-    log "  [dry-run] would build forge_lib.zip from ${SDK_PYTHON_DIR} and upload to ${CODE_CONTAINER}/${LIB_BLOB_PREFIX}/forge_lib.zip"
-  else
-    _lib_tmp="$(mktemp -d)/forge_lib.zip"
-    log "  Building forge_lib.zip from sdk/python/forge_sdk/ + sdk/python/forge_dq/"
-    (
-      cd "${SDK_PYTHON_DIR}"
-      zip -r "${_lib_tmp}" forge_sdk/ forge_dq/ \
-        -x "*.pyc" -x "*/__pycache__/*" -x "*/.mypy_cache/*" -x "*/dist-info/*" \
-        2>&1 | tail -3
-    )
-    _lib_size=$(du -sh "${_lib_tmp}" | cut -f1)
-    log "  Built: ${_lib_size} → ${_lib_tmp}"
-    upload_blob "${_lib_tmp}" "${LIB_BLOB_PREFIX}/forge_lib.zip"
-    rm -f "${_lib_tmp}"
-    LIB_REBUILT=true
-  fi
-else
-  log "  sdk/python/ unchanged since last deploy — reusing existing forge_lib.zip"
-fi
-
-# ---------------------------------------------------------------------------
-# Step 4 — Upload Spark jobs to ADLS
+# Step 3 — Upload Spark jobs to ADLS
+# NOTE: forge-sdk and forge-dq are baked into the Spark Docker image at build
+# time (see infra/docker/spark/Dockerfile). There is no forge_lib.zip.
+# SDK changes require a Spark image rebuild (forge-up.sh Phase 5), not a
+# sync-jobs.sh run. For prod: publish versioned wheels to Azure Artifacts
+# via sdk/python/publish.sh and pin the version in the Dockerfile.
 # ---------------------------------------------------------------------------
 section "Upload Spark jobs → ADLS ${CODE_CONTAINER}/${JOBS_BLOB_PREFIX}/"
 
@@ -494,7 +451,7 @@ upload_blob_text "${LAST_DEPLOY_JSON}" "${STATE_LAST_DEPLOY}"
 log "  ✓ Updated last_deploy_${FORGE_ENV}.json (commit: ${CURRENT_COMMIT:0:8})"
 
 # deployments_{env}.jsonl — append-only history
-DEPLOY_LOG_LINE="{\"deploy_id\":\"${DEPLOY_ID}\",\"commit\":\"${CURRENT_COMMIT}\",\"deployed_at\":\"${NOW_ISO}\",\"env\":\"${FORGE_ENV}\",\"jobs\":\"${DEPLOYED_JOBS}\",\"lib_rebuilt\":${LIB_REBUILT},\"dag_push\":${DAG_PUSH_DONE},\"dry_run\":${DRY_RUN}}"
+DEPLOY_LOG_LINE="{\"deploy_id\":\"${DEPLOY_ID}\",\"commit\":\"${CURRENT_COMMIT}\",\"deployed_at\":\"${NOW_ISO}\",\"env\":\"${FORGE_ENV}\",\"jobs\":\"${DEPLOYED_JOBS}\",\"dag_push\":${DAG_PUSH_DONE},\"dry_run\":${DRY_RUN}}"
 append_blob_text "${DEPLOY_LOG_LINE}" "${STATE_DEPLOY_LOG}"
 log "  ✓ Appended to deployments_${FORGE_ENV}.jsonl"
 
@@ -506,8 +463,8 @@ log "═════════════════════════
 log "  Deployment ID    : ${DEPLOY_ID}"
 log "  Commit           : ${CURRENT_COMMIT:0:12}"
 log "  Jobs regenerated : ${#GENERATED_PY[@]}"
-log "  forge_lib.zip    : $( [[ "${LIB_REBUILT}" == "true" ]] && echo "rebuilt + uploaded" || echo "unchanged (skipped)" )"
 log "  ADLS uploads     : $((${#GENERATED_PY[@]} + ${#GENERATED_DQ[@]}))"
+log "  SDK in image     : forge-sdk + forge-dq (rebuilt via forge-up.sh when changed)"
 log "  Storage account  : ${STORAGE_ACCOUNT}"
 log "  Environment      : ${FORGE_ENV}"
 if [[ "${DRY_RUN}" == "true" ]]; then

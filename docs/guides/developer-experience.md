@@ -184,7 +184,7 @@ After the venv is set up, VS Code detects `.venv/bin/python` automatically (matc
 
 ---
 
-## 2. Spark Connect Development
+## 3. Spark Connect Development
 
 ### What is Spark Connect?
 
@@ -456,7 +456,7 @@ The Airflow DAG references this path directly in the `SparkApplication` CRD defi
 
 ---
 
-## 3. Airflow DAG Development
+## 4. Airflow DAG Development
 
 ### Authoring a DAG
 
@@ -707,7 +707,7 @@ open https://portal.forge.internal/pipelines/transform_sales_orders
 
 ---
 
-## 4. DQ Rule Authoring
+## 5. DQ Rule Authoring
 
 ### Writing a YAML Ruleset
 
@@ -872,7 +872,7 @@ The validate command exits `0` on success and `1` with a descriptive error messa
 
 ---
 
-## 5. End-to-End Pipeline Workflow
+## 6. End-to-End Pipeline Workflow
 
 This section walks through the complete journey from "I have a new data source" to "data is in the Gold layer and queryable by consumers." Every step is exact — commands and code, not summaries.
 
@@ -1266,7 +1266,7 @@ After approval and merge to `main`:
 
 ---
 
-## 6. Git Branching Model
+## 7. Git Branching Model
 
 ### Branch Structure
 
@@ -1350,7 +1350,7 @@ git push origin prod-2026-03-23-003
 
 ---
 
-## 7. Debugging Guide
+## 8. Debugging Guide
 
 ### Debugging a Failed Spark Job
 
@@ -1557,7 +1557,7 @@ The `lineage_replay` flag causes the Airflow OpenLineage plugin to re-emit the S
 
 ---
 
-## 8. Environment Parity
+## 9. Environment Parity
 
 ### How Spark Connect Ensures Dev/Prod Parity
 
@@ -1586,6 +1586,31 @@ The dev `spark` node pool uses smaller VMs (4 cores / 32 GB vs 8 cores / 64 GB).
 
 The dev ADLS account contains a representative sample of production data (approximately the most recent 30 days), refreshed weekly. This is sufficient for testing schema, transform logic, and DQ rules. Volume checks in DQ rulesets use lower thresholds in dev (configurable per-environment via Airflow variables).
 
+### Dev Guardrails — What the Platform Enforces on Your DAGs
+
+Dev is a shared environment. The Forge platform enforces the following rules automatically via the `forge_dev_policy` Airflow plugin. These run at DAG parse time and **cannot be overridden in your DAG file**.
+
+| Rule | Value | What happens if you violate it |
+|------|-------|-------------------------------|
+| Max DAGs per user | **5** | Parse error — 6th DAG is rejected until you delete one |
+| Max schedule window | **5 days** | `end_date` is silently capped to `start_date + 5 days` |
+| Catchup | **Disabled** | Missed runs are never backfilled, regardless of DAG setting |
+| Max start_date lookback | **30 days** | Parse error if `start_date` is older than 30 days |
+| Max concurrent runs per DAG | **2** | Hard cap — additional runs queue |
+
+**Why the 5-day auto-expire?** It forces you to be intentional about what is running. If your DAG goes quiet after 5 days, it stops on its own — no orphaned schedules consuming cluster resources. To keep a DAG running beyond 5 days, update its `start_date` and re-sync.
+
+**Why the 5-DAG limit?** Dev is shared across the team. The limit ensures the orchestration cluster stays within its cost budget and no single engineer monopolises the scheduler.
+
+**To add a new DAG when you're at the limit:**
+```bash
+airflow dags delete <old_dag_id>   # or deactivate via the UI
+# then re-sync your new DAG file
+bash infra/scripts/sync-jobs.sh
+```
+
+None of these rules apply in prod.
+
 ### Dev and Prod Use the Same Executor
 
 Both dev and prod run `KubernetesExecutor` — every task spawns a dedicated pod. There is no local Airflow executor. This means:
@@ -1600,7 +1625,7 @@ The DAG unit tests (described in Section 3) do not test task execution — they 
 
 ---
 
-## 9. forge-cli Reference
+## 10. forge-cli Reference
 
 The `forge-cli` is a Python CLI tool installed as part of the `sdk/python` package. It is the primary command-line interface for developers interacting with the Forge platform. Install it with the SDK:
 
@@ -1837,7 +1862,7 @@ OUTPUT (--wait):
 
 ---
 
-## 10. Restatement & Backfill
+## 11. Restatement & Backfill
 
 Restatement is how you re-run a pipeline over historical data — to fix a bug, apply a logic change, or correct data that was delivered with errors. Every Forge pipeline is idempotent: re-running it for the same partition produces the same result. The **partition tracker** (`_SUCCESS.json`) is the mechanism that makes this safe.
 

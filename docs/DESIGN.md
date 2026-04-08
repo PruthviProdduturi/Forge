@@ -352,7 +352,7 @@ SparkKubernetesOperator(
 
 | Identity | Used by | Storage permissions | KV |
 |----------|---------|--------------------|----|
-| `id-forge-spark-{alias}-{env}` | Spark Operator pods | **Data Contributor**: bronze, silver, gold, code, checkpoints | Secrets User |
+| `id-forge-spark-{alias}-{env}` | Spark Operator pods | **Data Contributor**: bronze, silver, gold, code | Secrets User |
 | `id-forge-trino-{alias}-{env}` | Trino query pods | **Data Reader**: silver, gold | Secrets User |
 | `id-forge-airflow-{alias}-{env}` | Airflow task pods | **Data Contributor**: bronze · **Data Reader**: code | Secrets User |
 | `id-forge-dq-{alias}-{env}` | DQ framework pods | **Data Reader**: bronze, silver, gold | Secrets User |

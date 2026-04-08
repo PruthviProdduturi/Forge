@@ -164,6 +164,21 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
         }
       }
       {
+        // Priority 102 — before NRMS deny rules at 105-109.
+        // Exposes compute ingress-nginx ports: Trino UI (8080), HMS Thrift (9083), Spark Connect (15002).
+        name: 'AllowComputeIngressInbound'
+        properties: {
+          priority: 102
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRanges: ['80', '443', '8080', '9083', '15002']
+        }
+      }
+      {
         name: 'AllowVNetOutbound'
         properties: {
           priority: 100
@@ -328,6 +343,21 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
           sourcePortRange: '*'
           destinationAddressPrefix: 'VirtualNetwork'
           destinationPortRange: '*'
+        }
+      }
+      {
+        // Priority 102 — between NRMS-Rule-101 (443/VNet) and NRMS-Rule-103 (CorpNet).
+        // Must be before NRMS deny rules at 105-109, otherwise this rule never fires.
+        name: 'AllowHttpHttpsInbound'
+        properties: {
+          priority: 102
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: 'Internet'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRanges: ['80', '443', '8080']
         }
       }
       {
@@ -515,6 +545,34 @@ resource nsgPostgres 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
           access: 'Allow'
           protocol: 'Tcp'
           sourceAddressPrefix: addressPrefixes.compute
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '5432'
+        }
+      }
+      {
+        // Airflow (orch cluster node subnet) → Postgres
+        name: 'AllowAirflowSubnetInbound5432'
+        properties: {
+          priority: 110
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: addressPrefixes.orchestration
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '5432'
+        }
+      }
+      {
+        // Airflow (orch pod overlay — Azure CNI Overlay, not in VirtualNetwork tag)
+        name: 'AllowAirflowPodOverlayInbound5432'
+        properties: {
+          priority: 120
+          direction: 'Inbound'
+          access: 'Allow'
+          protocol: 'Tcp'
+          sourceAddressPrefix: orchPodCidr
           sourcePortRange: '*'
           destinationAddressPrefix: '*'
           destinationPortRange: '5432'

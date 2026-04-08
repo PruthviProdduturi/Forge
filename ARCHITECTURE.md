@@ -249,10 +249,8 @@ forge<env>adls (ADLS Gen2, HNS enabled)
 │   └── {domain}/{entity}/       (Delta table root)
 ├── sandbox/                     ← container
 │   └── {user_alias}/            (per-user free area, 30-day TTL)
-├── code/                        ← container
-│   └── jobs/, wheels/, jars/
-└── checkpoints/                 ← container
-    └── {pipeline_id}/           (Spark Structured Streaming checkpoints)
+└── code/                        ← container
+    └── jobs/, wheels/, jars/, checkpoints/{pipeline_id}/  (Structured Streaming checkpoints)
 ```
 
 ---
@@ -605,7 +603,7 @@ Three identities per environment, each with a distinct blast radius:
 
 | Identity | Used by | Permissions |
 |----------|---------|-------------|
-| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob **Data Contributor** (bronze, silver, gold, code, checkpoints) · KV Secrets User |
+| `id-forge-compute-{env}` | Spark Operator pods | Storage Blob **Data Contributor** (bronze, silver, gold, code) · KV Secrets User |
 | `id-forge-read-{env}` | Trino, Airflow task pods, Portal, DQ | Storage Blob **Data Reader** (silver, gold only) · KV Secrets User · Cost Management Reader · **Purview Data Curator** (Purview collection) |
 | `id-forge-build-{env}` | CI/CD pipeline (image build + push) | AcrPush + AcrPull **only** — zero data access |
 

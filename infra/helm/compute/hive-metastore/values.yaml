@@ -69,6 +69,6 @@ service:
 # Service account created by identity Bicep module (namespace: hive-metastore)
 # ----------------------------------------------------------------------------
 serviceAccount:
-  create: false
+  create: true
   name: hive-metastore
   annotations: {}    # azure.workload.identity/client-id set at deploy time

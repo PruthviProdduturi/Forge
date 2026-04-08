@@ -85,7 +85,7 @@ executor:
 # Each instance gets its own LB IP so engineers connect to either instance.
 # ----------------------------------------------------------------------------
 service:
-  type: LoadBalancer
+  type: ClusterIP
   port: 15002
   annotations:
     service.beta.kubernetes.io/azure-load-balancer-internal: "true"

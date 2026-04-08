@@ -210,7 +210,7 @@ Before approving the output, review:
 
 **Identity** — confirm each workload managed identity is created with federated credentials pointing to the correct AKS OIDC issuer.
 
-**Storage** — confirm ADLS Gen2 account has HNS enabled, public network access disabled, and the correct containers: `bronze`, `silver`, `gold`, `code`, `checkpoints`.
+**Storage** — confirm ADLS Gen2 account has HNS enabled, public network access disabled, and the correct containers: `bronze`, `silver`, `gold`, `sandbox`, `code`. Checkpoints live under `code/checkpoints/` — there is no separate checkpoints container.
 
 **Key Vault** — confirm purge protection enabled, soft-delete retention 90 days, default action Deny.
 

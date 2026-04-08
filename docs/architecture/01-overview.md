@@ -144,8 +144,7 @@ Storage account `forgeadls{alias}{env}` in `rg-forge-{alias}-{env}`.
 | `bronze` | Raw ingested data, immutable source of truth | Airflow | Spark |
 | `silver` | Cleaned, schema-enforced, DQ-validated | Spark | Spark, Trino |
 | `gold` | Aggregated, consumer-ready, SLA-governed | Spark | Trino, Portal |
-| `code` | Spark job notebooks, JARs, runner scripts | CI/CD | Spark |
-| `checkpoints` | Spark Structured Streaming state | Spark | Spark |
+| `code` | Spark job notebooks, JARs, runner scripts, and Structured Streaming checkpoints under `checkpoints/<pipeline_id>/` | CI/CD, Spark | Spark |
 
 Role assignments are scoped per container — not storage account scope. No ABAC conditions needed.
 
@@ -170,7 +169,7 @@ Each is federated to a Kubernetes service account via OIDC — no secrets anywhe
 
 | Identity | K8s Service Account | Storage Access | KV |
 |---|---|---|---|
-| `id-forge-spark-{alias}-{env}` | `spark` in `spark-jobs` | Contributor: bronze, silver, gold, code, checkpoints | Secrets User |
+| `id-forge-spark-{alias}-{env}` | `spark` in `spark-jobs` | Contributor: bronze, silver, gold, code | Secrets User |
 | `id-forge-trino-{alias}-{env}` | `trino` in `trino` | Reader: silver, gold | Secrets User |
 | `id-forge-airflow-{alias}-{env}` | `airflow` in `airflow` | Contributor: bronze · Reader: code | Secrets User |
 | `id-forge-dq-{alias}-{env}` | `dq-runner` in `dq` | Reader: bronze, silver, gold | Secrets User |

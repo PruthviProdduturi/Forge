@@ -16,7 +16,7 @@ The entire platform is deployed by a single script:
 bash infra/scripts/forge-up.sh --env dev --alias prproddu --pg-admin-pass <pass> --git-pat <pat>
 ```
 
-See [`00-deployment-runbook.md`](./00-deployment-runbook.md) for the full deploy guide including partial re-deploys, teardown, and troubleshooting.
+See [`00-forge-up.md`](./00-forge-up.md) for the full `forge-up.sh` guide: partial re-deploys, flags, teardown, and smoke test.
 
 ---
 
@@ -30,9 +30,9 @@ Step 02 — Image Builds (build custom images, import third-party images, push t
 Step 03 — Cluster Setup (Bicep env deployment: networking + AKS + storage + identity + Key Vault, then AKS bootstrap)
   ↓  (Clusters must be running before Helm deployments)
 Step 04 — Deploy Compute Cluster (Hive Metastore, Spark Operator, Spark Connect, Trino, Trino Auth Proxy)
-  ↓  (forge-up.sh phase [5/7] handles this automatically)
+  ↓  (forge-up.sh phase [6/8] handles this automatically)
 Step 05 — Deploy Orchestration Cluster (Airflow + Portal)
-  ↓  (forge-up.sh phase [6/7] handles this automatically)
+  ↓  (forge-up.sh phase [7/8] handles this automatically)
 Step 06 — CI/CD Pipeline
 ```
 
@@ -50,12 +50,12 @@ Step 06 — CI/CD Pipeline
 | | Document | What it covers |
 |-|----------|---------------|
 | ref | [networking-reference.md](./networking-reference.md) | VNet architecture, subnets, NSGs, private DNS zones — reference only, deployed as part of Step 03 |
-| 00 | [00-deployment-runbook.md](./00-deployment-runbook.md) | **Start here.** forge-up.sh usage, partial re-deploys, teardown |
+| 00 | [00-forge-up.md](./00-forge-up.md) | **Start here.** forge-up.sh flags, partial re-deploys, smoke test, teardown |
 | 01 | [01-acr-setup.md](./01-acr-setup.md) | Create shared ACR via `shared/main.bicep`, configure security controls, assign roles |
 | 02 | [02-image-builds.md](./02-image-builds.md) | Build custom images (Spark, Trino, Airflow, Portal), import third-party images, push to ACR |
 | 03 | [03-cluster-setup.md](./03-cluster-setup.md) | Full env Bicep deployment (`dev/main.bicep` or `prod/main.bicep`), AKS bootstrap, workload identity, namespaces |
-| 04 | [04-deploy-compute.md](./04-deploy-compute.md) | Helm deploy Spark Operator, Spark Connect, Trino, Hive Metastore (automated by forge-up.sh [5/7]) |
-| 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, Portal (automated by forge-up.sh [6/7]) |
+| 04 | [04-deploy-compute.md](./04-deploy-compute.md) | Helm deploy Spark Operator, Spark Connect, Trino, Hive Metastore (automated by forge-up.sh [6/8]) |
+| 05 | [05-deploy-orchestration.md](./05-deploy-orchestration.md) | Deploy Airflow, Portal (automated by forge-up.sh [7/8]) |
 | 06 | [06-cicd.md](./06-cicd.md) | Azure DevOps pipeline definitions for infrastructure and application deployments |
 
 ---

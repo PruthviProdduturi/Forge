@@ -23,6 +23,9 @@ param logAnalyticsWorkspaceId string = ''
 @description('Set to true during initial shared deployment (before private endpoint exists). Set to false after PE is in place to prevent data exfiltration.')
 param exportPolicyEnabled bool = true
 
+@description('Enable public network access to the registry. Set to true for dev (local helm/docker access). Set to false for prod.')
+param publicNetworkAccessEnabled bool = false
+
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
@@ -39,8 +42,11 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
   properties: {
     adminUserEnabled: false
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: publicNetworkAccessEnabled ? 'Enabled' : 'Disabled'
     networkRuleBypassOptions: 'AzureServices'
+    networkRuleSet: {
+      defaultAction: publicNetworkAccessEnabled ? 'Allow' : 'Deny'
+    }
     zoneRedundancy: 'Disabled'
     policies: {
       retentionPolicy: {

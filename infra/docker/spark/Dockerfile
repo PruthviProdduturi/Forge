@@ -11,10 +11,11 @@
 #   - openlineage-spark 1.39.0
 #   - Python 3.11 + PySpark + delta-spark + pandas + pyarrow + azure-identity
 #   - spark-defaults.conf baked in (ADLS + workload identity + OpenLineage)
-#   - forge-dq 0.1.0 (Forge Data Quality framework)
+#   - forge_sdk + forge_dq baked in (no zip distribution at runtime)
 #   - Non-root spark user (UID 185)
 #
-# Build context: repo root (required so COPY sdk/python resolves correctly)
+# Build context: REPO ROOT — required so COPY sdk/python resolves correctly.
+#   az acr build must be run from the repo root with -f infra/docker/spark/Dockerfile
 # =============================================================================
 
 FROM eclipse-temurin:17-jre-jammy
@@ -169,14 +170,22 @@ RUN pip3 install --upgrade pip && \
         "pyyaml==6.0.2"
 
 # ----------------------------------------------------------------------------
-# forge-dq SDK — installed from local source (no PyPI dependency at runtime)
+# forge-sdk + forge-dq — installed from source packages baked into the image.
 #
-# The build context must be the repo root so that sdk/python is accessible.
-# The build-and-push-images.sh script uses build_and_push_spark() which sets
-# REPO_ROOT as the build context and passes -f infra/docker/spark/Dockerfile.
+# Each is a proper pip-installable package with pyproject.toml and declared
+# dependencies. No zip upload or ADLS dependency at job startup.
+#
+# Build context must be the repo root for these COPY paths to resolve.
+#
+# PROD MIGRATION: Replace the COPY+pip block below with:
+#   RUN pip3 install forge-sdk==1.0.0 forge-dq==1.0.0 \
+#       --index-url https://pkgs.dev.azure.com/L1R/.../_packaging/forge/pypi/simple/
+# once packages are published to Azure Artifacts (run sdk/python/publish.sh).
 # ----------------------------------------------------------------------------
-COPY sdk/python /tmp/forge_dq_src
-RUN pip3 install /tmp/forge_dq_src && rm -rf /tmp/forge_dq_src
+COPY sdk/python/forge_sdk /tmp/forge_sdk
+COPY sdk/python/forge_dq  /tmp/forge_dq
+RUN pip3 install /tmp/forge_sdk /tmp/forge_dq \
+    && rm -rf /tmp/forge_sdk /tmp/forge_dq
 
 # ----------------------------------------------------------------------------
 # spark-defaults.conf — baked-in defaults for ADLS, workload identity,

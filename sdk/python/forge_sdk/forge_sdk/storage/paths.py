@@ -90,19 +90,23 @@ def sandbox(path: str = "", config: PlatformConfig | None = None) -> str:
 
 
 def checkpoint(path: str = "", config: PlatformConfig | None = None) -> str:
-    """Return an ABFS URI in the ``checkpoints`` container.
+    """Return an ABFS URI for Structured Streaming checkpoints.
 
-    Use for Structured Streaming checkpoint directories.
+    Checkpoints live under ``code/checkpoints/`` — there is no separate
+    checkpoints container.  The ``code`` container is the single home for
+    all operational platform artefacts (scripts, forge_lib.zip, Airflow logs,
+    and checkpoints).
 
     Args:
-        path:   Relative path within the container.
+        path:   Relative path within ``code/checkpoints/``.
         config: Platform config; defaults to :meth:`PlatformConfig.from_env`.
 
     Returns:
-        Fully qualified ``abfss://checkpoints@...`` URI.
+        Fully qualified ``abfss://code@.../checkpoints/<path>`` URI.
     """
     cfg = config or PlatformConfig.from_env()
-    return cfg.abfss("checkpoints", path)
+    sub = f"checkpoints/{path}" if path else "checkpoints"
+    return cfg.abfss("code", sub)
 
 
 def code(path: str = "", config: PlatformConfig | None = None) -> str:

@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forge-dev-dag-policy
+  namespace: airflow
+data:
+  forge_dev_policy.py: |
+    """
+    Forge Dev DAG Policy
+    ====================
+    Applied to every DAG at parse time in dev. Enforces:
+
+      1. Per-user DAG limit of 5   — must delete an existing DAG to add a new one
+      2. catchup = False            — no historical backfill
+      3. max_active_runs = 2        — no runaway parallel executions
+      4. end_date = start + 5 days  — DAGs auto-expire; forces intentional re-deploy
+      5. start_date ceiling         — reject DAGs with start_date > 30 days ago
+
+    These rules are enforced at the platform level so individual DAG authors cannot
+    bypass them in dev. They are not applied in prod (FORGE_ENV != "dev").
+
+    Configured via airflow.cfg:
+      [core]
+      dag_policy_package_name = forge_dev_policy
+    """
+    from __future__ import annotations
+
+    import os
+    from datetime import datetime, timedelta, timezone
+
+    _DEV_MAX_DAGS_PER_USER = int(os.getenv("FORGE_DEV_MAX_DAGS_PER_USER", "5"))
+    _DEV_MAX_DAYS = int(os.getenv("FORGE_DEV_MAX_SCHEDULE_DAYS", "5"))
+    _DEV_MAX_LOOKBACK_DAYS = 30
+    _ENV = os.getenv("FORGE_ENV", "dev")
+
+
+    def dag_policy(dag) -> None:  # noqa: ANN001
+        """Applied to every DAG object immediately after parsing."""
+        if _ENV != "dev":
+            return
+
+        now = datetime.now(timezone.utc)
+
+        # 1. Per-user DAG limit.
+        #    dag.owner is a comma-separated string (e.g. "prproddu" or "alice,bob").
+        #    We enforce the limit per primary owner (first value).
+        #    We query existing DAGs in the metadata DB, excluding the current DAG
+        #    (so updates to an existing DAG don't incorrectly count against the limit).
+        primary_owner = (dag.owner or "").split(",")[0].strip()
+        if primary_owner:
+            try:
+                from airflow.models.dag import DagModel
+                from airflow.utils.session import create_session
+
+                with create_session() as session:
+                    existing = (
+                        session.query(DagModel.dag_id)
+                        .filter(DagModel.owners.contains(primary_owner))
+                        .filter(DagModel.dag_id != dag.dag_id)
+                        .filter(DagModel.is_active == True)  # noqa: E712
+                        .count()
+                    )
+                if existing >= _DEV_MAX_DAGS_PER_USER:
+                    raise ValueError(
+                        f"[forge-dev-policy] User '{primary_owner}' already has "
+                        f"{existing} active DAG(s) in dev (limit: {_DEV_MAX_DAGS_PER_USER}). "
+                        f"Delete an existing DAG before registering a new one."
+                    )
+            except ImportError:
+                pass  # Safety: if DB not available at parse time, skip this check
+
+        # 2. Never backfill in dev.
+        dag.catchup = False
+
+        # 3. Cap concurrent runs per DAG.
+        dag.max_active_runs = 2
+
+        # 4. Reject DAGs with start_date older than 30 days.
+        oldest_allowed = now - timedelta(days=_DEV_MAX_LOOKBACK_DAYS)
+        if dag.start_date and dag.start_date.replace(tzinfo=timezone.utc) < oldest_allowed:
+            raise ValueError(
+                f"[forge-dev-policy] DAG '{dag.dag_id}' start_date "
+                f"({dag.start_date.date()}) is more than {_DEV_MAX_LOOKBACK_DAYS} days ago. "
+                f"Use a recent start_date in dev."
+            )
+
+        # 5. Auto-expire: cap end_date to start_date + 5 days.
+        #    DAGs stop scheduling automatically after 5 days.
+        #    Re-deploy (update start_date) to extend.
+        if dag.start_date:
+            start = dag.start_date.replace(tzinfo=timezone.utc)
+            max_end = start + timedelta(days=_DEV_MAX_DAYS)
+            if dag.end_date is None or dag.end_date.replace(tzinfo=timezone.utc) > max_end:
+                dag.end_date = max_end

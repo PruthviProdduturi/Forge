@@ -15,12 +15,24 @@
 #   --skip-infra            Skip Bicep provisioning (infra already exists)
 #   --skip-build            Skip Docker image builds (images already in ACR)
 #   --skip-sync             Skip sync-jobs.sh (DAG/lib sync)
+#   --skip-pg-grants        Skip Postgres schema grants (do manually via kubectl exec)
 #   --git-repo <url>        Azure DevOps git repo URL for Airflow DAG git-sync
 #   --git-branch <branch>   Git branch for DAG git-sync (default: main)
-#   --git-pat <token>       Azure DevOps PAT for Airflow git-sync
-#   --pg-admin-pass <pass>  Postgres admin password (or set FORGE_PG_ADMIN_PASS)
+#   --git-pat <token>       Azure DevOps PAT for Airflow git-sync (optional — Airflow
+#                           MI workload identity is used if omitted; requires
+#                           id-forge-airflow-<env> added to the ADO org with Read access)
 #   --api-tag <tag>         portal-api image tag (default: 1.0)
 #   --web-tag <tag>         portal-web image tag (default: 1.0)
+#   --build-only <images>   Comma-separated images to rebuild only (no deploy).
+#                           Names: spark trino airflow hive-metastore
+#                                  trino-auth-proxy portal-api portal-web
+#   --skip-compute          Skip Phase 6 (compute cluster: HMS, Spark, Trino)
+#   --skip-orch             Skip Phase 7 (orch cluster: Airflow, Portal, ingress)
+#   --skip-secrets          Skip phases 2-4 (KV seeding, Postgres grants, K8s secrets)
+#                           Safe when credentials haven't changed — saves ~1-2 min
+#   --skip-imports          Skip third-party image and Helm chart imports in Phase 5
+#                           (saves ~3-5 min when git-sync, spark-operator images and
+#                            spark-operator/airflow/trino charts are already in ACR)
 #   --run-test              After deploy: seed raw data, trigger all pipelines
 #                           once (bronze → silver → gold), verify tables in Trino
 #   --test-date <date>      Partition date for test run (default: 2023-01-15)
@@ -42,24 +54,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # ---------------------------------------------------------------------------
-# Defaults
+# Defaults (lowest priority — overridden by env file, then CLI args)
 # ---------------------------------------------------------------------------
 ENV="dev"
 ALIAS=""
 SKIP_INFRA=false
 SKIP_BUILD=false
 SKIP_SYNC=false
+SKIP_PG_GRANTS=false
 RUN_TEST=false
 TEST_DATE="2023-01-15"
-GIT_REPO="https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"
-GIT_BRANCH="main"
+GIT_REPO=""
+GIT_BRANCH=""
 GIT_PAT="${FORGE_GIT_PAT:-}"
-PG_ADMIN_PASS="${FORGE_PG_ADMIN_PASS:-}"
-API_TAG="1.0"
-WEB_TAG="1.0"
+API_TAG=""
+WEB_TAG=""
+BUILD_ONLY=""   # comma-separated image names; if set, only those images are built
+SKIP_COMPUTE=false
+SKIP_ORCH=false
+SKIP_IMPORTS=false  # skip third-party image and Helm chart imports (use when already in ACR)
+SKIP_SECRETS=false  # skip phases 2-4 (KV seeds, Postgres grants, K8s secrets) on re-deploys
 
 # ---------------------------------------------------------------------------
-# Parse args
+# Parse args — collect only; env file is sourced after --env is known
 # ---------------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -67,48 +84,109 @@ while [[ $# -gt 0 ]]; do
     --alias)         ALIAS="$2";        shift 2 ;;
     --skip-infra)    SKIP_INFRA=true;   shift ;;
     --skip-build)    SKIP_BUILD=true;   shift ;;
-    --skip-sync)     SKIP_SYNC=true;    shift ;;
-    --run-test)      RUN_TEST=true;     shift ;;
+    --skip-sync)      SKIP_SYNC=true;      shift ;;
+    --skip-pg-grants) SKIP_PG_GRANTS=true; shift ;;
+    --run-test)       RUN_TEST=true;       shift ;;
     --test-date)     TEST_DATE="$2";    shift 2 ;;
     --git-repo)      GIT_REPO="$2";     shift 2 ;;
     --git-branch)    GIT_BRANCH="$2";   shift 2 ;;
     --git-pat)       GIT_PAT="$2";      shift 2 ;;
-    --pg-admin-pass) PG_ADMIN_PASS="$2"; shift 2 ;;
     --api-tag)       API_TAG="$2";      shift 2 ;;
     --web-tag)       WEB_TAG="$2";      shift 2 ;;
+    --build-only)    BUILD_ONLY="$2";   shift 2 ;;
+    --skip-compute)  SKIP_COMPUTE=true;  shift ;;
+    --skip-orch)     SKIP_ORCH=true;     shift ;;
+    --skip-imports)  SKIP_IMPORTS=true;  shift ;;
+    --skip-secrets)  SKIP_SECRETS=true;  shift ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
 
-[[ -z "$ALIAS" ]] && { echo "ERROR: --alias required"; exit 1; }
+# ---------------------------------------------------------------------------
+# Load config from dev.parameters.json (.forge section)
+# CLI args take precedence over values in the file.
+# ---------------------------------------------------------------------------
+PARAMS_FILE="${REPO_ROOT}/infra/bicep/environments/${ENV}/${ENV}.parameters.json"
+[[ ! -f "$PARAMS_FILE" ]] && { echo "ERROR: params file not found: $PARAMS_FILE"; exit 1; }
+
+# JSON reader — uses jq if available, falls back to Python3
+_jq() {
+  local query="$1"
+  if command -v jq >/dev/null 2>&1; then
+    jq -r "${query} // empty" "$PARAMS_FILE" 2>/dev/null || echo ""
+  else
+    python3 - "$PARAMS_FILE" "$query" <<'EOF'
+import json, sys
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+keys = sys.argv[2].lstrip('.').split('.')
+v = d
+for k in keys:
+    v = v.get(k, '') if isinstance(v, dict) else ''
+print(v if v != '' else '')
+EOF
+  fi
+}
+
+[[ -z "$ALIAS" ]]      && ALIAS=$(_jq '.forge.alias')
+[[ -z "$GIT_REPO" ]]   && GIT_REPO=$(_jq '.forge.gitRepo')
+[[ -z "$GIT_BRANCH" ]] && GIT_BRANCH=$(_jq '.forge.gitBranch')
+[[ -z "$API_TAG" ]]    && API_TAG=$(_jq '.forge.apiTag')
+[[ -z "$WEB_TAG" ]]    && WEB_TAG=$(_jq '.forge.webTag')
+
+FORGE_CLIENT_ID=$(_jq '.forge.clientId')
+FORGE_TENANT_ID=$(_jq '.parameters.tenantId.value')
+FORGE_ALLOWED_DOMAIN=$(_jq '.forge.allowedDomain')
+FORGE_REDIRECT_URI="http://localhost:8080/oauth2/callback"
+
+GIT_BRANCH="${GIT_BRANCH:-main}"
+API_TAG="${API_TAG:-1.0}"
+WEB_TAG="${WEB_TAG:-1.0}"
+
+# ALIAS is optional — blank means shared/unscoped environment
+[[ -z "$FORGE_CLIENT_ID" ]]     && { echo "ERROR: forge.clientId missing from $PARAMS_FILE"; exit 1; }
+[[ -z "$FORGE_TENANT_ID" ]]     && { echo "ERROR: parameters.tenantId missing from $PARAMS_FILE"; exit 1; }
+[[ -z "$FORGE_ALLOWED_DOMAIN" ]] && { echo "ERROR: forge.allowedDomain missing from $PARAMS_FILE"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Derived names — must match main.bicep naming conventions
 # ---------------------------------------------------------------------------
-ACR="forgeacr${ALIAS}"
-ACR_RG="rg-forge-acr-${ALIAS}"
-RESOURCE_GROUP="rg-forge-${ALIAS}-${ENV}"
-COMPUTE_CLUSTER="aks-forge-compute-${ALIAS}-${ENV}"
-ORCH_CLUSTER="aks-forge-orchestration-${ALIAS}-${ENV}"
-KV_NAME="kv-forge-${ALIAS}-${ENV}"
-PG_SERVER="psql-forge-${ALIAS}-${ENV}"
-PG_HOST="${PG_SERVER}.postgres.database.azure.com"
-ADLS_ACCOUNT="forgeadls${ALIAS//-/}${ENV}"
-DNS_LABEL="forge-portal-${ALIAS}-${ENV}"
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 
+# When ALIAS is blank, names collapse to shared/unscoped form (e.g. rg-forge-dev)
+_A="${ALIAS:+${ALIAS}-}"   # "prproddu-" when set, "" when blank
+# ACR name must match shared/main.bicep: alias when set, else first 8 chars of subscription ID
+if [[ -n "$ALIAS" ]]; then
+  ACR="forgeacr${ALIAS}"
+else
+  _SUB_SUFFIX="${SUBSCRIPTION_ID//-/}"   # remove hyphens
+  _SUB_SUFFIX="${_SUB_SUFFIX:0:8}"       # first 8 chars
+  ACR="forgeacr${_SUB_SUFFIX}"
+fi
+ACR_RG="rg-forge-acr${ALIAS:+-${ALIAS}}"
+RESOURCE_GROUP="rg-forge-${_A}${ENV}"
+COMPUTE_CLUSTER="aks-forge-compute-${_A}${ENV}"
+ORCH_CLUSTER="aks-forge-orchestration-${_A}${ENV}"
+# KV, Postgres, ADLS are globally unique — use sub suffix when alias is blank (same as ACR)
+if [[ -n "$ALIAS" ]]; then
+  KV_NAME="kv-forge-${ALIAS}-${ENV}"
+  PG_SERVER="psql-forge-${ALIAS}-${ENV}"
+  ADLS_ACCOUNT="forgeadls${ALIAS//-/}${ENV}"
+else
+  KV_NAME="kv-forge-${_SUB_SUFFIX}-${ENV}"
+  PG_SERVER="psql-forge-${_SUB_SUFFIX}-${ENV}"
+  ADLS_ACCOUNT="forgeadls${_SUB_SUFFIX}${ENV}"
+fi
+PG_HOST="${PG_SERVER}.postgres.database.azure.com"
+DNS_LABEL="forge-portal-${_A}${ENV}"
+
 LOCATION=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
-  --query location -o tsv 2>/dev/null || echo "northcentralus")
+  --query location -o tsv 2>/dev/null || echo "westcentralus")
 NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
   --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 
 PUBLIC_HOST="${DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 
-# Trino auth proxy constants (app registration is fixed across envs)
-TRINO_APP_CLIENT_ID="f21cd19e-5e8b-4739-b0fb-1ebd13b8c036"
-TRINO_TENANT_ID="72f988bf-86f1-41af-91ab-2d7cd011db47"
-TRINO_ALLOWED_DOMAIN="microsoft.com"
-TRINO_REDIRECT_URI="http://localhost:8080/oauth2/callback"
 
 # ---------------------------------------------------------------------------
 # Banner
@@ -123,57 +201,77 @@ printf "║  ACR        : %-38s║\n" "${ACR}.azurecr.io"
 printf "║  compute    : %-38s║\n" "$COMPUTE_CLUSTER"
 printf "║  orch       : %-38s║\n" "$ORCH_CLUSTER"
 printf "║  portal URL : %-38s║\n" "http://$PUBLIC_HOST"
+printf "║  airflow UI : %-38s║\n" "http://$PUBLIC_HOST:8080"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
+
+# ---------------------------------------------------------------------------
+# Phases 1–4 — skipped entirely when --build-only is set (no cluster needed)
+# ---------------------------------------------------------------------------
+if [[ -z "$BUILD_ONLY" ]]; then
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Bicep infra provisioning (skippable)
 # provision-infra.sh handles both Bicep + post-deploy (kubeconfigs + IP tags)
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_INFRA" == "false" ]]; then
-  echo "━━━ [1/7] Provision infrastructure ━━━━━━━━━━━━━━━━━━━━"
+  echo "━━━ [1/8] Provision infrastructure ━━━━━━━━━━━━━━━━━━━━"
   bash "${SCRIPT_DIR}/provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
 else
-  echo "━━━ [1/7] Provision infrastructure — skipped (--skip-infra) ━━━━━━━━━"
+  echo "━━━ [1/8] Provision infrastructure — skipped (--skip-infra) ━━━━━━━━━"
   echo "         Refreshing kubeconfigs..."
-  bash "${SCRIPT_DIR}/post-provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
+  az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$COMPUTE_CLUSTER" --overwrite-existing --output none
+  az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" --overwrite-existing --output none
+  echo "         Done."
 fi
 echo ""
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Key Vault secret seeding
 # ---------------------------------------------------------------------------
-echo "━━━ [2/7] Seed Key Vault secrets ━━━━━━━━━━━━━━━━━━━━━━"
+if [[ "$SKIP_SECRETS" == "true" ]]; then
+  echo "━━━ [2/8] Seed Key Vault secrets — skipped (--skip-secrets) ━━━━━━━━━━━━"
+  echo "━━━ [3/8] Configure Postgres — skipped (--skip-secrets) ━━━━━━━━━━━━━━━━"
+  echo "━━━ [4/8] Create Kubernetes secrets — skipped (--skip-secrets) ━━━━━━━━━"
+  # Still need AIRFLOW_WS_KEY and AIRFLOW_MI_NAME_CONN for Phase 7 token jobs
+  AIRFLOW_WS_KEY=$(az keyvault secret show --vault-name "$KV_NAME" \
+    --name "airflow-webserver-key" --query value -o tsv 2>/dev/null || echo "")
+  AIRFLOW_MI_NAME_CONN=$(az identity show \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-airflow-${ENV}" \
+    --query name -o tsv 2>/dev/null || echo "id-forge-airflow-${ENV}")
+else
+echo "━━━ [2/8] Seed Key Vault secrets ━━━━━━━━━━━━━━━━━━━━━━"
 
 _kv_seed() {
   local name="$1" value="$2"
+  # Skip if no value — Azure CLI rejects empty strings; optional secrets are
+  # seeded manually via portal Settings once AAD SSO is configured.
+  if [[ -z "$value" ]]; then
+    echo "  Skipped: $name (no value — set manually when needed)"
+    return
+  fi
   local existing
   existing=$(az keyvault secret show --vault-name "$KV_NAME" --name "$name" \
     --query value -o tsv 2>/dev/null || echo "")
   if [[ -z "$existing" ]]; then
     az keyvault secret set --vault-name "$KV_NAME" --name "$name" --value "$value" --output none
     echo "  Created: $name"
+  elif [[ "$existing" != "$value" ]]; then
+    az keyvault secret set --vault-name "$KV_NAME" --name "$name" --value "$value" --output none
+    echo "  Updated: $name"
   else
     echo "  Exists:  $name"
   fi
 }
 
 # Portal auth config
-_kv_seed "forge-portal-auth-provider" "local"
-_kv_seed "forge-portal-aad-client-id" ""
-_kv_seed "forge-portal-aad-tenant-id" ""
+_kv_seed "forge-portal-auth-provider" "azure_ad"
+_kv_seed "forge-portal-aad-client-id" "$FORGE_CLIENT_ID"
+_kv_seed "forge-portal-aad-tenant-id" "$FORGE_TENANT_ID"
 
-# Airflow DB password — generate once, store in KV
-AIRFLOW_DB_PASS=$(az keyvault secret show --vault-name "$KV_NAME" \
-  --name "airflow-db-password" --query value -o tsv 2>/dev/null || echo "")
-if [[ -z "$AIRFLOW_DB_PASS" ]]; then
-  AIRFLOW_DB_PASS=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
-  az keyvault secret set --vault-name "$KV_NAME" \
-    --name "airflow-db-password" --value "$AIRFLOW_DB_PASS" --output none
-  echo "  Created: airflow-db-password"
-else
-  echo "  Exists:  airflow-db-password"
-fi
+# No Airflow DB password — Postgres is AAD-only. Airflow pods authenticate
+# via workload identity token (see Phase 3 and Airflow Helm values).
 
 # Airflow webserver secret key — generate once
 AIRFLOW_WS_KEY=$(az keyvault secret show --vault-name "$KV_NAME" \
@@ -189,60 +287,58 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 3 — Postgres: create airflow database and user
+# Phase 3 — Postgres: grant Airflow managed identity access to airflow DB
+#
+# Postgres is AAD-only (passwordAuth: Disabled). Server is VNet-integrated
+# (private endpoint) — reachable from corpnet via ExpressRoute.
+#
+# The airflow database and AAD admin registrations are created by Bicep.
+# This phase grants the Airflow managed identity schema-level privileges
+# that ARM resources cannot set (GRANT ON SCHEMA requires a live SQL session).
+#
+# Auth: uses the calling engineer's az login AAD session — no password needed.
+# The engineer's AAD group is registered as a Postgres AAD admin by Bicep
+# (platformAdminGroupObjectId), so the CLI token is accepted directly.
 # ---------------------------------------------------------------------------
-echo "━━━ [3/7] Configure Postgres (Airflow DB) ━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [3/8] Configure Postgres (Airflow schema grants) ━━━━━━━━━━━━━━━━━━━━"
 
-# Resolve pg admin password: flag > env var > Key Vault
-if [[ -z "$PG_ADMIN_PASS" ]]; then
-  PG_ADMIN_PASS=$(az keyvault secret show --vault-name "$KV_NAME" \
-    --name "postgres-admin-password" --query value -o tsv 2>/dev/null || echo "")
+AIRFLOW_MI_NAME=$(az identity show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "id-forge-airflow-${ENV}" \
+  --query name -o tsv 2>/dev/null || echo "")
+
+if [[ "$SKIP_PG_GRANTS" == "true" ]]; then
+  echo "  Skipped (--skip-pg-grants) — grants assumed already applied."
+elif [[ -z "$AIRFLOW_MI_NAME" ]]; then
+  echo "  WARNING: Airflow managed identity not found — skipping grants."
+  echo "           Run without --skip-infra first to provision it."
+else
+  echo "  Grants applied in Phase 7.0 via Airflow MI workload identity Job."
+  echo "  (Postgres private endpoint unreachable from outside cluster —"
+  echo "   using in-cluster OIDC token exchange instead of az postgres execute)"
 fi
-if [[ -z "$PG_ADMIN_PASS" ]]; then
-  echo "  ERROR: Postgres admin password not found."
-  echo "  Provide via --pg-admin-pass, FORGE_PG_ADMIN_PASS env var,"
-  echo "  or store in Key Vault secret 'postgres-admin-password'."
-  exit 1
-fi
-
-# Store admin pass in KV for future runs
-az keyvault secret set --vault-name "$KV_NAME" \
-  --name "postgres-admin-password" --value "$PG_ADMIN_PASS" --output none 2>/dev/null || true
-
-_pg_exec() {
-  az postgres flexible-server execute \
-    --name "$PG_SERVER" \
-    --resource-group "$RESOURCE_GROUP" \
-    --admin-user "forgeadmin" \
-    --admin-password "$PG_ADMIN_PASS" \
-    --database-name "postgres" \
-    --querytext "$1" \
-    --output none 2>/dev/null || true
-}
-
-echo "  Ensuring airflow database exists..."
-_pg_exec "SELECT 1 FROM pg_database WHERE datname='airflow'" 2>/dev/null | grep -q 1 || \
-  _pg_exec "CREATE DATABASE airflow;"
-echo "  Ensuring airflow user exists..."
-_pg_exec "DO \$\$ BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='airflow') THEN
-    CREATE USER airflow WITH PASSWORD '${AIRFLOW_DB_PASS}';
-  ELSE
-    ALTER USER airflow WITH PASSWORD '${AIRFLOW_DB_PASS}';
-  END IF;
-END \$\$;"
-_pg_exec "GRANT ALL PRIVILEGES ON DATABASE airflow TO airflow;"
-# Postgres 15+: also grant on schema
-_pg_exec "\\c airflow; GRANT ALL ON SCHEMA public TO airflow;" 2>/dev/null || true
-echo "  Postgres airflow DB ready"
 echo ""
 
 # ---------------------------------------------------------------------------
 # Phase 4 — K8s secrets for Airflow (both clusters)
 # ---------------------------------------------------------------------------
-echo "━━━ [4/7] Create Kubernetes secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "━━━ [4/8] Create Kubernetes secrets ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-AIRFLOW_DB_CONN="postgresql+psycopg2://airflow:${AIRFLOW_DB_PASS}@${PG_HOST}:5432/airflow?sslmode=require"
+# Airflow connects to Postgres via AAD token (workload identity).
+# The connection string uses the managed identity name as the PostgreSQL user;
+# the password field is intentionally empty here — the Airflow Helm chart uses
+# an init container to fetch the token from the IMDS endpoint and inject it at
+# startup (see infra/helm/orchestration/airflow/values.yaml extraInitContainers).
+AIRFLOW_MI_NAME_CONN=$(az identity show \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "id-forge-airflow-${ENV}" \
+  --query name -o tsv 2>/dev/null || echo "id-forge-airflow-${ENV}")
+AIRFLOW_DB_CONN="postgresql+psycopg2://${AIRFLOW_MI_NAME_CONN}@${PG_HOST}/airflow?sslmode=require"
+
+# Ensure airflow namespace exists before creating secrets
+kubectl create namespace airflow \
+  --context "$ORCH_CLUSTER" \
+  --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f - 2>/dev/null || true
 
 # Airflow namespace secrets (orchestration cluster)
 echo "  Orchestration cluster secrets..."
@@ -261,23 +357,70 @@ kubectl create secret generic airflow-webserver-secret \
   --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f -
 echo "    airflow-webserver-secret"
 
-# Git-sync credentials — requires PAT
+# Git-sync credentials — requires PAT.
+# git-sync v4 uses GITSYNC_* env vars; chart also sets legacy GIT_SYNC_* aliases.
+# Both key names must exist in the secret or pods fail with CreateContainerConfigError.
 if [[ -n "$GIT_PAT" ]]; then
   kubectl create secret generic airflow-git-credentials \
     --from-literal="GIT_SYNC_USERNAME=forge" \
     --from-literal="GIT_SYNC_PASSWORD=${GIT_PAT}" \
+    --from-literal="GITSYNC_USERNAME=forge" \
+    --from-literal="GITSYNC_PASSWORD=${GIT_PAT}" \
     --namespace airflow \
     --context "$ORCH_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f -
   echo "    airflow-git-credentials"
 else
-  if ! kubectl get secret airflow-git-credentials -n airflow --context "$ORCH_CLUSTER" &>/dev/null; then
-    echo "    WARN: airflow-git-credentials missing — DAG git-sync will not work."
-    echo "    Provide --git-pat to create it. Re-run forge-up.sh after adding the PAT."
+  # No PAT — create placeholder credentials now; the token-init Job in [7.0]
+  # will overwrite GIT_SYNC_PASSWORD/GITSYNC_PASSWORD with a live AAD access
+  # token fetched via Airflow MI workload identity (OIDC). git-sync will start
+  # failing until [7.0] runs, but it retries every 30s so it self-heals.
+  # Prerequisite: id-forge-airflow-<env> must have Read access in the ADO org.
+  kubectl create secret generic airflow-git-credentials \
+    --from-literal="GIT_SYNC_USERNAME=forge" \
+    --from-literal="GIT_SYNC_PASSWORD=placeholder" \
+    --from-literal="GITSYNC_USERNAME=forge" \
+    --from-literal="GITSYNC_PASSWORD=placeholder" \
+    --namespace airflow \
+    --context "$ORCH_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f -
+  echo "    airflow-git-credentials (placeholder — ADO MI token injected in [7.0])"
+fi
+
+# Airflow OAuth — federated credential (same pattern as Trino UI AAD, S360-compliant).
+# The Airflow webserver reads AZURE_FEDERATED_TOKEN_FILE (workload identity) and uses
+# it as client_assertion when exchanging OAuth auth codes — no client_secret, no cert.
+# forge-up.sh registers a federated credential on the app registration that trusts:
+#   issuer:  orch cluster OIDC issuer
+#   subject: system:serviceaccount:airflow:airflow
+APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
+if [[ -n "$APP_OBJ_ID" ]]; then
+  ORCH_OIDC_ISSUER=$(az aks show --resource-group "$RESOURCE_GROUP" \
+    --name "$ORCH_CLUSTER" --query oidcIssuerProfile.issuerUrl -o tsv 2>/dev/null || echo "")
+  if [[ -n "$ORCH_OIDC_ISSUER" ]]; then
+    FC_SUBJECT="system:serviceaccount:airflow:airflow"
+    EXISTING_FC=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+      --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+      --query "value[?subject=='${FC_SUBJECT}'].id" -o tsv 2>/dev/null || echo "")
+    if [[ -z "$EXISTING_FC" ]]; then
+      MSYS_NO_PATHCONV=1 az rest --method POST \
+        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+        --body "{\"name\":\"airflow-orch-federation\",\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+        --output none 2>/dev/null || echo "    WARN: federated credential creation failed (check app reg permissions)"
+      echo "    Federated credential created: airflow → app reg"
+    else
+      echo "    Federated credential already exists: airflow → app reg"
+    fi
   else
-    echo "    airflow-git-credentials (already exists)"
+    echo "    WARN: could not get orch OIDC issuer — federated credential not configured"
   fi
 fi
+kubectl create secret generic airflow-oauth-credentials \
+  --from-literal="client-id=${FORGE_CLIENT_ID}" \
+  --namespace airflow \
+  --context "$ORCH_CLUSTER" \
+  --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f -
+echo "    airflow-oauth-credentials"
 
 # Compute cluster kubeconfig for Airflow (SparkKubernetesOperator)
 COMPUTE_KUBECONFIG=$(az aks get-credentials \
@@ -297,8 +440,12 @@ else
 fi
 
 # Trino auth proxy session secret (compute cluster)
-if ! kubectl get secret proxy-session-secret -n trino --context "$COMPUTE_CLUSTER" &>/dev/null; then
+if [[ "$SKIP_COMPUTE" == "true" ]]; then
+  echo "    proxy-session-secret (skipped — --skip-compute)"
+elif ! kubectl get secret proxy-session-secret -n trino --context "$COMPUTE_CLUSTER" &>/dev/null; then
   SESSION_KEY=$(openssl rand -hex 32)
+  kubectl create namespace trino --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
   kubectl create secret generic proxy-session-secret \
     --from-literal="session-secret=${SESSION_KEY}" \
     --namespace trino \
@@ -309,240 +456,951 @@ else
 fi
 echo ""
 
+fi  # end SKIP_SECRETS else block
+
+fi  # end phases 1–4 (skipped when --build-only)
+
 # ---------------------------------------------------------------------------
-# Phase 5 — Compute cluster: Helm deploys
+# Phase 5 — Build and push Docker images to ACR
+# Builds all custom images. Skippable with --skip-build if already in ACR.
 # ---------------------------------------------------------------------------
-echo "━━━ [5/7] Deploy compute cluster ━━━━━━━━━━━━━━━━━━"
+echo "━━━ [5/8] Build and push images to ACR (parallel) ━━━━━━━━━━━━━━━━━━━━━━"
 
-# Resolve managed identity client IDs
-HMS_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-hms-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
-TRINO_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-trino-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
-HMS_HOST=$(az keyvault secret show --vault-name "$KV_NAME" \
-  --name "hms-postgres-host" --query value -o tsv 2>/dev/null || echo "$PG_HOST")
+# Open ACR public access for builds and Helm OCI pulls.
+# Closed again after phase 8 (or on script exit via trap).
+echo "  Opening ACR public access..."
+az acr update --name "$ACR" --public-network-enabled true --default-action Allow --output none
+_ACR_OPENED=true
 
-echo "  [5.1] Hive Metastore..."
-helm upgrade --install hive-metastore \
-  "${REPO_ROOT}/infra/helm/compute/hive-metastore" \
-  --namespace hive-metastore --create-namespace \
-  --kube-context "$COMPUTE_CLUSTER" \
-  --set "image.repository=${ACR}.azurecr.io/hive-metastore" \
-  --set "image.tag=3.1.3" \
-  --set "db.host=${HMS_HOST}" \
-  --set "db.user=id-forge-hms-${ENV}" \
-  --set "adls.account=${ADLS_ACCOUNT}" \
-  ${HMS_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${HMS_WI_CLIENT_ID}"} \
-  --wait --timeout 5m
-echo "    Done"
+_close_acr() {
+  if [[ "${_ACR_OPENED:-false}" == "true" ]]; then
+    echo ""
+    echo "  Closing ACR public access..."
+    az acr update --name "$ACR" --public-network-enabled false --default-action Deny --output none 2>/dev/null || true
+    echo "  ACR locked down."
+  fi
+}
+trap _close_acr EXIT
 
-echo "  [5.2] Spark Operator..."
-helm upgrade --install spark-operator \
-  "oci://${ACR}.azurecr.io/helm/spark-operator" \
-  --version 2.5.0 \
-  --namespace spark-system --create-namespace \
-  --kube-context "$COMPUTE_CLUSTER" \
-  --values "${REPO_ROOT}/infra/helm/compute/spark-operator/values.yaml" \
-  --set "image.registry=${ACR}.azurecr.io" \
-  --set "image.repository=spark-operator-controller" \
-  --set "image.tag=2.5.0" \
-  --wait --timeout 5m
-echo "    Done"
+SPARK_TAG=$(_jq '.forge.sparkTag // "1.0"')
+SPARK_TAG="${SPARK_TAG:-1.0}"
+TRINO_TAG=$(_jq '.forge.trinoTag // "1.0"')
+TRINO_TAG="${TRINO_TAG:-1.0}"
+AIRFLOW_TAG=$(_jq '.forge.airflowTag // "1.0"')
+AIRFLOW_TAG="${AIRFLOW_TAG:-1.0}"
+HMS_TAG=$(_jq '.forge.hmsTag // "1.0"')
+HMS_TAG="${HMS_TAG:-1.0}"
 
-echo "  [5.3] Spark Connect..."
-helm upgrade --install spark-connect \
-  "${REPO_ROOT}/infra/helm/compute/spark-connect" \
-  --namespace spark-system \
-  --kube-context "$COMPUTE_CLUSTER" \
-  --values "${REPO_ROOT}/infra/helm/compute/spark-connect/values.yaml" \
-  --set "image.repository=${ACR}.azurecr.io/spark" \
-  --set "adls.account=${ADLS_ACCOUNT}" \
-  --wait --timeout 5m
-echo "    Done"
+# ---------------------------------------------------------------------------
+# Import third-party images and Helm charts into ACR.
+# Runs regardless of --skip-build — these are not custom images.
+# Azure Policy blocks external registries on AKS nodes; everything must come
+# from ACR. Helm charts are pulled from public repos and pushed as OCI artifacts.
+# ---------------------------------------------------------------------------
 
-echo "  [5.4] Trino..."
-TRINO_WI_ARG=""
-[[ -n "$TRINO_WI_CLIENT_ID" ]] && TRINO_WI_ARG="--set serviceAccount.annotations.azure\.workload\.identity/client-id=${TRINO_WI_CLIENT_ID}"
-helm upgrade --install trino \
-  "oci://${ACR}.azurecr.io/helm/trino" \
-  --version 1.36.0 \
-  --namespace trino --create-namespace \
-  --kube-context "$COMPUTE_CLUSTER" \
-  --values "${REPO_ROOT}/infra/helm/compute/trino/values.yaml" \
-  --set "image.repository=${ACR}.azurecr.io/trino" \
-  --set "image.tag=479" \
-  $TRINO_WI_ARG \
-  --wait --timeout 5m
-echo "    Done"
+# Helm OCI login — required for helm push and helm upgrade --install from ACR.
+echo "  Authenticating Helm with ACR..."
+ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null)
+echo "$ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" \
+  --username "00000000-0000-0000-0000-000000000000" \
+  --password-stdin
+echo "  Helm ACR login done."
 
-echo "  [5.5] Trino Auth Proxy..."
-# Federated credential setup (IMDS approach)
-MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-trino-${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
-if [[ -n "$MI_PRINCIPAL_ID" ]]; then
-  APP_OBJ_ID=$(az ad app show --id "$TRINO_APP_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
-  if [[ -n "$APP_OBJ_ID" ]]; then
-    FC_ISSUER="https://login.microsoftonline.com/${TRINO_TENANT_ID}/v2.0"
-    EXISTING_FED=$(MSYS_NO_PATHCONV=1 az rest --method GET \
-      --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-      --query "value[?subject=='${MI_PRINCIPAL_ID}'].id" -o tsv 2>/dev/null || echo "")
-    if [[ -z "$EXISTING_FED" ]]; then
-      MSYS_NO_PATHCONV=1 az rest --method POST \
-        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-        --body "{\"name\":\"forge-trino-mi-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-        --output none 2>/dev/null || echo "    WARN: could not create federated credential"
-      echo "    Federated credential created"
+# Third-party container images + Helm charts — idempotent imports into ACR.
+# Skippable with --skip-imports when everything is already in ACR.
+if [[ "$SKIP_IMPORTS" == "true" ]]; then
+  echo "  Skipped: third-party image and Helm chart imports (--skip-imports)"
+else
+  echo "  Importing third-party images → ACR..."
+  _acr_import() {
+    local src="$1" dst="$2"
+    # Parse repo and tag from dst (e.g. "git-sync:v4.4.2")
+    local repo="${dst%%:*}" tag="${dst##*:}"
+    # Check if tag already exists — avoids re-importing on every run
+    local existing
+    existing=$(az acr repository show-tags --name "$ACR" --resource-group "$ACR_RG" \
+      --repository "$repo" --query "[?@=='$tag']" -o tsv 2>/dev/null || echo "")
+    if [[ -n "$existing" ]]; then
+      echo "    ✓ $dst (already in ACR)"
+      return
     fi
-    # Attach MI to VMSS
-    NODE_RG_COMPUTE=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$COMPUTE_CLUSTER" \
-      --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
-    if [[ -n "$NODE_RG_COMPUTE" ]]; then
-      VMSS_NAME=$(az vmss list --resource-group "$NODE_RG_COMPUTE" \
-        --query "[?contains(name,'trino')].name" -o tsv 2>/dev/null || \
-        az vmss list --resource-group "$NODE_RG_COMPUTE" --query "[0].name" -o tsv 2>/dev/null || echo "")
-      if [[ -n "$VMSS_NAME" ]]; then
-        MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-trino-${ENV}"
-        MSYS_NO_PATHCONV=1 az vmss identity assign \
-          --resource-group "$NODE_RG_COMPUTE" \
-          --name "$VMSS_NAME" \
-          --identities "$MI_RESOURCE_ID" \
-          --output none 2>/dev/null || true
+    az acr import --name "$ACR" --resource-group "$ACR_RG" \
+      --source "$src" --image "$dst" --output none 2>/dev/null \
+      && echo "    ✓ $dst (imported)" || echo "    WARN: $dst import failed"
+  }
+  _acr_import "registry.k8s.io/git-sync/git-sync:v4.4.2"               "git-sync:v4.4.2"
+  _acr_import "ghcr.io/kubeflow/spark-operator/controller:2.5.0"        "spark-operator-controller:2.5.0"
+  _acr_import "ghcr.io/kubeflow/spark-operator/kubectl:2.5.0"           "spark-operator-kubectl:2.5.0"
+
+  # Helm charts — pull from public repos, push to ACR OCI registry
+  echo "  Importing Helm charts → ACR OCI..."
+  _helm_import() {
+    local chart="$1" version="$2" repo="$3"
+    local tgz="${chart}-${version}.tgz"
+    # Skip if already present — helm show chart verifies the manifest exists in ACR
+    if helm show chart "oci://${ACR}.azurecr.io/helm/${chart}" --version "$version" &>/dev/null 2>&1; then
+      echo "    ✓ helm/${chart}:${version} (already in ACR)"
+      return
+    fi
+    local _helm_tmp
+    _helm_tmp=$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}")
+    helm pull "$chart" --version "$version" --repo "$repo" --destination "$_helm_tmp" 2>/dev/null \
+      && helm push "${_helm_tmp}/${tgz}" "oci://${ACR}.azurecr.io/helm" 2>/dev/null \
+      && echo "    ✓ helm/${chart}:${version} (imported)" \
+      || echo "    WARN: helm/${chart}:${version} import failed"
+    rm -f "${_helm_tmp}/${tgz}"
+  }
+  _helm_import "spark-operator" "2.5.0"  "https://kubeflow.github.io/spark-operator"
+  _helm_import "airflow"        "1.20.0" "https://airflow.apache.org"
+  _helm_import "trino"          "1.36.0" "https://trinodb.github.io/charts"
+fi
+
+if [[ -n "$BUILD_ONLY" ]]; then
+  # --build-only: rebuild specific images, then exit (no deploy phases)
+  SKIP_BUILD=false
+fi
+
+if [[ "$SKIP_BUILD" == "true" ]]; then
+  echo "  Skipped: all custom images (--skip-build)"
+else
+  # All 7 images are independent — submit all ACR Tasks in parallel.
+  # Each az acr build runs in Azure (ACR Tasks), no local CPU contention.
+  # Reduces Phase 5 from ~8 min sequential → ~2 min parallel.
+  _BUILD_NAMES=()
+  _BUILD_PIDS=()
+  _BUILD_LOGS=()
+
+  _queue_build() {
+    local name="$1" image="$2" tag="$3" dockerfile="$4" context="$5"
+    shift 5
+    local build_args=("$@")   # optional --build-arg KEY=VALUE pairs
+    # If --build-only is set, skip images not in the list
+    if [[ -n "$BUILD_ONLY" ]]; then
+      if [[ ",${BUILD_ONLY}," != *",${name},"* ]]; then
+        echo "  Skipped: ${image}:${tag} (not in --build-only)"
+        return
+      fi
+    fi
+    local logfile
+    logfile=$(mktemp /tmp/acr-build-XXXXXX.log)
+    _BUILD_NAMES+=("$name")
+    _BUILD_LOGS+=("$logfile")
+    echo "  Queued : ${image}:${tag}"
+    # Convert Unix paths to Windows mixed format (D:/path/...) so az.cmd can
+    # resolve them. cygpath -m is a no-op on Linux/WSL where paths are native.
+    local win_dockerfile win_context
+    win_dockerfile=$(cygpath -m "$dockerfile" 2>/dev/null || echo "$dockerfile")
+    win_context=$(cygpath -m "$context" 2>/dev/null || echo "$context")
+    # MSYS_NO_PATHCONV=1: prevent Git Bash from converting --build-arg values
+    # that start with / (e.g. API_URL=/api → API_URL=C:/api without this).
+    # Paths above are already Windows-format so they are unaffected.
+    # --no-logs: skip streaming to stdout — avoids Windows cp1252 encoding
+    # errors on characters like ▲ (U+25B2) from Next.js build output.
+    MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" az acr build \
+      --registry "$ACR" \
+      --resource-group "$ACR_RG" \
+      --image "${image}:${tag}" \
+      --file "$win_dockerfile" \
+      "${build_args[@]}" \
+      "$win_context" \
+      --no-logs \
+      --output none >"$logfile" 2>&1 &
+    _BUILD_PIDS+=($!)
+  }
+
+  _queue_build "spark"            "spark"            "$SPARK_TAG"   "${REPO_ROOT}/infra/docker/spark/Dockerfile"             "${REPO_ROOT}/"
+  _queue_build "trino"            "trino"            "$TRINO_TAG"   "${REPO_ROOT}/infra/docker/trino/Dockerfile"             "${REPO_ROOT}/infra/docker/trino/"
+  _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/infra/docker/airflow/"
+  _queue_build "hive-metastore"   "hive-metastore"   "$HMS_TAG"     "${REPO_ROOT}/infra/docker/hive-metastore/Dockerfile"   "${REPO_ROOT}/infra/docker/hive-metastore/"
+  _queue_build "trino-auth-proxy" "trino-auth-proxy" "1.2"          "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/trino-auth-proxy/"
+  _queue_build "portal-api"       "portal-api"       "$API_TAG"     "${REPO_ROOT}/infra/docker/portal-api/Dockerfile"       "${REPO_ROOT}/portal/backend/"
+  _queue_build "portal-web"       "portal-web"       "$WEB_TAG"     "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"       "${REPO_ROOT}/portal/frontend/" \
+    --build-arg "API_URL=/api" \
+    --build-arg "AZURE_CLIENT_ID=${FORGE_CLIENT_ID}" \
+    --build-arg "AZURE_TENANT_ID=${FORGE_TENANT_ID}"
+
+  echo "  Waiting for ${#_BUILD_PIDS[@]} builds to complete..."
+  _BUILD_FAILED=()
+  for i in "${!_BUILD_PIDS[@]}"; do
+    if wait "${_BUILD_PIDS[$i]}"; then
+      echo "  ✓ ${_BUILD_NAMES[$i]} → ${ACR}.azurecr.io"
+    else
+      echo "  ✗ ${_BUILD_NAMES[$i]} — FAILED"
+      if [[ -s "${_BUILD_LOGS[$i]}" ]]; then
+        echo "    --- az acr build error ---"
+        cat "${_BUILD_LOGS[$i]}"
+        echo "    --------------------------"
+      else
+        echo "    View ACR Task logs: az acr task list-runs --registry ${ACR} --resource-group ${ACR_RG} --top 5"
+        echo "    Then:               az acr task logs --registry ${ACR} --resource-group ${ACR_RG} --run-id <id>"
+      fi
+      _BUILD_FAILED+=("${_BUILD_NAMES[$i]}")
+    fi
+    rm -f "${_BUILD_LOGS[$i]}"
+  done
+
+  if [[ ${#_BUILD_FAILED[@]} -gt 0 ]]; then
+    echo "ERROR: Image build(s) failed: ${_BUILD_FAILED[*]}"
+    exit 1
+  fi
+fi
+echo ""
+
+# If --build-only was used, all requested images are now in ACR — done.
+if [[ -n "$BUILD_ONLY" ]]; then
+  echo "=== --build-only complete. Skipping deploy phases. ==="
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 6+7 — Compute and Orchestration cluster deploys (parallel)
+# Two separate AKS clusters — fully independent, run simultaneously.
+# Phase 6: Hive Metastore, Spark Operator, Spark Connect, Trino, Trino Auth Proxy
+# Phase 7: ingress-nginx, Airflow, Portal
+# ---------------------------------------------------------------------------
+echo "━━━ [6+7/8] Deploy clusters in parallel ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  Compute    : $COMPUTE_CLUSTER"
+echo "  Orch       : $ORCH_CLUSTER"
+echo "  (monitor:    kubectl get pods -A --context <cluster>)"
+echo ""
+
+
+_COMPUTE_LOG=$(mktemp /tmp/forge-compute-XXXXXX.log)
+_ORCH_LOG=$(mktemp /tmp/forge-orch-XXXXXX.log)
+
+# ── Phase 6: Compute cluster ────────────────────────────────────────────────
+if [[ "$SKIP_COMPUTE" == "true" ]]; then
+  echo "Skipped: compute cluster (--skip-compute)" >"$_COMPUTE_LOG"
+  true &
+  _COMPUTE_PID=$!
+else
+(
+  set -euo pipefail
+
+  HMS_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-hms-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+  TRINO_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-trino-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+  HMS_HOST=$(az keyvault secret show --vault-name "$KV_NAME" \
+    --name "hms-postgres-host" --query value -o tsv 2>/dev/null || echo "$PG_HOST")
+
+  echo "  [6.0] ingress-nginx (compute)..."
+  _DNS_LABEL_COMPUTE="forge-compute-${_A}${ENV}"
+  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update 2>/dev/null || true
+  helm repo update ingress-nginx 2>/dev/null || true
+  helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+    --namespace ingress-nginx --create-namespace \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/compute/ingress-nginx/values.yaml" \
+    --set "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=${_DNS_LABEL_COMPUTE}" \
+    --wait --timeout 10m
+  echo "    Compute ingress: ${_DNS_LABEL_COMPUTE}.${LOCATION}.cloudapp.azure.com"
+  echo "    Done"
+
+  echo "  [6.1] Hive Metastore..."
+  # Service account must exist before the Deployment — HMS chart has no SA template.
+  kubectl create namespace hive-metastore --context "$COMPUTE_CLUSTER" --dry-run=client -o yaml \
+    | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+  kubectl create serviceaccount hive-metastore -n hive-metastore --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+  if [[ -n "$HMS_WI_CLIENT_ID" ]]; then
+    kubectl annotate serviceaccount hive-metastore -n hive-metastore \
+      --context "$COMPUTE_CLUSTER" --overwrite \
+      "azure.workload.identity/client-id=${HMS_WI_CLIENT_ID}" 2>/dev/null || true
+  fi
+  helm upgrade --install hive-metastore \
+    "${REPO_ROOT}/infra/helm/compute/hive-metastore" \
+    --namespace hive-metastore --create-namespace \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --set "image.repository=${ACR}.azurecr.io/hive-metastore" \
+    --set "image.tag=${HMS_TAG}" \
+    --set "db.host=${HMS_HOST}" \
+    --set "db.user=id-forge-hms-${ENV}" \
+    --set "adls.account=${ADLS_ACCOUNT}" \
+    ${HMS_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${HMS_WI_CLIENT_ID}"} \
+    --wait --timeout 5m
+  echo "    Done"
+
+  echo "  [6.2] Spark Operator..."
+  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
+    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
+  kubectl create namespace spark-jobs --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+  helm upgrade --install spark-operator \
+    "oci://${ACR}.azurecr.io/helm/spark-operator" \
+    --version 2.5.0 \
+    --namespace spark-system --create-namespace \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/compute/spark-operator/values.yaml" \
+    --set "image.registry=${ACR}.azurecr.io" \
+    --set "image.repository=spark-operator-controller" \
+    --set "image.tag=2.5.0" \
+    --set "hook.image.registry=${ACR}.azurecr.io" \
+    --wait --timeout 5m
+  echo "    Done"
+
+  echo "  [6.3] Spark Connect..."
+  kubectl create serviceaccount spark -n spark-system --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+  helm upgrade --install spark-connect \
+    "${REPO_ROOT}/infra/helm/compute/spark-connect" \
+    --namespace spark-system \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/compute/spark-connect/values.yaml" \
+    --values "${REPO_ROOT}/infra/helm/compute/spark-connect/values-dev.yaml" \
+    --set "image.repository=${ACR}.azurecr.io/spark" \
+    --set "image.tag=${SPARK_TAG}" \
+    --set "adls.account=${ADLS_ACCOUNT}" \
+    --wait --timeout 10m
+  echo "    Done"
+
+  echo "  [6.4] Trino..."
+  kubectl create namespace trino --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+  kubectl create serviceaccount trino -n trino --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+  if [[ -n "$TRINO_WI_CLIENT_ID" ]]; then
+    kubectl annotate serviceaccount trino -n trino --context "$COMPUTE_CLUSTER" --overwrite \
+      "azure.workload.identity/client-id=${TRINO_WI_CLIENT_ID}" 2>/dev/null || true
+  fi
+  TRINO_WI_ARG=""
+  [[ -n "$TRINO_WI_CLIENT_ID" ]] && TRINO_WI_ARG="--set serviceAccount.annotations.azure\.workload\.identity/client-id=${TRINO_WI_CLIENT_ID}"
+  helm upgrade --install trino \
+    "oci://${ACR}.azurecr.io/helm/trino" \
+    --version 1.36.0 \
+    --namespace trino --create-namespace \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/compute/trino/values.yaml" \
+    --set "image.repository=${ACR}.azurecr.io/trino" \
+    --set "image.tag=${TRINO_TAG}" \
+    $TRINO_WI_ARG \
+    --wait --timeout 10m
+  echo "    Done"
+
+  echo "  [6.5] Trino Auth Proxy..."
+  MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-trino-${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
+  if [[ -n "$MI_PRINCIPAL_ID" ]]; then
+    APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
+    if [[ -n "$APP_OBJ_ID" ]]; then
+      FC_ISSUER="https://login.microsoftonline.com/${FORGE_TENANT_ID}/v2.0"
+      EXISTING_FED=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+        --query "value[?subject=='${MI_PRINCIPAL_ID}'].id" -o tsv 2>/dev/null || echo "")
+      if [[ -z "$EXISTING_FED" ]]; then
+        MSYS_NO_PATHCONV=1 az rest --method POST \
+          --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+          --body "{\"name\":\"forge-trino-mi-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+          --output none 2>/dev/null || echo "    WARN: could not create federated credential"
+        echo "    Federated credential created"
+      fi
+      NODE_RG_COMPUTE=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$COMPUTE_CLUSTER" \
+        --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
+      if [[ -n "$NODE_RG_COMPUTE" ]]; then
+        VMSS_NAME=$(az vmss list --resource-group "$NODE_RG_COMPUTE" \
+          --query "[?contains(name,'trino')].name" -o tsv 2>/dev/null || \
+          az vmss list --resource-group "$NODE_RG_COMPUTE" --query "[0].name" -o tsv 2>/dev/null || echo "")
+        if [[ -n "$VMSS_NAME" ]]; then
+          MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-trino-${ENV}"
+          MSYS_NO_PATHCONV=1 az vmss identity assign \
+            --resource-group "$NODE_RG_COMPUTE" \
+            --name "$VMSS_NAME" \
+            --identities "$MI_RESOURCE_ID" \
+            --output none 2>/dev/null || true
+        fi
       fi
     fi
   fi
-fi
+  helm upgrade --install trino-auth-proxy \
+    "${REPO_ROOT}/infra/helm/compute/trino-auth-proxy" \
+    --namespace trino \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --set "image.repository=${ACR}.azurecr.io/trino-auth-proxy" \
+    --set "image.tag=1.2" \
+    --set "env.tenantId=${FORGE_TENANT_ID}" \
+    --set "env.clientId=${FORGE_CLIENT_ID}" \
+    --set "env.redirectUri=${FORGE_REDIRECT_URI}" \
+    --set "env.allowedDomain=${FORGE_ALLOWED_DOMAIN}" \
+    --set "env.trinoBackend=trino:8080" \
+    ${TRINO_WI_CLIENT_ID:+--set "env.managedIdentityClientId=${TRINO_WI_CLIENT_ID}"} \
+    --wait --timeout 3m
+  echo "    Done"
+) >"$_COMPUTE_LOG" 2>&1 &
+_COMPUTE_PID=$!
+fi  # end SKIP_COMPUTE
 
-if [[ "$SKIP_BUILD" == "false" ]]; then
-  az acr build \
-    --registry "$ACR" \
-    --resource-group "$ACR_RG" \
-    --image "trino-auth-proxy:1.2" \
-    --file "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile" \
-    "${REPO_ROOT}/infra/docker/trino-auth-proxy/" 2>/dev/null || \
-    echo "    WARN: trino-auth-proxy image build failed — using existing image"
-fi
+# ── Phase 7: Orchestration cluster ──────────────────────────────────────────
+if [[ "$SKIP_ORCH" == "true" ]]; then
+  echo "Skipped: orchestration cluster (--skip-orch)" >"$_ORCH_LOG"
+  true &
+  _ORCH_PID=$!
+else
+(
+  set -euo pipefail
 
-helm upgrade --install trino-auth-proxy \
-  "${REPO_ROOT}/infra/helm/compute/trino-auth-proxy" \
-  --namespace trino \
-  --kube-context "$COMPUTE_CLUSTER" \
-  --set "image.repository=${ACR}.azurecr.io/trino-auth-proxy" \
-  --set "image.tag=1.2" \
-  --set "env.tenantId=${TRINO_TENANT_ID}" \
-  --set "env.clientId=${TRINO_APP_CLIENT_ID}" \
-  --set "env.redirectUri=${TRINO_REDIRECT_URI}" \
-  --set "env.allowedDomain=${TRINO_ALLOWED_DOMAIN}" \
-  --set "env.trinoBackend=trino:8080" \
-  ${TRINO_WI_CLIENT_ID:+--set "env.managedIdentityClientId=${TRINO_WI_CLIENT_ID}"} \
-  --wait --timeout 3m
-echo "    Done"
-echo ""
+  PORTAL_MI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-portal-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+  AIRFLOW_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-airflow-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
 
-# ---------------------------------------------------------------------------
-# Phase 6 — Orchestration cluster: Helm deploys
-# ---------------------------------------------------------------------------
-echo "━━━ [6/7] Deploy orchestration cluster ━━━━━━━━━━━━"
+  # ── Pre-flight: inject AAD token into airflow-db-credentials ──────────────
+  # migrateDatabaseJob and wait-for-airflow-migrations both need a live Postgres
+  # token before helm runs. We use a one-shot Job with the Airflow MI workload
+  # identity (OIDC federation set up by Bicep: fcAirflowOrchestration).
+  #
+  # Token exchange: AKS workload identity injects AZURE_FEDERATED_TOKEN_FILE,
+  # AZURE_CLIENT_ID, AZURE_TENANT_ID into the pod. We exchange the federated
+  # token with Azure AD (NOT IMDS — that's for pod/VM identity) to get a Postgres
+  # access token for the Airflow MI. This is the S360-compliant approach: no
+  # personal credentials, no static secrets, MI-only authentication.
+  #
+  # RBAC and the Job are created separately with a sleep in between to allow
+  # the Role/RoleBinding to propagate before the pod starts patching the secret.
+  echo "  [7.0] Injecting Airflow MI token into DB credentials secret..."
 
-# Ensure portal managed identity is available
-PORTAL_MI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-portal-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+  # Ensure namespace exists
+  kubectl create namespace airflow \
+    --context "$ORCH_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f - 2>&1 | grep -v "^$" || true
 
-echo "  [6.1] ingress-nginx..."
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update 2>/dev/null || true
-helm repo update ingress-nginx 2>/dev/null || true
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx --create-namespace \
-  --kube-context "$ORCH_CLUSTER" \
-  --values "${REPO_ROOT}/infra/helm/orchestration/ingress-nginx/values.yaml" \
-  --set "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=${DNS_LABEL}" \
-  --wait --timeout 5m
+  if [[ -n "$AIRFLOW_WI_CLIENT_ID" ]]; then
+    # Step 1: SA + RBAC (applied first, before Job, to avoid propagation race)
+    kubectl apply --context "$ORCH_CLUSTER" -f - <<RBAC 2>&1 | grep -v "^$" || true
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airflow
+  namespace: airflow
+  annotations:
+    azure.workload.identity/client-id: "${AIRFLOW_WI_CLIENT_ID}"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-secret-patcher
+  namespace: airflow
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: ["airflow-db-credentials", "airflow-git-credentials"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-secret-patcher
+  namespace: airflow
+subjects:
+  - kind: ServiceAccount
+    name: airflow
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: airflow-secret-patcher
+  apiGroup: rbac.authorization.k8s.io
+RBAC
 
-# Set DNS label directly on public IP (Helm annotation alone is unreliable)
-EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
-  --context "$ORCH_CLUSTER" \
-  --output jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
-if [[ -n "$EXTERNAL_IP" && -n "$NODE_RG_ORCH" ]]; then
-  PIP_NAME=$(az network public-ip list \
-    --resource-group "$NODE_RG_ORCH" \
-    --query "[?ipAddress=='${EXTERNAL_IP}'].name" -o tsv 2>/dev/null || echo "")
-  if [[ -n "$PIP_NAME" ]]; then
-    az network public-ip update \
-      --resource-group "$NODE_RG_ORCH" \
-      --name "$PIP_NAME" \
-      --dns-name "$DNS_LABEL" \
-      --output none 2>/dev/null || true
-    echo "    FQDN: ${PUBLIC_HOST}"
+    # Step 2: Wait for RBAC to propagate, then run Jobs
+    sleep 8
+
+    # Step 2a: Postgres schema grants — idempotent, safe to re-run.
+    # Runs as the Airflow MI (workload identity OIDC) so no engineer credentials
+    # or private-endpoint access needed. Grants must exist before db migrate runs.
+    if [[ "$SKIP_PG_GRANTS" != "true" ]]; then
+      kubectl delete job/airflow-pg-grants -n airflow \
+        --context "$ORCH_CLUSTER" --ignore-not-found 2>/dev/null || true
+
+      kubectl apply --context "$ORCH_CLUSTER" -f - <<PGJOB 2>&1 | grep -v "^$" || true
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-pg-grants
+  namespace: airflow
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Never
+      containers:
+        - name: pg-grants
+          image: ${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}
+          command: [python3, -c]
+          args:
+            - |
+              import urllib.request, urllib.parse, json, os, psycopg2
+              tenant_id = os.environ['AZURE_TENANT_ID']
+              client_id = os.environ['AZURE_CLIENT_ID']
+              with open(os.environ['AZURE_FEDERATED_TOKEN_FILE']) as f:
+                  federated_token = f.read().strip()
+              data = urllib.parse.urlencode({
+                  'grant_type': 'client_credentials',
+                  'client_id': client_id,
+                  'client_assertion': federated_token,
+                  'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                  'scope': 'https://ossrdbms-aad.database.windows.net/.default',
+              }).encode()
+              token = json.loads(urllib.request.urlopen(
+                  urllib.request.Request(
+                      'https://login.microsoftonline.com/' + tenant_id + '/oauth2/v2.0/token',
+                      data=data), timeout=15).read())['access_token']
+              print('Token acquired', flush=True)
+              import socket
+              try:
+                  ip = socket.getaddrinfo('${PG_HOST}', 5432)[0][4][0]
+                  print('DNS resolved:', ip, flush=True)
+              except Exception as e:
+                  print('DNS FAILED:', e, flush=True)
+                  raise
+              try:
+                  conn = psycopg2.connect(
+                      host='${PG_HOST}', user='${AIRFLOW_MI_NAME_CONN}',
+                      password=token, dbname='postgres', sslmode='require',
+                      connect_timeout=30)
+              except Exception as e:
+                  print('Connect to postgres db FAILED:', e, flush=True)
+                  raise
+              conn.autocommit = True
+              conn.cursor().execute('GRANT ALL PRIVILEGES ON DATABASE airflow TO "${AIRFLOW_MI_NAME_CONN}"')
+              print('DB grant done', flush=True)
+              conn.close()
+              try:
+                  conn2 = psycopg2.connect(
+                      host='${PG_HOST}', user='${AIRFLOW_MI_NAME_CONN}',
+                      password=token, dbname='airflow', sslmode='require',
+                      connect_timeout=30)
+              except Exception as e:
+                  print('Connect to airflow db FAILED:', e, flush=True)
+                  raise
+              conn2.autocommit = True
+              cur = conn2.cursor()
+              cur.execute('GRANT ALL ON SCHEMA public TO "${AIRFLOW_MI_NAME_CONN}"')
+              cur.execute('ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "${AIRFLOW_MI_NAME_CONN}"')
+              print('Schema grants done — all grants applied successfully', flush=True)
+              conn2.close()
+PGJOB
+
+      kubectl wait job/airflow-pg-grants \
+        -n airflow \
+        --context "$ORCH_CLUSTER" \
+        --for=condition=complete \
+        --timeout=3m \
+        && echo "    Postgres grants applied" \
+        || { echo "    ERROR: pg-grants job failed — aborting before helm runs."; \
+             echo "    Logs: kubectl logs -n airflow job/airflow-pg-grants --context ${ORCH_CLUSTER}"; \
+             exit 1; }
+    fi
+
+    # Step 2b: Token-init Job — inject AAD token into airflow-db-credentials
+    kubectl apply --context "$ORCH_CLUSTER" -f - <<JOB 2>&1 | grep -v "^$" || true
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-token-init
+  namespace: airflow
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Never
+      containers:
+        - name: token-injector
+          image: ${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}
+          command: [python3, -c]
+          args:
+            - |
+              import urllib.request, urllib.parse, json, base64, ssl, os
+              # AKS workload identity: exchange the OIDC federated token for an
+              # AAD access token. This is NOT IMDS — workload identity uses a
+              # projected service account token exchanged via Azure AD OAuth.
+              tenant_id = os.environ['AZURE_TENANT_ID']
+              client_id = os.environ['AZURE_CLIENT_ID']
+              with open(os.environ['AZURE_FEDERATED_TOKEN_FILE']) as f:
+                  federated_token = f.read().strip()
+              data = urllib.parse.urlencode({
+                  'grant_type': 'client_credentials',
+                  'client_id': client_id,
+                  'client_assertion': federated_token,
+                  'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                  'scope': 'https://ossrdbms-aad.database.windows.net/.default',
+              }).encode()
+              req = urllib.request.Request(
+                  'https://login.microsoftonline.com/' + tenant_id + '/oauth2/v2.0/token',
+                  data=data)
+              token = json.loads(urllib.request.urlopen(req, timeout=15).read())['access_token']
+              base = 'postgresql+psycopg2://${AIRFLOW_MI_NAME_CONN}@${PG_HOST}/airflow?sslmode=require'
+              conn = base.replace('@${PG_HOST}', ':' + token + '@${PG_HOST}')
+              with open('/var/run/secrets/kubernetes.io/serviceaccount/token') as f:
+                  sa = f.read()
+              ctx = ssl.create_default_context(
+                  cafile='/var/run/secrets/kubernetes.io/serviceaccount/ca.crt')
+              patch = json.dumps({'data': {'connection': base64.b64encode(conn.encode()).decode()}}).encode()
+              req2 = urllib.request.Request(
+                  'https://kubernetes.default.svc/api/v1/namespaces/airflow/secrets/airflow-db-credentials',
+                  data=patch,
+                  headers={'Authorization': 'Bearer ' + sa,
+                           'Content-Type': 'application/strategic-merge-patch+json'},
+                  method='PATCH')
+              resp = urllib.request.urlopen(req2, context=ctx, timeout=10)
+              print('Airflow MI token injected (HTTP ' + str(resp.status) + ')')
+              # Fetch ADO token for git-sync (same OIDC exchange, ADO resource scope)
+              data_ado = urllib.parse.urlencode({
+                  'grant_type': 'client_credentials',
+                  'client_id': client_id,
+                  'client_assertion': federated_token,
+                  'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                  'scope': '499b84ac-1321-427f-aa17-267ca6975798/.default',
+              }).encode()
+              req_ado = urllib.request.Request(
+                  'https://login.microsoftonline.com/' + tenant_id + '/oauth2/v2.0/token',
+                  data=data_ado)
+              ado_token = json.loads(urllib.request.urlopen(req_ado, timeout=15).read())['access_token']
+              git_patch = json.dumps({'data': {
+                  'GIT_SYNC_USERNAME': base64.b64encode(b'forge').decode(),
+                  'GIT_SYNC_PASSWORD': base64.b64encode(ado_token.encode()).decode(),
+                  'GITSYNC_USERNAME': base64.b64encode(b'forge').decode(),
+                  'GITSYNC_PASSWORD': base64.b64encode(ado_token.encode()).decode(),
+              }}).encode()
+              req3 = urllib.request.Request(
+                  'https://kubernetes.default.svc/api/v1/namespaces/airflow/secrets/airflow-git-credentials',
+                  data=git_patch,
+                  headers={'Authorization': 'Bearer ' + sa,
+                           'Content-Type': 'application/strategic-merge-patch+json'},
+                  method='PATCH')
+              resp3 = urllib.request.urlopen(req3, context=ctx, timeout=10)
+              print('Git credentials updated (HTTP ' + str(resp3.status) + ')')
+JOB
+
+    kubectl wait job/airflow-token-init \
+      -n airflow \
+      --context "$ORCH_CLUSTER" \
+      --for=condition=complete \
+      --timeout=3m 2>/dev/null \
+      && echo "    MI token injected" \
+      || echo "    WARN: token init job did not complete — check: kubectl logs -n airflow job/airflow-token-init --context ${ORCH_CLUSTER}"
+  else
+    echo "    WARN: Airflow MI not found — skipping token pre-injection"
   fi
+
+  # Step 2c: Run airflow db migrate before helm so wait-for-airflow-migrations
+  # passes immediately. migrateDatabaseJob is disabled in values.yaml — this Job
+  # gives us a controlled timeout and clear error output.
+  echo "  [7.0] Running airflow db migrate (pre-helm)..."
+  kubectl delete job/airflow-migrate -n airflow --context "$ORCH_CLUSTER" --ignore-not-found 2>/dev/null || true
+  kubectl apply --context "$ORCH_CLUSTER" -f - <<MIGJOB
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-migrate
+  namespace: airflow
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}
+          command: ["airflow", "db", "migrate"]
+          env:
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-db-credentials
+                  key: connection
+MIGJOB
+  kubectl wait job/airflow-migrate \
+    -n airflow \
+    --context "$ORCH_CLUSTER" \
+    --for=condition=complete \
+    --timeout=5m 2>&1 \
+    && echo "    DB migrations complete" \
+    || { echo "    ERROR: airflow db migrate failed — aborting before helm runs."; \
+         echo "    Logs: kubectl logs -n airflow job/airflow-migrate --context ${ORCH_CLUSTER}"; \
+         exit 1; }
+
+  echo "  [7.1] ingress-nginx..."
+  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update 2>/dev/null || true
+  helm repo update ingress-nginx 2>/dev/null || true
+  helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+    --namespace ingress-nginx --create-namespace \
+    --kube-context "$ORCH_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/orchestration/ingress-nginx/values.yaml" \
+    --set "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=${DNS_LABEL}" \
+    --wait --timeout 5m
+  EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
+    --context "$ORCH_CLUSTER" \
+    --output jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+  if [[ -n "$EXTERNAL_IP" && -n "$NODE_RG_ORCH" ]]; then
+    PIP_NAME=$(az network public-ip list \
+      --resource-group "$NODE_RG_ORCH" \
+      --query "[?ipAddress=='${EXTERNAL_IP}'].name" -o tsv 2>/dev/null || echo "")
+    if [[ -n "$PIP_NAME" ]]; then
+      az network public-ip update \
+        --resource-group "$NODE_RG_ORCH" \
+        --name "$PIP_NAME" \
+        --dns-name "$DNS_LABEL" \
+        --output none 2>/dev/null || true
+      echo "    FQDN: ${PUBLIC_HOST}"
+      # S360 compliance: tag with FirstPartyUsage. Idempotent — re-applying
+      # the same tag value always succeeds; only changing an existing tag fails.
+      az network public-ip update \
+        --resource-group "$NODE_RG_ORCH" \
+        --name "$PIP_NAME" \
+        --ip-tags FirstPartyUsage=/NonProd \
+        --output none 2>/dev/null || true
+      echo "    S360 tag: FirstPartyUsage=/NonProd"
+    fi
+  fi
+  echo "    Done"
+
+  echo "  [7.2] Airflow..."
+  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
+    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
+  # Apply dev DAG policy ConfigMap before Helm — policy plugin is mounted into pods.
+  kubectl apply -f "${REPO_ROOT}/infra/helm/orchestration/airflow/forge-dev-policy-configmap.yaml" \
+    --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
+  # git-sync image must come from ACR — Azure Policy blocks registry.k8s.io.
+  # Import is done in Phase 5 (_import_to_acr). Override image here.
+  helm upgrade --install airflow \
+    "oci://${ACR}.azurecr.io/helm/airflow" \
+    --version 1.20.0 \
+    --namespace airflow --create-namespace \
+    --kube-context "$ORCH_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/orchestration/airflow/values.yaml" \
+    --set "images.airflow.repository=${ACR}.azurecr.io/airflow" \
+    --set "images.airflow.tag=${AIRFLOW_TAG}" \
+    --set "dags.gitSync.repo=${GIT_REPO}" \
+    --set "dags.gitSync.branch=${GIT_BRANCH}" \
+    --set "images.gitSync.repository=${ACR}.azurecr.io/git-sync" \
+    --set "images.gitSync.tag=v4.4.2" \
+    --set "env[0].value=${ENV}" \
+    ${AIRFLOW_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${AIRFLOW_WI_CLIENT_ID}"} \
+    --wait --timeout 10m
+  echo "    Done"
+
+  echo "  [7.3] Portal..."
+  # portal-api service account must exist before the Deployment.
+  kubectl create namespace portal --context "$ORCH_CLUSTER" --dry-run=client -o yaml \
+    | kubectl apply --context "$ORCH_CLUSTER" -f - 2>/dev/null || true
+  kubectl create serviceaccount portal-api -n portal --context "$ORCH_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f - 2>/dev/null || true
+  helm upgrade --install forge-portal \
+    "${REPO_ROOT}/infra/helm/orchestration/portal" \
+    --namespace portal --create-namespace \
+    --kube-context "$ORCH_CLUSTER" \
+    --set "api.image.repository=${ACR}.azurecr.io/portal-api" \
+    --set "api.image.tag=${API_TAG}" \
+    --set "web.image.repository=${ACR}.azurecr.io/portal-web" \
+    --set "web.image.tag=${WEB_TAG}" \
+    --set "api.env.forgeEnv=${ENV}" \
+    --set "api.env.adlsAccount=${ADLS_ACCOUNT}" \
+    --set "api.env.subscriptionId=${SUBSCRIPTION_ID}" \
+    --set "api.env.resourceGroup=${RESOURCE_GROUP}" \
+    --set "api.env.ownerAlias=${ALIAS}" \
+    --set "api.env.computeClusterName=${COMPUTE_CLUSTER}" \
+    --set "api.env.orchClusterName=${ORCH_CLUSTER}" \
+    --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
+    --set "ingress.host=${PUBLIC_HOST}" \
+    ${PORTAL_MI_CLIENT_ID:+--set "api.env.azureClientId=${PORTAL_MI_CLIENT_ID}"} \
+    --wait --timeout 5m
+  echo "    Done"
+
+  # ── Token refresh CronJob ─────────────────────────────────────────────────
+  # Runs every 45 min using the Airflow SA (workload identity) to fetch a fresh
+  # IMDS token and patch airflow-db-credentials. Kubernetes syncs mounted secret
+  # files within ~1 min. pool_recycle (3000s) then opens new connections using
+  # the refreshed URL — no pod restart needed.
+  echo "  [7.4] Airflow token-refresh CronJob..."
+  kubectl apply --context "$ORCH_CLUSTER" -f - <<CRONJOB
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: airflow-token-refresh
+  namespace: airflow
+spec:
+  schedule: "*/45 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            azure.workload.identity/use: "true"
+        spec:
+          serviceAccountName: airflow
+          restartPolicy: Never
+          containers:
+            - name: token-refresher
+              image: ${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}
+              command: [python3, -c]
+              args:
+                - |
+                  import urllib.request, urllib.parse, json, base64, ssl, os
+                  # AKS workload identity OIDC token exchange (not IMDS)
+                  tenant_id = os.environ['AZURE_TENANT_ID']
+                  client_id = os.environ['AZURE_CLIENT_ID']
+                  with open(os.environ['AZURE_FEDERATED_TOKEN_FILE']) as f:
+                      federated_token = f.read().strip()
+                  data = urllib.parse.urlencode({
+                      'grant_type': 'client_credentials',
+                      'client_id': client_id,
+                      'client_assertion': federated_token,
+                      'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                      'scope': 'https://ossrdbms-aad.database.windows.net/.default',
+                  }).encode()
+                  req = urllib.request.Request(
+                      'https://login.microsoftonline.com/' + tenant_id + '/oauth2/v2.0/token',
+                      data=data)
+                  token = json.loads(urllib.request.urlopen(req, timeout=15).read())['access_token']
+                  base = 'postgresql+psycopg2://${AIRFLOW_MI_NAME_CONN}@${PG_HOST}/airflow?sslmode=require'
+                  conn = base.replace('@${PG_HOST}', ':' + token + '@${PG_HOST}')
+                  with open('/var/run/secrets/kubernetes.io/serviceaccount/token') as f:
+                      sa = f.read()
+                  ctx = ssl.create_default_context(
+                      cafile='/var/run/secrets/kubernetes.io/serviceaccount/ca.crt')
+                  patch = json.dumps({'data': {'connection': base64.b64encode(conn.encode()).decode()}}).encode()
+                  req2 = urllib.request.Request(
+                      'https://kubernetes.default.svc/api/v1/namespaces/airflow/secrets/airflow-db-credentials',
+                      data=patch,
+                      headers={'Authorization': 'Bearer ' + sa,
+                               'Content-Type': 'application/strategic-merge-patch+json'},
+                      method='PATCH')
+                  resp = urllib.request.urlopen(req2, context=ctx, timeout=10)
+                  print('Airflow MI token refreshed (HTTP ' + str(resp.status) + ')')
+                  # Refresh ADO token for git-sync (same OIDC exchange, ADO resource scope)
+                  data_ado = urllib.parse.urlencode({
+                      'grant_type': 'client_credentials',
+                      'client_id': client_id,
+                      'client_assertion': federated_token,
+                      'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                      'scope': '499b84ac-1321-427f-aa17-267ca6975798/.default',
+                  }).encode()
+                  req_ado = urllib.request.Request(
+                      'https://login.microsoftonline.com/' + tenant_id + '/oauth2/v2.0/token',
+                      data=data_ado)
+                  ado_token = json.loads(urllib.request.urlopen(req_ado, timeout=15).read())['access_token']
+                  git_patch = json.dumps({'data': {
+                      'GIT_SYNC_USERNAME': base64.b64encode(b'forge').decode(),
+                      'GIT_SYNC_PASSWORD': base64.b64encode(ado_token.encode()).decode(),
+                      'GITSYNC_USERNAME': base64.b64encode(b'forge').decode(),
+                      'GITSYNC_PASSWORD': base64.b64encode(ado_token.encode()).decode(),
+                  }}).encode()
+                  req3 = urllib.request.Request(
+                      'https://kubernetes.default.svc/api/v1/namespaces/airflow/secrets/airflow-git-credentials',
+                      data=git_patch,
+                      headers={'Authorization': 'Bearer ' + sa,
+                               'Content-Type': 'application/strategic-merge-patch+json'},
+                      method='PATCH')
+                  resp3 = urllib.request.urlopen(req3, context=ctx, timeout=10)
+                  print('Git credentials refreshed (HTTP ' + str(resp3.status) + ')')
+CRONJOB
+  echo "    Done"
+) >"$_ORCH_LOG" 2>&1 &
+_ORCH_PID=$!
+fi  # end SKIP_ORCH
+
+echo "  Compute cluster deploying    (pid $_COMPUTE_PID)..."
+echo "  Orchestration cluster deploying (pid $_ORCH_PID)..."
+echo ""
+
+_CLUSTER_FAILED=()
+
+echo "─── Compute cluster ───────────────────────────────────────────────────"
+if wait "$_COMPUTE_PID"; then
+  cat "$_COMPUTE_LOG"
+  echo "  ✓ Compute cluster — done"
+else
+  cat "$_COMPUTE_LOG"
+  echo "  ✗ Compute cluster — FAILED"
+  _CLUSTER_FAILED+=("compute")
 fi
-echo "    Done"
+rm -f "$_COMPUTE_LOG"
 
-echo "  [6.2] Airflow..."
-# Build portal-api and portal-web images if needed
-if [[ "$SKIP_BUILD" == "false" ]]; then
-  echo "    Building portal-api:${API_TAG}..."
-  az acr build \
-    --registry "$ACR" \
-    --image "portal-api:${API_TAG}" \
-    --file "${REPO_ROOT}/infra/docker/portal-api/Dockerfile" \
-    "${REPO_ROOT}/portal/backend/"
-
-  echo "    Building portal-web:${WEB_TAG}..."
-  az acr build \
-    --registry "$ACR" \
-    --image "portal-web:${WEB_TAG}" \
-    --file "${REPO_ROOT}/infra/docker/portal-web/Dockerfile" \
-    --build-arg "API_URL=" \
-    --build-arg "WEB_URL=http://${PUBLIC_HOST}" \
-    "${REPO_ROOT}/portal/frontend/"
+echo "─── Orchestration cluster ─────────────────────────────────────────────"
+if wait "$_ORCH_PID"; then
+  cat "$_ORCH_LOG"
+  echo "  ✓ Orchestration cluster — done"
+else
+  cat "$_ORCH_LOG"
+  echo "  ✗ Orchestration cluster — FAILED"
+  _CLUSTER_FAILED+=("orchestration")
 fi
+rm -f "$_ORCH_LOG"
 
-helm upgrade --install airflow \
-  "oci://${ACR}.azurecr.io/helm/airflow" \
-  --version 1.20.0 \
-  --namespace airflow --create-namespace \
-  --kube-context "$ORCH_CLUSTER" \
-  --values "${REPO_ROOT}/infra/helm/orchestration/airflow/values.yaml" \
-  --set "images.airflow.repository=${ACR}.azurecr.io/airflow" \
-  --set "images.airflow.tag=3.1.8" \
-  --set "dags.gitSync.repo=${GIT_REPO}" \
-  --set "dags.gitSync.branch=${GIT_BRANCH}" \
-  --set "env[0].value=${ENV}" \
-  --wait --timeout 10m
-echo "    Done"
-
-echo "  [6.3] Portal..."
-helm upgrade --install forge-portal \
-  "${REPO_ROOT}/infra/helm/orchestration/portal" \
-  --namespace portal --create-namespace \
-  --kube-context "$ORCH_CLUSTER" \
-  --set "api.image.repository=${ACR}.azurecr.io/portal-api" \
-  --set "api.image.tag=${API_TAG}" \
-  --set "web.image.repository=${ACR}.azurecr.io/portal-web" \
-  --set "web.image.tag=${WEB_TAG}" \
-  --set "api.env.forgeEnv=${ENV}" \
-  --set "api.env.adlsAccount=${ADLS_ACCOUNT}" \
-  --set "api.env.subscriptionId=${SUBSCRIPTION_ID}" \
-  --set "api.env.resourceGroup=${RESOURCE_GROUP}" \
-  --set "api.env.ownerAlias=${ALIAS}" \
-  --set "api.env.computeClusterName=${COMPUTE_CLUSTER}" \
-  --set "api.env.orchClusterName=${ORCH_CLUSTER}" \
-  --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
-  --set "ingress.host=${PUBLIC_HOST}" \
-  ${PORTAL_MI_CLIENT_ID:+--set "api.env.azureClientId=${PORTAL_MI_CLIENT_ID}"} \
-  --wait --timeout 5m
-echo "    Done"
+if [[ ${#_CLUSTER_FAILED[@]} -gt 0 ]]; then
+  echo "ERROR: Cluster deploy(s) failed: ${_CLUSTER_FAILED[*]}"
+  exit 1
+fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 7 — sync-jobs.sh: generate + upload DAGs, forge_lib.zip, Spark jobs
+# Phase 8 — sync-jobs.sh: generate + upload DAGs, forge_lib.zip, Spark jobs
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_SYNC" == "false" ]]; then
-  echo "━━━ [7/7] Sync pipelines (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
-  FORGE_ENV="$ENV" OWNER_ALIAS="$ALIAS" \
+  echo "━━━ [8/8] Sync pipelines (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
+  FORGE_ENV="$ENV" OWNER_ALIAS="$ALIAS" FORGE_STORAGE_ACCOUNT="$ADLS_ACCOUNT" \
     bash "${SCRIPT_DIR}/sync-jobs.sh" --full
   echo ""
+
+  # ── DAG kubectl-cp fallback (when git-sync is disabled) ───────────────────
+  # git-sync is the primary DAG delivery mechanism. When it's disabled (e.g.
+  # ADO MI access not yet set up), copy DAG files directly into the scheduler
+  # and dag-processor pods. Idempotent — safe to run even when git-sync is on.
+  DAGS_SRC="${REPO_ROOT}/orchestration/airflow/dags"
+  if [[ -d "$DAGS_SRC" ]]; then
+    mapfile -t DAG_FILES < <(find "$DAGS_SRC" -name "*.py" 2>/dev/null)
+    if [[ ${#DAG_FILES[@]} -gt 0 ]]; then
+      echo "  [8.1] Copying ${#DAG_FILES[@]} DAG file(s) into Airflow pods..."
+
+      # Scheduler is always airflow-scheduler-0 (StatefulSet)
+      SCHED_POD="airflow-scheduler-0"
+      # dag-processor is a Deployment — look up by label
+      DAGPROC_POD=$(kubectl get pod -n airflow --context "$ORCH_CLUSTER" \
+        -l component=dag-processor \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+
+      for dag_file in "${DAG_FILES[@]}"; do
+        dag_name="$(basename "$dag_file")"
+        # Only copy if the remote file differs — avoids unnecessary pod I/O on re-runs.
+        local_md5=$(md5sum "$dag_file" 2>/dev/null | awk '{print $1}' || echo "")
+        remote_md5=$(kubectl exec -n airflow "$SCHED_POD" -c scheduler \
+          --context "$ORCH_CLUSTER" \
+          -- md5sum "/opt/airflow/dags/${dag_name}" 2>/dev/null | awk '{print $1}' || echo "")
+        if [[ -n "$local_md5" && "$local_md5" == "$remote_md5" ]]; then
+          echo "    unchanged  : ${dag_name}"
+          continue
+        fi
+        kubectl cp "$dag_file" \
+          "airflow/${SCHED_POD}:/opt/airflow/dags/${dag_name}" \
+          -c scheduler \
+          --context "$ORCH_CLUSTER" 2>/dev/null \
+          && echo "    scheduler  ← ${dag_name}" \
+          || echo "    WARN: failed to copy ${dag_name} to scheduler"
+        if [[ -n "$DAGPROC_POD" ]]; then
+          kubectl cp "$dag_file" \
+            "airflow/${DAGPROC_POD}:/opt/airflow/dags/${dag_name}" \
+            -c dag-processor \
+            --context "$ORCH_CLUSTER" 2>/dev/null \
+            && echo "    dag-proc   ← ${dag_name}" \
+            || echo "    WARN: failed to copy ${dag_name} to dag-processor"
+        fi
+      done
+      echo "    DAGs will appear in Airflow UI within ~30s"
+    fi
+  fi
 else
-  echo "━━━ [7/7] Sync pipelines — skipped (--skip-sync) ━━━━━━━━━━━━━"
+  echo "━━━ [8/8] Sync pipelines — skipped (--skip-sync) ━━━━━━━━━━━━━"
 fi
 
 # ---------------------------------------------------------------------------
@@ -709,11 +1567,63 @@ if [[ "$RUN_TEST" == "true" ]]; then
     else
       echo ""
       echo "  Test pipelines: SOME FAILED — check Airflow UI"
-      echo "  kubectl port-forward svc/airflow-webserver 8081:8080 -n airflow --context ${ORCH_CLUSTER}"
+      echo "  kubectl port-forward svc/airflow-api-server 8081:8080 -n airflow --context ${ORCH_CLUSTER}"
     fi
   fi
   echo ""
 fi
+
+# ---------------------------------------------------------------------------
+# S360 IP tagging — run after all services deploy so LoadBalancer IPs exist
+# kubernetes-* IPs are created when Trino/Portal/Airflow LoadBalancer services
+# come up. Post-provision runs too early (before services); this catches them.
+# ---------------------------------------------------------------------------
+# Close ACR public access now — all image pulls/pushes are done.
+# The trap will no-op since _ACR_OPENED is cleared here.
+if [[ "${_ACR_OPENED:-false}" == "true" ]]; then
+  echo "━━━ Closing ACR public access ━━━━━━━━━━━━━━━━━━━━━━━━"
+  az acr update --name "$ACR" --public-network-enabled false --output none
+  _ACR_OPENED=false
+  echo "  ACR locked down."
+  echo ""
+fi
+
+echo "━━━ S360 IP tagging ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+_IP_TAG=$([[ "$ENV" == "prod" ]] && echo "/Prod" || echo "/NonProd")
+
+# Tag all public IPs across every Forge resource group.
+# Covers: AKS node RGs (kubernetes-* LoadBalancer IPs) and main/platform RGs.
+# UUID-named AKS API server IPs are skipped — Azure blocks ipTag changes on them.
+_tag_ips_in_rg() {
+  local rg="$1"
+  if ! az group show --name "$rg" --query id -o tsv &>/dev/null 2>&1; then
+    echo "  $rg not found — skipping"
+    return
+  fi
+  local ips
+  ips=$(az network public-ip list --resource-group "$rg" \
+    --query "[?starts_with(name,'kubernetes') && !(ipTags[?ipTagType=='FirstPartyUsage'])].name" \
+    -o tsv 2>/dev/null || true)
+  if [[ -z "$ips" ]]; then
+    echo "  $rg — all kubernetes-* IPs already tagged (or none exist yet)"
+    return
+  fi
+  while IFS= read -r _IP; do
+    [[ -z "$_IP" ]] && continue
+    az network public-ip update --resource-group "$rg" --name "$_IP" \
+      --ip-tags "FirstPartyUsage=${_IP_TAG}" --output none
+    echo "  Tagged : $_IP ($rg)"
+  done <<< "$ips"
+}
+
+for _RG in \
+  "rg-forge-${_A}${ENV}" \
+  "rg-forge-platform-${_A}${ENV}" \
+  "rg-mc-compute-${_A}${ENV}" \
+  "rg-mc-orch-${_A}${ENV}"; do
+  _tag_ips_in_rg "$_RG"
+done
+echo ""
 
 # ---------------------------------------------------------------------------
 # Done
@@ -728,7 +1638,7 @@ printf "║    URL:    http://%-35s║\n" "$PUBLIC_HOST"
 echo "║    Login:  admin / admin                             ║"
 echo "║                                                      ║"
 echo "║  AIRFLOW                                             ║"
-echo "║    kubectl port-forward svc/airflow-webserver \\     ║"
+echo "║    kubectl port-forward svc/airflow-api-server \\     ║"
 echo "║      8081:8080 -n airflow \\                         ║"
 printf "║      --context %-37s║\n" "$ORCH_CLUSTER"
 echo "║    Then open: http://localhost:8081                  ║"

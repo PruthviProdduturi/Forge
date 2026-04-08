@@ -21,7 +21,7 @@ set -euo pipefail
 # Defaults — override via flags
 # ---------------------------------------------------------------------------
 ENVIRONMENT="dev"
-OWNER_ALIAS="prproddu01"
+OWNER_ALIAS=""
 SUBSCRIPTION=""
 
 while [[ $# -gt 0 ]]; do
@@ -41,12 +41,12 @@ fi
 az account set --subscription "$SUBSCRIPTION"
 
 # Derived names (must match main.bicep naming conventions)
-ALIAS_SUFFIX="-${OWNER_ALIAS}"
-RG_COMPUTE="rg-forge${ALIAS_SUFFIX}-${ENVIRONMENT}"
-CLUSTER_COMPUTE="aks-forge-compute${ALIAS_SUFFIX}-${ENVIRONMENT}"
-CLUSTER_ORCH="aks-forge-orchestration${ALIAS_SUFFIX}-${ENVIRONMENT}"
-MC_RG_COMPUTE="rg-mc-compute${ALIAS_SUFFIX}-${ENVIRONMENT}"
-MC_RG_ORCH="rg-mc-orch${ALIAS_SUFFIX}-${ENVIRONMENT}"
+_A="${OWNER_ALIAS:+${OWNER_ALIAS}-}"
+RG_COMPUTE="rg-forge-${_A}${ENVIRONMENT}"
+CLUSTER_COMPUTE="aks-forge-compute-${_A}${ENVIRONMENT}"
+CLUSTER_ORCH="aks-forge-orchestration-${_A}${ENVIRONMENT}"
+MC_RG_COMPUTE="rg-mc-compute-${_A}${ENVIRONMENT}"
+MC_RG_ORCH="rg-mc-orch-${_A}${ENVIRONMENT}"
 IP_TAG_VALUE=$([[ "$ENVIRONMENT" == "prod" ]] && echo "/Prod" || echo "/NonProd")
 
 echo ""
@@ -71,14 +71,17 @@ tag_ips_in_rg() {
     return
   fi
 
+  # Only tag kubernetes-* prefixed IPs (LoadBalancer service IPs).
+  # UUID-named IPs are AKS API server IPs created as static — Azure blocks
+  # IP tag changes on those at the API level regardless of timing.
   local ips
   ips=$(az network public-ip list \
     --resource-group "$rg" \
-    --query "[?!(ipTags[?ipTagType=='FirstPartyUsage'])].name" \
+    --query "[?starts_with(name,'kubernetes') && !(ipTags[?ipTagType=='FirstPartyUsage'])].name" \
     -o tsv 2>/dev/null || true)
 
   if [[ -z "$ips" ]]; then
-    echo "    All IPs already tagged — nothing to do"
+    echo "    No untagged kubernetes-* IPs found — skipping (LoadBalancer IPs appear after service deploy)"
     return
   fi
 
@@ -89,8 +92,8 @@ tag_ips_in_rg() {
       --resource-group "$rg" \
       --name "$ip" \
       --ip-tags "FirstPartyUsage=$IP_TAG_VALUE" \
-      --output none \
-      || echo "    WARNING: cannot tag $ip (AKS-managed static IPs cannot be tagged post-creation — S360 exemption required)"
+      --output none
+    echo "    Tagged: $ip"
   done <<< "$ips"
 
   echo "    Done."

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name            = "forge-sdk"
+version         = "1.0.0"
+description     = "Forge Platform SDK — Spark session factory, ADLS path helpers, and job base class"
+readme          = "README.md"
+license         = { text = "MIT" }
+requires-python = ">=3.11"
+
+dependencies = [
+    "pyspark>=4.1.0",
+    "delta-spark>=4.0.0",
+    "azure-identity>=1.17.1",
+    "azure-storage-file-datalake>=12.18.0",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.14",
+    "pyarrow>=16.0",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+
+[project.urls]
+Repository = "https://dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["forge_sdk*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true

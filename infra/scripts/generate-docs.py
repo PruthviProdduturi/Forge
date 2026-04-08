@@ -706,8 +706,7 @@ def build_design_reference(output_path):
             ('Bronze', 'bronze/',       'Delta / raw',  'Immutable source of truth, append-only',   'Airflow',       'Spark'),
             ('Silver', 'silver/',       'Delta Lake',   'Cleaned, schema-enforced, DQ-validated',    'Spark',         'Spark, Trino'),
             ('Gold',   'gold/',         'Delta Lake',   'Aggregated, SLA-governed, consumer-ready',  'Spark',         'Trino, Portal'),
-            ('Code',   'code/',         'Files',        'Job notebooks, JARs, runner scripts',       'CI/CD',         'Spark'),
-            ('Ckpts',  'checkpoints/',  'Delta state',  'Structured Streaming checkpoint state',     'Spark',         'Spark'),
+            ('Code',   'code/',         'Files',        'Job notebooks, JARs, runner scripts, checkpoints/<pipeline_id>/', 'CI/CD, Spark', 'Spark'),
         ],
         col_widths=[0.7, 0.9, 0.9, 2.2, 0.8, 0.8],
     )
@@ -724,7 +723,7 @@ def build_design_reference(output_path):
             ('id-aks-kubelet-compute-{alias}-{env}',            'AKS infra',  'None (ACR pull via separate assignment)',        '—'),
             ('id-aks-controlplane-orchestration-{alias}-{env}', 'AKS infra',  'None',                                          '—'),
             ('id-aks-kubelet-orchestration-{alias}-{env}',      'AKS infra',  'None (ACR pull)',                               '—'),
-            ('id-forge-spark-{alias}-{env}',                    'Workload',   'Contributor: bronze, silver, gold, code, ckpts', 'Secrets User'),
+            ('id-forge-spark-{alias}-{env}',                    'Workload',   'Contributor: bronze, silver, gold, code',        'Secrets User'),
             ('id-forge-trino-{alias}-{env}',                    'Workload',   'Reader: silver, gold',                          'Secrets User'),
             ('id-forge-airflow-{alias}-{env}',                  'Workload',   'Contributor: bronze · Reader: code',            'Secrets User'),
             ('id-forge-dq-{alias}-{env}',                       'Workload',   'Reader: bronze, silver, gold',                  'Secrets User'),

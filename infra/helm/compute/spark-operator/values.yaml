@@ -19,7 +19,7 @@
 
 # Controller + webhook pod image
 image:
-  registry: forgeacrprproddu.azurecr.io
+  registry: forgeacr.azurecr.io
   repository: spark-operator-controller
   tag: "2.5.0"
   pullPolicy: IfNotPresent
@@ -27,7 +27,7 @@ image:
 # Pre-install/upgrade hook Job image (kubectl)
 hook:
   image:
-    registry: forgeacrprproddu.azurecr.io
+    registry: forgeacr.azurecr.io
     repository: spark-operator-kubectl
     tag: "2.5.0"
 

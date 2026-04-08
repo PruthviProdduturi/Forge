@@ -22,7 +22,7 @@ targetScope = 'subscription'
 // ---------------------------------------------------------------------------
 
 @description('Primary Azure region for the registry.')
-param location string = 'northcentralus'
+param location string = 'westcentralus'
 
 @description('Owner alias for personal/test deployments (e.g. prproddu). Leave empty for the real shared registry.')
 param ownerAlias string = ''
@@ -35,8 +35,10 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 var aliasSuffix  = ownerAlias != '' ? '-${ownerAlias}' : ''
 
-// ACR names cannot contain hyphens — embed alias directly
-var registryName = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr'
+// ACR names cannot contain hyphens — embed alias directly.
+// When alias is blank, append first 8 chars of subscription ID for global uniqueness.
+var subSuffix    = substring(replace(subscription().subscriptionId, '-', ''), 0, 8)
+var registryName = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr${subSuffix}'
 var rgName       = 'rg-forge-acr${aliasSuffix}'
 
 var mergedTags = union(tags, {
@@ -65,6 +67,7 @@ module acr '../../modules/acr.bicep' = {
     registryName: registryName
     location: location
     tags: mergedTags
+    publicNetworkAccessEnabled: ownerAlias != ''  // dev personal deployments: allow public access; shared/prod: disabled
   }
 }
 

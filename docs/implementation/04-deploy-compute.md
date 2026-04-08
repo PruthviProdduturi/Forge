@@ -7,7 +7,7 @@
 
 ---
 
-> **Automated:** `forge-up.sh` phase **[5/7]** handles all compute cluster deployments automatically.
+> **Automated:** `forge-up.sh` phase **[6/8]** handles all compute cluster deployments automatically.
 > Run `bash infra/scripts/forge-up.sh --env dev --alias prproddu --skip-infra --git-pat <pat>` to
 > deploy (or re-deploy) all compute components in one step.
 >
@@ -401,13 +401,13 @@ The auth proxy is a Flask/MSAL reverse proxy that sits in front of Trino and enf
 
 ### Deploy
 
-This component is deployed automatically by `forge-up.sh` phase [5/7]. It handles federated
+This component is deployed automatically by `forge-up.sh` phase [6/8]. It handles federated
 credential creation, VMSS identity attachment, redirect URI registration, session secret creation,
 and the Helm install.
 
 To re-deploy this component in isolation (e.g. after a config change):
 ```bash
-# Re-run the full phase [5/7] component by running forge-up.sh with --skip-infra --skip-build
+# Re-run the full phase [6/8] component by running forge-up.sh with --skip-infra --skip-build
 bash infra/scripts/forge-up.sh --env {env} --alias {alias} --skip-infra --skip-build --git-pat <pat>
 ```
 

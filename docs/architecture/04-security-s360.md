@@ -37,7 +37,7 @@ Pod (annotated SA)  →  OIDC token  →  Azure AD  →  short-lived access toke
 
 | Workload Identity | Used by | Permissions |
 |-------------------|---------|-------------|
-| `id-forge-spark-{alias}-{env}` | Spark Operator pods | Storage Blob Data Contributor (bronze/silver/gold/code/checkpoints) · KV Secrets User |
+| `id-forge-spark-{alias}-{env}` | Spark Operator pods | Storage Blob Data Contributor (bronze/silver/gold/code) · KV Secrets User |
 | `id-forge-trino-{alias}-{env}` | Trino query pods + auth proxy (IMDS client_assertion) | Storage Blob Data Reader (silver/gold) · KV Secrets User |
 | `id-forge-airflow-{alias}-{env}` | Airflow task pods | Storage Blob Data Contributor (bronze) · Data Reader (code) · KV Secrets User |
 | `id-forge-dq-{alias}-{env}` | DQ framework pods | Storage Blob Data Reader (bronze/silver/gold) · KV Secrets User |

@@ -8,6 +8,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 spec:
   replicas: 1
+  # Recreate: terminate old pod before starting new one.
+  # Required because the spark node pool has only 1 node — RollingUpdate would
+  # try to schedule old + new simultaneously, causing the new pod to stay Pending.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: {{ .Values.nameOverride | default "spark-connect" }}
