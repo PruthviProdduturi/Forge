@@ -20,7 +20,11 @@ controller:
     type: LoadBalancer
     annotations:
       service.beta.kubernetes.io/azure-dns-label-name: ""   # overridden by --set at deploy time
+      # K8s 1.24+: AKS ignores the tcp protocol override for ports 80/443 and forces HTTP/HTTPS probes.
+      # Without a request path, the probe hits / → ingress returns 308/404 → LB marks backend unhealthy.
+      # /healthz is served by ingress-nginx on port 80 and always returns 200.
       service.beta.kubernetes.io/azure-load-balancer-health-probe-protocol: "tcp"
+      service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: "/healthz"
     # Expose TCP ports alongside 80/443
     ports:
       http: 80

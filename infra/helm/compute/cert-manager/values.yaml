@@ -21,6 +21,9 @@ webhook:
     tag: "v1.17.1"
   nodeSelector:
     agentpool: systempool
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
 
 cainjector:
   image:
@@ -28,6 +31,9 @@ cainjector:
     tag: "v1.17.1"
   nodeSelector:
     agentpool: systempool
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
 
 acmesolver:
   image:
@@ -40,10 +46,17 @@ startupapicheck:
     tag: "v1.17.1"
   nodeSelector:
     agentpool: systempool
+  tolerations:
+    - key: CriticalAddonsOnly
+      operator: Exists
 
-# Schedule on the compute system pool
+# Schedule on the compute system pool — tolerate CriticalAddonsOnly taint
 nodeSelector:
   agentpool: systempool
+
+tolerations:
+  - key: CriticalAddonsOnly
+    operator: Exists
 
 resources:
   requests:

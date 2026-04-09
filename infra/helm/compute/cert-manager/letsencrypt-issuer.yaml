@@ -12,3 +12,11 @@ spec:
       - http01:
           ingress:
             class: nginx
+            podTemplate:
+              spec:
+                # Compute cluster nodes all have workload taints — solver must tolerate them
+                tolerations:
+                  - key: CriticalAddonsOnly
+                    operator: Exists
+                  - key: workload
+                    operator: Exists
