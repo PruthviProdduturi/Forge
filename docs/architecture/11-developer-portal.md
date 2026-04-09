@@ -1,8 +1,9 @@
 # Forge — Developer Portal Architecture
 
-> **Version:** 1.1
+> **Version:** 1.2
 > **Status:** Active development
 > **Audience:** Platform engineers, data engineers, frontend/backend contributors
+> **Last updated:** 2026-04-09
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 
@@ -50,12 +51,23 @@ The Developer Portal is **not** a business intelligence tool, a chart builder, a
 
 ## 2. Component Architecture
 
-The portal consists of two independently deployed pods:
+The portal consists of three independently deployed pods:
 
-- **`portal-web`** — Next.js 14 frontend, App Router, all pages are `"use client"` components, custom `useAuth` hook for auth state management, MSAL browser for Azure AD OIDC
-- **`portal-api`** — FastAPI backend, Python 3.11, structlog for structured logging, pydantic-settings for configuration
+- **`portal-auth-proxy`** — Flask reverse proxy that handles Azure AD OAuth2. Sits in front of both `portal-web` and `portal-api`. Uses an IMDS managed identity token as `client_assertion` for MSAL `ConfidentialClientApplication` (same pattern as `trino-auth-proxy` on the compute cluster). After AAD login, injects `X-User-Email`, `X-User-Name`, and `X-User-Roles` headers into all upstream requests. Manages session cookies.
+- **`portal-web`** — Next.js 14 frontend, App Router, all pages are `"use client"` components, custom `useAuth` hook for auth state. User identity comes from proxy-injected headers, not from MSAL browser tokens.
+- **`portal-api`** — FastAPI backend, Python 3.11, structlog for structured logging, pydantic-settings for configuration. Reads user identity from the `X-User-*` headers injected by the auth proxy.
 
-Both pods run on the **`workerpool`** node pool of the `forge-orchestration` AKS cluster in the `portal` namespace.
+All three pods run on the **`workerpool`** node pool of the `forge-orchestration` AKS cluster in the `portal` namespace.
+
+### Auth Proxy: `portal-auth-proxy` (Flask + MSAL)
+
+The auth proxy is the single point of authentication for the entire portal. No browser-side OAuth or MSAL.js is involved. Key behaviours:
+
+- Unauthenticated requests to any path are redirected to `/oauth2/sign_in`
+- MSAL `ConfidentialClientApplication` calls the IMDS endpoint to obtain the `id-forge-portal-dev` managed identity token and presents it as `client_assertion` — no client secret is needed
+- AAD app registration: `d0ce7c35-cc10-4ae7-b6be-60d002f43059`; federated credential subject = portal MI principal ID `eba37f8f-5878-4f92-80dd-6bed1a4d0c3b`
+- After successful AAD callback, a session cookie is set and the proxy forwards requests with injected headers
+- Subsequent requests: session cookie validated; `X-User-Email`, `X-User-Name`, `X-User-Roles` headers injected to upstream services
 
 ### Frontend: `portal-web` (Next.js 14)
 
@@ -63,7 +75,7 @@ The frontend uses Next.js 14 with the App Router. All pages are Client Component
 
 Key client-side components:
 
-- **`useAuth` hook** — manages auth state, token refresh, MSAL integration, and auto-detects the active auth provider by calling `GET /api/auth/provider` on startup
+- **`useAuth` hook** — calls `GET /api/auth/me` to check session state; `login()` redirects to `/oauth2/sign_in` (no MSAL.js, no browser-side token handling)
 - **`ForgeLoader`** — revolving crosshair SVG animation with a shimmer progress bar, used for all loading states throughout the portal
 - **`ThemeModal`** — per-user theme picker; theme preferences are stored in PostgreSQL (the only use of the database)
 - **`Layout`** — header navigation with environment badge dropdown; health-aware status section on the homepage
@@ -110,72 +122,58 @@ The FastAPI backend is a thin aggregation layer. It does not own platform data �
 
 ## 3. Authentication Flow
 
-The portal supports two auth modes, auto-detected at runtime. The active mode is controlled by Key Vault secrets and can be changed without a pod restart.
+The portal uses server-side OAuth2 proxy authentication. There is no browser-side MSAL, no JWT in localStorage, and no tokens in the browser at any point.
 
 ### Identity Model
 
-- **Dual-mode**: local (HS256 JWT issued by the backend) or Azure AD (MSAL browser OIDC, RS256 JWT)
-- The frontend calls `GET /api/auth/provider` on startup to determine which mode is active
-- The backend `get_current_user` dependency inspects the `alg` header of the Bearer token to auto-detect the mode: `HS256` → local verification, `RS256` → JWKS validation
-- User roles come from Azure AD App Roles (Admin, Engineer, Viewer); no database is used for users
+- **Server-side proxy**: `portal-auth-proxy` (Flask + MSAL `ConfidentialClientApplication`) handles all AAD interaction
+- The browser holds a session cookie only — no OAuth tokens
+- User roles come from Azure AD App Roles injected as `X-User-Roles` headers
+- No database is used for users; user identity is passed through headers on every request
 
-### Auth Configuration in Key Vault
+### Auth Configuration
 
-Auth config is stored in three Key Vault secrets:
+| Item | Value |
+|------|-------|
+| AAD App Registration | `d0ce7c35-cc10-4ae7-b6be-60d002f43059` |
+| Portal MI | `id-forge-portal-dev` (assigned to orch VMSS nodes) |
+| Federated credential | `managed-identity-federation` (subject = portal MI principal ID `eba37f8f-5878-4f92-80dd-6bed1a4d0c3b`) |
+| Session secret | Stored in Kubernetes secret `proxy-session-secret` in the `portal` namespace |
 
-| Secret Name | Values |
-|-------------|--------|
-| `forge-portal-auth-provider` | `"local"` or `"azure_ad"` |
-| `forge-portal-aad-client-id` | Azure AD App Registration Client ID |
-| `forge-portal-aad-tenant-id` | Azure AD Tenant ID |
-
-`GET /api/auth/provider` hot-reads these secrets on every call (no in-memory cache), so changing the provider via the Admin UI takes effect on the next browser load without a pod restart.
-
-For local development when `KEY_VAULT_URL` is not set, the backend falls back to `.forge-dev-config.json` in the backend root, which persists config across restarts.
-
-### Local Auth Mode
+### Azure AD Auth Flow (server-side proxy)
 
 ```
-1. Frontend calls GET /api/auth/provider → { "provider": "local" }
+1. Browser → portal-auth-proxy (any path, unauthenticated)
+   Proxy: no valid session cookie → HTTP 302 redirect to /oauth2/sign_in
 
-2. Dev bypass: on startup, auto-login with admin/admin credentials
-   OR: user submits login form → POST /api/auth/login
+2. Browser → /oauth2/sign_in
+   Proxy: MSAL ConfidentialClientApplication initiates authorization code flow
+     - calls IMDS endpoint to get id-forge-portal-dev MI token
+     - presents MI token as client_assertion (no client secret)
+   Redirect → https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize
+   MFA enforced at tenant level
 
-3. Backend verifies username/password against settings
-   Returns HS256 JWT in LoginResponse
+3. AAD → /oauth2/callback (proxy callback URL)
+   Proxy: MSAL exchanges code for tokens
+   Proxy: extracts email, name, app roles from ID token claims
+   Proxy: sets encrypted session cookie
+   Proxy: redirects browser to original destination
 
-4. Frontend stores token in localStorage key: forge_local_token
+4. Subsequent requests:
+   Browser presents session cookie
+   Proxy validates session → extracts user identity
+   Proxy injects upstream request headers:
+     X-User-Email: user@example.com
+     X-User-Name:  First Last
+     X-User-Roles: Admin (or Engineer, Viewer)
+   Proxy forwards to portal-api:8080 or portal-web:3001
 
-5. Every API request: Authorization: Bearer <hs256-jwt>
+5. portal-api reads X-User-* headers (no JWT validation needed)
+   RBAC enforced per endpoint: Admin required for /api/platform/*
 
-6. Backend get_current_user sees alg=HS256 → verifies with shared secret
-   Extracts sub, name, email, roles from claims
-```
-
-### Azure AD Auth Mode
-
-```
-1. Frontend calls GET /api/auth/provider
-   → { "provider": "azure_ad", "azure_client_id": "...", "azure_tenant_id": "..." }
-
-2. useAuth hook initialises MSAL browser PublicClientApplication
-   with the returned client_id and tenant_id
-
-3. MSAL performs OIDC authorization code flow with PKCE:
-     redirect to: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize
-     scopes: openid, profile, email
-     MFA enforced at tenant level
-
-4. MSAL receives ID token and access token
-   Frontend sends the ID token (not access token) as Bearer
-
-5. Backend get_current_user sees alg=RS256 → fetches JWKS:
-     https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys
-     (cached in-memory for 30 minutes)
-   Validates signature, exp, nbf
-   Extracts sub, name, email, roles (Azure AD App Roles) from claims
-
-6. RBAC enforced per endpoint: Admin required for /api/platform/*
+6. portal-web useAuth hook calls GET /api/auth/me
+   portal-api returns user identity from X-User-* headers
+   Frontend renders authenticated UI
 ```
 
 ### Portal RBAC Roles
@@ -386,10 +384,24 @@ The frontend uses plain `useEffect` + `fetch` for data fetching. Each page compo
 
 ### Kubernetes Configuration
 
-Both portal components run in the `portal` namespace on the `workerpool` node pool of the `forge-orchestration` cluster.
+All three portal components run in the `portal` namespace on the `workerpool` node pool of the `forge-orchestration` cluster.
 
 ```
 Namespace: portal
+
+Deployment: portal-auth-proxy
+  replicas: 2
+  node pool: workerpool (nodeSelector: agentpool=workerpool)
+  pod:
+    containers:
+      - name: portal-auth-proxy
+        port: 8080
+        resources:
+          requests: { cpu: "100m", memory: "128Mi" }
+          limits:   { cpu: "250m", memory: "256Mi" }
+        livenessProbe:
+          httpGet: { path: /oauth2/healthz, port: 8080 }
+          initialDelaySeconds: 10, periodSeconds: 30
 
 Deployment: portal-api
   replicas: 2
@@ -430,17 +442,20 @@ Deployment: portal-web
 ### Services and Ingress
 
 ```
-Service: portal-api  (ClusterIP, port 8080)
-Service: portal-web  (ClusterIP, port 3001)
+Service: portal-auth-proxy  (ClusterIP, port 8080)
+Service: portal-api         (ClusterIP, port 8080)
+Service: portal-web         (ClusterIP, port 3001)
 
-Ingress: NGINX ingress controller
-  host: forge-portal-{alias}-{env}.{location}.cloudapp.azure.com
+Ingress: NGINX ingress controller (public LB 57.151.140.215)
+  host: forge-portal-dev.westcentralus.cloudapp.azure.com
+  TLS: cert-manager / Let's Encrypt
   rules:
-    - path: /api/*  → portal-api:8080
-    - path: /*      → portal-web:3001
+    - path: /oauth2/*  → portal-auth-proxy:8080  (OAuth2 flow endpoints)
+    - path: /api/*     → portal-auth-proxy:8080  (proxied to portal-api)
+    - path: /*         → portal-auth-proxy:8080  (proxied to portal-web)
 ```
 
-The frontend uses relative `/api/*` paths — because both pods are served behind the same ingress hostname, no CORS configuration is needed for API calls.
+All traffic enters via `portal-auth-proxy`. The proxy routes `/api/*` upstream to `portal-api:8080` and `/*` upstream to `portal-web:3001`, injecting user headers on every forwarded request. The frontend uses relative `/api/*` paths — no CORS configuration is needed.
 
 ### Environment Variables (portal-api)
 
@@ -502,43 +517,48 @@ When these are set to `.svc.cluster.local` DNS names (the default for intra-clus
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Engineer's Browser                                                         │
 │                                                                             │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │  Next.js 14 App Router (all pages "use client")                       │  │
-│  │                                                                       │  │
-│  │  useAuth hook   │   ForgeLoader   │   ThemeModal   │   Layout         │  │
-│  │                                                                       │  │
-│  │  Home (health)  │  Cost  │  Status  │  About                         │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
+│  session cookie only — no OAuth tokens, no MSAL.js                         │
+│  useAuth calls GET /api/auth/me to check session state                      │
+│  login() redirects to /oauth2/sign_in                                       │
 └──────────────────────────────────┬──────────────────────────────────────────┘
-                                   │  HTTPS
+                                   │  HTTPS (session cookie)
                                    ▼
-                    ┌──────────────────────────┐
-                    │  NGINX Ingress            │
-                    │  forge-portal-{alias}-   │
-                    │  {env}.{loc}.cloud...    │
-                    └──────────┬───────────────┘
-                               │
-              ┌────────────────┴────────────────┐
-              │  /api/*                         │  /*
-              ▼                                 ▼
-┌─────────────────────────┐        ┌──────────────────────────┐
-│  portal-api (pod ×2)    │        │  portal-web (pod ×2)     │
-│  FastAPI / Python 3.11  │◀──────▶│  Next.js 14              │
-│  port 8080              │ REST   │  port 3001               │
-│  structlog              │        │  useAuth + MSAL browser  │
-│  pydantic-settings      │        │  useEffect + fetch       │
-│  Workload Identity SA   │        │                          │
-└────────────┬────────────┘        └──────────────────────────┘
-             │
-             │  (dual-mode auth detection)
-             │  HS256 → local verify
-             │  RS256 → JWKS validate
-             ▼
-┌────────────────────────────────────────────────────────────────┐
-│  login.microsoftonline.com/{tenant}/discovery/v2.0/keys        │
-│  JWKS endpoint — cached 30 min                                 │
-└────────────────────────────────────────────────────────────────┘
-
+                    ┌──────────────────────────────────────────┐
+                    │  NGINX Ingress (public LB 57.151.140.215) │
+                    │  forge-portal-dev.westcentralus.cloud...  │
+                    │  TLS: cert-manager / Let's Encrypt        │
+                    └──────────────────┬───────────────────────┘
+                                       │  all paths
+                                       ▼
+                    ┌──────────────────────────────────────────┐
+                    │  portal-auth-proxy (pod ×2)               │
+                    │  Flask + MSAL ConfidentialClientApp       │
+                    │  port 8080                                │
+                    │                                           │
+                    │  /oauth2/sign_in  → AAD authorization     │
+                    │  /oauth2/callback ← AAD redirect          │
+                    │                                           │
+                    │  IMDS → id-forge-portal-dev MI token      │
+                    │    → client_assertion (no client secret)  │
+                    │                                           │
+                    │  session validated → inject headers:      │
+                    │    X-User-Email, X-User-Name, X-User-Roles│
+                    └────────────────┬─────────────────────────┘
+                                     │
+              ┌──────────────────────┴──────────────────────┐
+              │  /api/*                                      │  /*
+              ▼                                              ▼
+┌─────────────────────────┐                   ┌──────────────────────────┐
+│  portal-api (pod ×2)    │                   │  portal-web (pod ×2)     │
+│  FastAPI / Python 3.11  │                   │  Next.js 14              │
+│  port 8080              │                   │  port 3001               │
+│  structlog              │                   │  useAuth → GET /api/     │
+│  pydantic-settings      │                   │    auth/me (session check)│
+│  Workload Identity SA   │                   │  useEffect + fetch       │
+│                         │                   │                          │
+│  reads X-User-* headers │                   │  no MSAL.js              │
+│  RBAC from X-User-Roles │                   │  no tokens in browser    │
+└────────────┬────────────┘                   └──────────────────────────┘
              │
              ├─────────────────────────────────────────────────────────┐
              │                                                         │
@@ -564,8 +584,8 @@ When these are set to `.svc.cluster.local` DNS names (the default for intra-clus
 │                        │                             │                          │
 │  airflow namespace     │                             │  AKS cluster state       │
 │  portal namespace      │                             │  Node pools              │
-│  dq namespace          │                             │  VM sizes + counts       │
-│  monitoring namespace  │                             └──────────────────────────┘
+│  monitoring namespace  │                             │  VM sizes + counts       │
+│                        │                             └──────────────────────────┘
 └────────────────────────┘
 
 

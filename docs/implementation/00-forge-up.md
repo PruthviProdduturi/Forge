@@ -11,22 +11,26 @@
 `infra/scripts/forge-up.sh` is the single entry point for deploying the entire Forge platform.
 
 ```
-[1/8] Provision infrastructure     Bicep: AKS × 2, ADLS, Postgres, Key Vault, networking,
-                                   managed identities, AcrPull role assignments.
-                                   Calls provision-infra.sh → post-provision.sh automatically.
-[2/8] Seed Key Vault secrets       Portal AAD client/tenant IDs, airflow webserver key.
-[3/8] Configure Postgres           Creates airflow DB, grants Airflow MI schema access (AAD auth).
-[4/8] Create Kubernetes secrets    airflow-db-credentials, airflow-git-credentials,
-                                   airflow-compute-kubeconfig, proxy-session-secret,
-                                   trino workload identity federated credential.
-[5/8] Build and push images        Spark, Trino, Airflow, HMS, trino-auth-proxy,
-                                   Portal API, Portal Web → ACR (parallel ACR Tasks).
-                                   ACR public access opened automatically, closed after phase 8.
-[6/8] Deploy compute cluster       Hive Metastore, Spark Operator, Spark Connect, Trino,
-                                   Trino Auth Proxy (parallel with phase 7).
-[7/8] Deploy orchestration cluster ingress-nginx, Airflow, Portal (parallel with phase 6).
-[8/8] Sync pipelines               forge generate → ADLS upload (jobs + DQ rules) → git push DAGs.
-[+]   Smoke test                   --run-test: seed NYC TLC data → bronze→silver→gold → verify Trino.
+[1/8]   Provision infrastructure     Bicep: AKS × 2, ADLS, Postgres, Key Vault, networking,
+                                     managed identities, AcrPull role assignments.
+                                     Calls provision-infra.sh → post-provision.sh automatically.
+[2/8]   Seed Key Vault secrets       Portal AAD client/tenant IDs, airflow webserver key.
+[3/8]   Configure Postgres           Creates airflow DB, grants Airflow MI schema access (AAD auth).
+[4/8]   Create Kubernetes secrets    airflow-db-credentials, airflow-git-credentials,
+                                     airflow-compute-kubeconfig, proxy-session-secret,
+                                     trino workload identity federated credential.
+[5/8]   Build and push images        Spark, Trino, Airflow, HMS, trino-auth-proxy, portal-auth-proxy,
+                                     Portal API, Portal Web → ACR (parallel ACR Tasks).
+                                     ACR public access opened automatically, closed after phase 8.
+[6.0.5] Deploy cert-manager          cert-manager v1.17.1 on compute cluster (before ingress-nginx).
+                                     All pods tolerate CriticalAddonsOnly; ACME HTTP-01 solver
+                                     pods tolerate all workload taints.
+[6/8]   Deploy compute cluster       Hive Metastore, Spark Operator, Spark Connect, Trino,
+                                     ingress-nginx, Trino Auth Proxy (parallel with phase 7).
+[7/8]   Deploy orchestration cluster ingress-nginx, Airflow, Portal (parallel with phase 6).
+                                     Portal includes portal-auth-proxy, portal-api, portal-web.
+[8/8]   Sync pipelines               forge generate → ADLS upload (jobs + DQ rules) → git push DAGs.
+[+]     Smoke test                   --run-test: seed NYC TLC data → bronze→silver→gold → verify Trino.
 ```
 
 ---
@@ -244,8 +248,8 @@ az acr update --name <acr> --public-network-enabled true --default-action Allow
 [ ] Trino: coordinator + workers Running
 [ ] Trino Auth Proxy: 1/1 Running
 [ ] Airflow webserver + scheduler Running
-[ ] Portal accessible at http://forge-portal-dev.<region>.cloudapp.azure.com
-[ ] Trino port-forward: kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino --context aks-forge-compute-dev
+[ ] Portal accessible at https://forge-portal-dev.westcentralus.cloudapp.azure.com
+[ ] Trino UI accessible at https://forge-compute-dev.westcentralus.cloudapp.azure.com/ui/
 [ ] Airflow port-forward: kubectl port-forward svc/airflow-api-server 8081:8080 -n airflow --context aks-forge-orchestration-dev
 ```
 

@@ -1,9 +1,9 @@
 # Forge — Networking Architecture
 
-> **Version:** 1.0
-> **Status:** Production
+> **Version:** 1.1
+> **Status:** Active
 > **Audience:** Platform engineers, network engineers, security architects
-> **Last updated:** 2026-03-24
+> **Last updated:** 2026-04-09
 
 [![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 
@@ -30,7 +30,7 @@
 
 Forge's network design is built on three constraints:
 
-**Zero public exposure on the data plane.** No storage account, no database, no Kubernetes API server, no container registry is reachable from the public internet. The only public-facing IP is the Application Gateway WAF, which serves the Developer Portal and Azure Managed Grafana — both read-only UIs backed by Azure AD authentication.
+**Public ingress via ingress-nginx, TLS via Let's Encrypt.** Both AKS clusters expose public LoadBalancer IPs. Portal and Trino are served over HTTPS (port 443) terminated by ingress-nginx with Let's Encrypt certificates issued via cert-manager. Spark Connect (port 15002) and Hive Metastore Thrift (port 9083) are exposed as raw TCP on the compute cluster LoadBalancer. NSG rules on the compute subnet allow these ports from Internet. The orchestration cluster subnet has no subnet-level NSG — public access is controlled by the AKS node NSG only. Application Gateway WAF is planned for production but not deployed in dev.
 
 **Private endpoints for all PaaS services.** Every Azure managed service is accessed via a private endpoint with a private IP in the VNet. DNS resolution for those services returns the private IP, not the public Microsoft backbone IP. There is no exception to this rule.
 
@@ -41,23 +41,62 @@ Forge's network design is built on three constraints:
 ## 2. Full Network Topology Diagram
 
 ```
+Internet
+  │
+  ├── HTTPS :443  ──────────────────────────────────────────────────────────────┐
+  │                                                                             │
+  │   ┌──────────────────────────────────────────────────────────────────────┐ │
+  │   │  Public LB IP: 57.151.140.215  (orch cluster, westcentralus)         │ │
+  │   │  DNS: forge-portal-dev.westcentralus.cloudapp.azure.com              │ │
+  │   │  ingress-nginx → TLS terminated (cert-manager / Let's Encrypt)       │ │
+  │   │                                                                      │ │
+  │   │    /oauth2/*    → portal-auth-proxy:8080  (Flask OAuth2 proxy)       │ │
+  │   │    /api/*       → portal-api:8080          (FastAPI)                 │ │
+  │   │    /*           → portal-web:3001          (Next.js)                 │ │
+  │   └──────────────────────────────────────────────────────────────────────┘ │
+  │                                                                             │
+  └── HTTPS :443  ──────────────────────────────────────────────────────────────┼──┐
+  │   TCP   :15002 ─────────────────────────────────────────────────────────────┼──┤
+  │   TCP   :9083  ─────────────────────────────────────────────────────────────┼──┤
+  │                                                                             │  │
+  │   ┌──────────────────────────────────────────────────────────────────────┐    │
+  │   │  Public LB IP: 20.69.44.76  (compute cluster, westcentralus)         │    │
+  │   │  DNS: forge-compute-dev.westcentralus.cloudapp.azure.com             │    │
+  │   │                                                                      │    │
+  │   │  :443  ingress-nginx → TLS (cert-manager / Let's Encrypt)            │    │
+  │   │    /*  → trino-auth-proxy:8080  (Flask OAuth2 proxy) → Trino         │    │
+  │   │  :15002  LoadBalancer → Spark Connect (gRPC, TCP)                    │    │
+  │   │  :9083   LoadBalancer → Hive Metastore Thrift (TCP)                  │    │
+  │   └──────────────────────────────────────────────────────────────────────┘    │
+  │                                                                                │
+  └────────────────────────────────────────────────────────────────────────────────┘
+
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│  Azure Region: East US                                                               │
+│  Azure Region: West Central US                                                       │
 │                                                                                      │
 │  vnet-forge-{env}  (dev: 10.0.0.0/12  |  prod: 10.16.0.0/12)                        │
 │                                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │  10.1.0.0/16  —  compute-cluster-subnet                                         │ │
+│  │  NSG: nsg-forge-compute-dev — AllowHttpHttpsInbound (80,443,8080,9083,15002)     │ │
 │  │                                                                                  ││
 │  │  ┌────────────────────────────────────────────────────────────────────────────┐  ││
-│  │  │  forge-compute AKS cluster                                                │  │ │
+│  │  │  aks-forge-compute-dev  (AKS cluster, public LB IP 20.69.44.76)           │  │ │
 │  │  ││                                                                           │  ││
-│  │  │  Node Pool: system   (10.1.1.0/24, 1–3 × Standard_D4s_v5)                  │  ││
-│  │  │  Node Pool: spark    (10.1.2.0/22, 0–20 × Standard_E8s_v5, spot)           │  ││
-│  │  │  Node Pool: trino    (10.1.6.0/24, 2–8 × Standard_E16s_v5)                 │  ││
+│  │  │  Node Pool: system   (1–3 × Standard_D4s_v5, CriticalAddonsOnly taint)    │  ││
+│  │  │  Node Pool: spark    (0–20 × Standard_E8s_v5, spot)                       │  ││
+│  │  │  Node Pool: trino    (2–8 × Standard_E16s_v5)                             │  ││
 │  │  ││                                                                           │  ││
 │  │  │  Pod CIDR (overlay):  192.168.0.0/16   (does not consume VNet space)       │  ││
 │  │  ││  Service CIDR:        172.20.0.0/16                                       │  ││
+│  │  ││                                                                           │  ││
+│  │  ││  Namespaces:                                                              │  ││
+│  │  ││    trino          — trino-auth-proxy, trino coordinator, trino workers    │  ││
+│  │  ││    spark-system   — spark-operator, spark-connect                         │  ││
+│  │  ││    spark-jobs     — driver/executor pods (ephemeral)                      │  ││
+│  │  ││    hive-metastore — HMS server                                            │  ││
+│  │  ││    cert-manager   — cert-manager v1.17.1 (ACME HTTP-01, LB probe /healthz)│  ││
+│  │  ││    ingress-nginx  — ingress controller (LB on 20.69.44.76)               │  ││
 │  │  ││                                                                           │  ││
 │  │  │  Azure Monitor Agent DaemonSet ────────────────────────────────────────────┼──┼──┼──▶ Azure Monitor / Log Analytics
 │  │  └────────────────────────────────────────────────────────────────────────────┘  ││
@@ -65,22 +104,23 @@ Forge's network design is built on three constraints:
 │                                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │  10.2.0.0/16  —  orchestration-cluster-subnet                                   │ │
+│  │  (No subnet-level NSG — public access via AKS node NSG only)                    │ │
 │  │                                                                                  ││
 │  │  ┌────────────────────────────────────────────────────────────────────────────┐  ││
-│  │  │  forge-orchestration AKS cluster                                          │  │ │
+│  │  │  aks-forge-orchestration-dev  (AKS cluster, public LB IP 57.151.140.215)  │  │ │
 │  │  ││                                                                           │  ││
-│  │  │  Node Pool: system    (10.2.1.0/24, 1–3 × Standard_D4s_v5)                 │  ││
-│  │  │  Node Pool: airflow   (10.2.2.0/22, 2–10 × Standard_D8s_v5)                │  ││
-│  │  │  Node Pool: platform  (10.2.6.0/24, 1–4 × Standard_D4s_v5)                 │  ││
+│  │  │  Node Pool: system    (1–3 × Standard_D4s_v5)                              │  ││
+│  │  │  Node Pool: airflow   (2–10 × Standard_D8s_v5)                             │  ││
+│  │  │  Node Pool: platform  (1–4 × Standard_D4s_v5)                              │  ││
 │  │  ││                                                                           │  ││
 │  │  │  Pod CIDR (overlay):  192.169.0.0/16   (does not consume VNet space)       │  ││
 │  │  ││  Service CIDR:        172.21.0.0/16                                       │  ││
 │  │  ││                                                                           │  ││
 │  │  ││  Namespaces:                                                              │  ││
 │  │  ││    airflow        — scheduler, webserver, workers (KubernetesExecutor)    │  ││
-│  │  ││    lineage        — (removed — lineage handled by Microsoft Purview managed service) │  ││
+│  │  ││    portal         — portal-auth-proxy, portal-api, portal-web             │  ││
+│  │  ││    ingress-nginx  — ingress controller (LB on 57.151.140.215)             │  ││
 │  │  ││    monitoring     — azure-monitor-agent, otel-collector                   │  ││
-│  │  ││    portal         — portal-api, portal-web                                │  ││
 │  │  └────────────────────────────────────────────────────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                      │
@@ -101,44 +141,32 @@ Forge's network design is built on three constraints:
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                      │
 │  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
-│  │  10.4.0.0/24  —  appgw-subnet  (NSG: inbound from Internet on 443; GatewayMgr) │  │
-│  │                                                                                  ││
-│  │  Application Gateway v2 (WAF)                                                    ││
-│  │    Public IP: <forge-appgw-pip>                                                 │ │
-│  │    DNS: portal.forge.<domain>  → Portal backend pool (10.2.x.x)               │   │
-│  │    DNS: grafana.forge.<domain> → Azure Managed Grafana (Azure-hosted)         │   │
-│  │    TLS cert from Key Vault (cert name: forge-tls-cert)                         │  │
-│  │    WAF policy: OWASP 3.2 managed rules + custom exclusions                       ││
-│  │                                                                                  ││
-│  └─────────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                      │
-│  ┌─────────────────────────────────────────────────────────────────────────────────┐ │
 │  │  10.5.0.0/24  —  bastion-subnet  (AzureBastionSubnet — name is fixed by Azure)  │ │
 │  │                                                                                  ││
 │  │  Azure Bastion (Standard tier)                                                   ││
 │  │    Provides RDP/SSH to VMs in the VNet without public IPs on VMs                 ││
-│  │    Accessible only from corporate network (ExpressRoute / VPN)                   ││
 │  │    Used for: emergency node shell access, jump to private resources             │ │
 │  │                                                                                  ││
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                      │
-│  Private DNS Zones (linked to vnet-forge-{env}):                                           │
-│    privatelink.dfs.core.windows.net       → 10.3.0.4                                 │
-│    privatelink.blob.core.windows.net      → 10.3.0.5                                 │
-│    privatelink.vaultcore.azure.net        → 10.3.0.6                                 │
-│    privatelink.azurecr.io                 → 10.3.0.7                                 │
-│    privatelink.postgres.database.azure.com → 10.3.0.8, 10.3.0.9                      │
-│    privatelink.monitor.azure.com          → 10.3.0.10                                │
+│  Private DNS Zones (linked to vnet-forge-{env}):                                     │
+│    privatelink.dfs.core.windows.net        → 10.3.0.4                                │
+│    privatelink.blob.core.windows.net       → 10.3.0.5                                │
+│    privatelink.vaultcore.azure.net         → 10.3.0.6                                │
+│    privatelink.azurecr.io                  → 10.3.0.7                                │
+│    privatelink.postgres.database.azure.com → 10.3.0.8, 10.3.0.9                     │
+│    privatelink.monitor.azure.com           → 10.3.0.10                               │
 │                                                                                      │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 
-Traffic flows:
-  Internet → AppGW (443) → Portal (orch cluster internal LoadBalancer) / Azure Managed Grafana (Azure-hosted)
+Traffic flows (dev):
+  Internet :443  → ingress-nginx (orch LB 57.151.140.215) → portal-auth-proxy / portal-api / portal-web
+  Internet :443  → ingress-nginx (compute LB 20.69.44.76) → trino-auth-proxy → Trino
+  Internet :15002 → Spark Connect (compute LB 20.69.44.76, TCP)
+  Internet :9083  → Hive Metastore Thrift (compute LB 20.69.44.76, TCP)
   Corp VPN → Bastion → node shell (emergency only)
-  Corp VPN → Orch AKS API server private endpoint (10.3.0.12) → kubectl
   Airflow (orch cluster) → Compute AKS API server private endpoint (10.3.0.11)
   Any pod → ADLS/KV/ACR/PostgreSQL → private endpoint (10.3.0.x)
-  No cluster → public internet (no public egress for data plane)
 ```
 
 ---
@@ -532,81 +560,39 @@ Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.northcentralus.azmk8s.i
 
 ---
 
-## 8. Application Gateway: WAF and Ingress
+## 8. Public Ingress: ingress-nginx and cert-manager (dev)
 
 ### 8.1 Architecture
 
-Azure Application Gateway v2 (WAF SKU) is the only public-facing component in Forge. It sits in the `appgw-subnet` (`10.4.0.0/24`) and has a single public IP address. All traffic from external users (developers, analysts on corporate laptops) arrives through the Application Gateway.
+In the dev environment, both clusters use **ingress-nginx** as the public ingress controller backed by an Azure public LoadBalancer. TLS certificates are issued by **cert-manager v1.17.1** via ACME HTTP-01 challenge against Let's Encrypt. There is no Application Gateway WAF in dev.
 
 ```
 Internet (HTTPS :443)
     │
-    ▼
-Application Gateway WAF v2 (Public IP: forge-appgw-pip)
+    ├─▶ orch cluster LB 57.151.140.215
+    │     ingress-nginx → TLS termination (cert-manager / Let's Encrypt)
+    │     forge-portal-dev.westcentralus.cloudapp.azure.com
+    │       /oauth2/*  → portal-auth-proxy:8080
+    │       /api/*     → portal-api:8080
+    │       /*         → portal-web:3001
     │
-    ├── Listener: portal.forge.<domain>:443
-    │     └── Routing rule: portal-rule
-    │           └── Backend pool: portal-backend
-    │                 └── Backend target: portal-web Service (orch cluster internal LB)
-    │                       → HTTP :3000 (Next.js)
-    │
-    └── Listener: grafana.forge.<domain>:443
-          └── Routing rule: grafana-rule
-                └── Backend pool: grafana-backend
-                      └── Backend target: Azure Managed Grafana (Azure-hosted endpoint)
-                            → HTTPS (Azure Managed Grafana service URL)
+    └─▶ compute cluster LB 20.69.44.76
+          ingress-nginx → TLS termination (cert-manager / Let's Encrypt)
+          forge-compute-dev.westcentralus.cloudapp.azure.com
+            /*  → trino-auth-proxy:8080 → Trino coordinator:8080
 ```
 
-The Application Gateway communicates with the orchestration cluster pods via the cluster's internal Azure Load Balancer (created by Kubernetes when a Service of type `LoadBalancer` is deployed). The ILB frontend IP is in the orchestration cluster subnet (`10.2.0.0/16`).
+The LB health probe path is `/healthz` — AKS forces HTTP probes for ports 80/443 and nginx returns non-2xx for `/`, which would cause the backend to appear unhealthy.
 
-### 8.2 WAF Policy
+### 8.2 cert-manager Deployment (compute cluster)
 
-The WAF uses **OWASP CRS 3.2** managed rules in Prevention mode. Custom rule exclusions:
+cert-manager v1.17.1 is deployed on `aks-forge-compute-dev` as Phase 6.0.5 of forge-up.sh. All cert-manager pods tolerate `CriticalAddonsOnly` to run on the systempool. ACME HTTP-01 solver pods tolerate all workload taints so they can be scheduled during certificate issuance.
 
-| Exclusion | Reason |
-|-----------|--------|
-| Request header `Authorization` — rule 941100 | JWT Bearer tokens trigger false positives on the XSS header ruleset |
-| Request URI `/api/v1/lineage/graph` — rules 942100–942200 | Lineage graph JSON bodies contain SQL-like syntax that triggers SQLi rules |
-| Request body size limit raised to 10MB | Airflow DAG upload via portal can exceed 1MB default |
+Trino coordinator has `http-server.process-forwarded=true` configured so it correctly handles `X-Forwarded-For` headers from nginx.
 
-WAF is in **Prevention** mode (blocks threats, does not just log them). All WAF events are logged to Log Analytics for review.
+### 8.3 Production Plan
 
-### 8.3 TLS Termination from Key Vault
-
-TLS certificates are managed by Azure Key Vault and referenced by the Application Gateway directly — no certificate files in Helm values or Bicep parameters.
-
-```
-Key Vault
-  certificate: forge-tls-cert
-    (auto-renewed via DigiCert integration, 90-day cert, renews at 80 days)
-    (covers: *.forge.<domain>)
-
-Application Gateway listener:
-  SSL certificate: Key Vault reference → forge-tls-cert (latest version)
-  Application Gateway managed identity (id-forge-appgw) has:
-    Key Vault Certificate User role on kv-forge-{env}
-```
-
-The Application Gateway uses the managed identity to fetch the certificate from Key Vault at startup and on rotation events. No Bicep re-deploy is needed for certificate rotation.
-
-Backend connections (Application Gateway → orchestration cluster ILB) use **HTTP** (not HTTPS). This is acceptable because:
-1. The backend is within the private VNet — traffic does not traverse public networks
-2. The orchestration cluster NSG allows inbound traffic to the portal ports only from the `appgw-subnet` prefix (Azure Managed Grafana is Azure-hosted and does not require inbound traffic to the orchestration cluster)
-3. End-to-end TLS (AppGW to backend) can be added if required by a stricter compliance posture, at the cost of certificate management on the AKS ingress controller
-
-### 8.4 Health Probes
-
-| Backend Pool | Probe Path | Protocol | Interval | Timeout | Unhealthy Threshold |
-|-------------|------------|----------|----------|---------|---------------------|
-| portal-backend | `/api/health` | HTTP | 30s | 10s | 3 |
-
-Health probe responses are not forwarded to the WAF (probes bypass WAF inspection to prevent false-positive blocks on health check paths).
-
-### 8.5 Routing Rules
-
-Both routing rules use path-based routing with a single backend pool each. No URL rewriting is needed — the portal is deployed at the root path of its FQDN. For Azure Managed Grafana, the Application Gateway forwards to the Azure-hosted Grafana endpoint.
-
-Connection draining is enabled with a 30-second drain timeout — in-flight requests complete before a backend pod is removed during rolling updates.
+Application Gateway WAF v2 (OWASP CRS 3.2, Prevention mode, TLS via Key Vault DigiCert integration) is planned for production once dev has run reliably for 2–3 weeks. The `appgw-subnet` (`10.4.0.0/24`) and NSG rules are pre-provisioned in the VNet design for this purpose. The NSG rules documented in Section 11.4 reflect the planned production configuration, not the current dev state.
 
 ---
 
@@ -869,11 +855,14 @@ Azure Monitor Alerts / Action Groups send notifications via Azure's managed infr
 
 ## 11. NSG Rules
 
-### 11.1 compute-cluster-subnet NSG (`nsg-compute-cluster`)
+### 11.1 compute-cluster-subnet NSG (`nsg-forge-compute-dev`)
+
+Both clusters also inherit NRMS corporate rules at priorities 105–109 (deny specific dangerous ports; these do not block 80, 443, 8080, 9083, or 15002).
 
 | Priority | Name | Direction | Source | Destination | Port | Action |
 |----------|------|-----------|--------|-------------|------|--------|
-| 100 | AllowOrchToSparkAPI | Inbound | 10.2.0.0/16 (orch subnet) | 10.1.0.0/16 | 443 TCP | Allow |
+| 100 | AllowHttpHttpsInbound | Inbound | Internet | Any | 80,443,8080,9083,15002 TCP | Allow |
+| 105–109 | NRMS-* | Inbound | Internet | Any | (specific dangerous ports) | Deny |
 | 110 | AllowLoadBalancerProbe | Inbound | AzureLoadBalancer | Any | Any | Allow |
 | 200 | AllowVnetInbound | Inbound | VirtualNetwork | VirtualNetwork | Any | Allow |
 | 4096 | DenyAllInbound | Inbound | Any | Any | Any | Deny |
@@ -881,27 +870,13 @@ Azure Monitor Alerts / Action Groups send notifications via Azure's managed infr
 | 110 | AllowToAzureAD | Outbound | 10.1.0.0/16 | AzureActiveDirectory | 443 TCP | Allow |
 | 120 | AllowToAzureMonitor | Outbound | 10.1.0.0/16 | AzureMonitor | 443 TCP | Allow |
 | 130 | AllowDNS | Outbound | 10.1.0.0/16 | 168.63.129.16/32 | 53 UDP/TCP | Allow |
-| 140 | AllowAlertWebhooks | Outbound | 10.1.0.0/16 | Internet | 443 TCP | Allow |
 | 4096 | DenyAllOutbound | Outbound | Any | Any | Any | Deny |
 
-Note: `AllowAlertWebhooks` was previously required for self-hosted Alertmanager. With Azure Monitor Alerts / Action Groups, alert notifications are sent by Azure's managed infrastructure and this NSG rule can be removed. It is retained here only if a self-hosted webhook forwarder is deployed for other purposes.
+### 11.2 orchestration-cluster-subnet
 
-### 11.2 orchestration-cluster-subnet NSG (`nsg-orchestration-cluster`)
+The orchestration cluster subnet has **no subnet-level NSG** in dev. Public access to the orchestration cluster is controlled by the AKS node NSG only. The ingress-nginx LoadBalancer on the orchestration cluster accepts traffic on ports 80 and 443 from the public internet.
 
-| Priority | Name | Direction | Source | Destination | Port | Action |
-|----------|------|-----------|--------|-------------|------|--------|
-| 100 | AllowAppGWToPortal | Inbound | 10.4.0.0/24 (appgw subnet) | 10.2.0.0/16 | 3000,8080 TCP | Allow |
-| 110 | AllowLoadBalancerProbe | Inbound | AzureLoadBalancer | Any | Any | Allow |
-| 200 | AllowVnetInbound | Inbound | VirtualNetwork | VirtualNetwork | Any | Allow |
-| 4096 | DenyAllInbound | Inbound | Any | Any | Any | Deny |
-| 100 | AllowToPrivateEndpoints | Outbound | 10.2.0.0/16 | 10.3.0.0/24 | 443,5432 TCP | Allow |
-| 110 | AllowToComputeCluster | Outbound | 10.2.0.0/16 | 10.1.0.0/16 | 443 TCP | Allow |
-| 120 | AllowToAzureAD | Outbound | 10.2.0.0/16 | AzureActiveDirectory | 443 TCP | Allow |
-| 130 | AllowToAzureDevOps | Outbound | 10.2.0.0/16 | AzureDevOps | 443 TCP | Allow |
-| 140 | AllowToAzureMonitor | Outbound | 10.2.0.0/16 | AzureMonitor | 443 TCP | Allow |
-| 150 | AllowDNS | Outbound | 10.2.0.0/16 | 168.63.129.16/32 | 53 UDP/TCP | Allow |
-| 160 | AllowAlertWebhooks | Outbound | 10.2.0.0/16 | Internet | 443 TCP | Allow |
-| 4096 | DenyAllOutbound | Outbound | Any | Any | Any | Deny |
+Both clusters inherit NRMS corporate rules at priorities 105–109 that deny specific dangerous ports, but do not block 80 or 443.
 
 ### 11.3 private-endpoints-subnet NSG (`nsg-private-endpoints`)
 
@@ -920,7 +895,7 @@ but cannot be applied to individual private endpoint NICs directly.
 
 ### 11.4 appgw-subnet NSG (`nsg-appgw`)
 
-Azure Application Gateway requires specific NSG rules — it uses a management infrastructure that communicates on ports 65200–65535.
+The `appgw-subnet` (`10.4.0.0/24`) is pre-provisioned in the VNet for future Application Gateway WAF deployment in production. It is not actively used in dev. The NSG rules below reflect the planned production configuration:
 
 | Priority | Name | Direction | Source | Destination | Port | Action |
 |----------|------|-----------|--------|-------------|------|--------|

@@ -874,10 +874,10 @@ export default function AboutPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
                 {[
-                  { label: "Airflow 2.9 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check" },
+                  { label: "Airflow 3.1 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check" },
                   { label: "Microsoft Purview (OpenLineage)", color: "#0078d4", icon: "fa-share-nodes" },
                   { label: "Azure Monitor + Managed Grafana", color: "#e6522c", icon: "fa-chart-line" },
-                  { label: "Developer Portal", color: "#059669", icon: "fa-window-maximize" },
+                  { label: "Developer Portal (auth-proxy + api + web)", color: "#059669", icon: "fa-window-maximize" },
                 ].map(c => (
                   <div key={c.label} style={{
                     display: "flex", alignItems: "center", gap: 7,
@@ -948,7 +948,7 @@ export default function AboutPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, padding: "8px 12px", background: "rgba(15,23,42,0.04)", borderRadius: 8 }}>
             <i className="fas fa-lock" style={{ color: "#64748b", fontSize: 11 }} />
             <span style={{ fontSize: 11.5, color: "#64748b" }}>
-              All cluster API servers private · Workload Identity throughout · No long-lived credentials · Defender for Containers on ACR
+              All cluster API servers private · Portal and Trino served over HTTPS via ingress-nginx + Let&apos;s Encrypt · Workload Identity throughout · No long-lived credentials · Defender for Containers on ACR
             </span>
           </div>
         </div>
@@ -1171,10 +1171,10 @@ export default function AboutPage() {
               }}
             >
               {[
-                "Airflow 2.9 (KubernetesExecutor)",
+                "Airflow 3.1 (KubernetesExecutor)",
                 "Microsoft Purview (lineage)",
                 "Azure Monitor + Managed Grafana",
-                "Forge Developer Portal",
+                "Forge Developer Portal (auth-proxy + api + web)",
               ].map((item) => (
                 <li
                   key={item}
@@ -1220,7 +1220,7 @@ export default function AboutPage() {
         >
           <i className="fas fa-lock" style={{ color: primaryColor, fontSize: 14 }} aria-hidden="true" />
           <span style={{ fontSize: 13.5, color: "#475569", fontWeight: 500 }}>
-            All traffic via private endpoints. No public exposure. Azure
+            Portal and Trino served over HTTPS (cert-manager / Let&apos;s Encrypt). Azure
             Workload Identity throughout — zero long-lived credentials.
           </span>
         </div>
@@ -1271,12 +1271,15 @@ dags/
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder \\
-  .remote("sc://spark.forge.internal") \\
+  .remote("sc://forge-compute-dev.westcentralus.cloudapp.azure.com:15002") \\
   .getOrCreate()
 
 df = spark.read.format("delta") \\
   .load("abfss://gold@<storage>/sales")
-df.show()`}
+df.show()
+
+# Trino (browser or CLI via HTTPS)
+# https://forge-compute-dev.westcentralus.cloudapp.azure.com/ui/`}
             />
           </div>
         </div>

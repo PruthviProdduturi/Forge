@@ -388,16 +388,49 @@ kill %1
 
 ---
 
-## 4.5 Trino Auth Proxy
+## 4.5 cert-manager (compute cluster)
+
+cert-manager v1.17.1 must be deployed on the compute cluster before deploying the ingress-nginx and trino-auth-proxy stack. It issues and renews the Let's Encrypt TLS certificate for `forge-compute-dev.westcentralus.cloudapp.azure.com`.
+
+This is deployed automatically by `forge-up.sh` phase [6.0.5/8]. To deploy manually:
+
+```bash
+helm upgrade --install cert-manager \
+  oci://forgeacr{alias}.azurecr.io/helm/cert-manager \
+  --namespace cert-manager \
+  --create-namespace \
+  --values infra/helm/compute/cert-manager/values.yaml \
+  --wait --timeout 5m
+```
+
+Key configuration:
+- All cert-manager pods tolerate `CriticalAddonsOnly` to run on the systempool
+- ACME HTTP-01 solver pods tolerate all workload taints (required during certificate issuance)
+- LB health probe path: `/healthz` (AKS forces HTTP probe for ports 80/443; nginx returns non-2xx for `/`)
+
+### Verify
+
+```bash
+kubectl get pods -n cert-manager
+# Expected: cert-manager-xxx, cert-manager-cainjector-xxx, cert-manager-webhook-xxx all Running
+
+kubectl get certificate -n trino
+# Expected: forge-compute-tls  True  ...  (after trino-auth-proxy is deployed)
+```
+
+---
+
+## 4.6 Trino Auth Proxy
 
 The auth proxy is a Flask/MSAL reverse proxy that sits in front of Trino and enforces Azure AD OAuth2. Trino itself runs plain HTTP and never handles credentials.
 
 **Auth model:**
-- Browser users → Azure AD OAuth2 authorization code flow → Trino UI
-- CLI users → Azure AD Bearer token (`az account get-access-token`) → Trino CLI
-- No client secret. No TLS cert. No public IP. No DNS label.
+- Browser users → Azure AD OAuth2 authorization code flow → Trino UI (via HTTPS ingress)
+- CLI users → Azure AD Bearer token (`az account get-access-token`) → Trino CLI (via HTTPS ingress)
+- No client secret. TLS provided by cert-manager / Let's Encrypt via ingress-nginx.
 - Pod calls IMDS to get the `id-forge-trino-{env}` managed identity token and uses it as `client_assertion` in MSAL (bypasses AKS OIDC issuer tenant policy)
-- Access via `kubectl port-forward` only — Azure AD natively allows `http://localhost` redirect URIs
+- AAD app registration: `d0ce7c35-cc10-4ae7-b6be-60d002f43059`; federated credential subject = trino MI principal ID `2514f1d0-ffc9-410f-a5fa-b797aeceb79b`
+- Trino coordinator has `http-server.process-forwarded=true` to accept `X-Forwarded-For` from nginx
 
 ### Deploy
 
@@ -407,7 +440,6 @@ and the Helm install.
 
 To re-deploy this component in isolation (e.g. after a config change):
 ```bash
-# Re-run the full phase [6/8] component by running forge-up.sh with --skip-infra --skip-build
 bash infra/scripts/forge-up.sh --env {env} --alias {alias} --skip-infra --skip-build --git-pat <pat>
 ```
 
@@ -418,25 +450,32 @@ kubectl get pods -n trino
 # Expected: trino-auth-proxy-xxx 1/1 Running
 
 kubectl get svc trino-auth-proxy -n trino
-# Expected: ClusterIP (no EXTERNAL-IP — correct, port-forward only)
+# Expected: ClusterIP (traffic arrives via ingress-nginx, not directly)
+
+kubectl get ingress -n trino
+# Expected: forge-compute-ingress with hosts = forge-compute-dev.westcentralus.cloudapp.azure.com
 ```
 
 ### Access
 
 ```bash
-# Terminal 1 — leave running
-kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino
+# Browser
+# https://forge-compute-dev.westcentralus.cloudapp.azure.com/ui/
+# → Azure AD login → Trino UI  (no port-forward needed)
 
-# Browser → http://localhost:8080 → Azure AD login → Trino UI
+# Trino CLI
+TOKEN=$(az account get-access-token \
+  --resource d0ce7c35-cc10-4ae7-b6be-60d002f43059 \
+  --query accessToken -o tsv)
 
-# CLI
-TOKEN=$(az account get-access-token --resource f21cd19e-5e8b-4739-b0fb-1ebd13b8c036 --query accessToken -o tsv)
-trino --server http://localhost:8080 --access-token $TOKEN
+trino \
+  --server https://forge-compute-dev.westcentralus.cloudapp.azure.com \
+  --access-token "$TOKEN"
 ```
 
 ---
 
-## 4.6 Compute Cluster Readiness Checklist
+## 4.7 Compute Cluster Readiness Checklist
 
 Before proceeding to Step 05:
 
@@ -448,9 +487,11 @@ Before proceeding to Step 05:
 [ ] spark-pi-test SparkApplication COMPLETED (ran and cleaned up)
 [ ] Spark Connect LB IP assigned:           kubectl get svc -n spark-system spark-connect-lb
 [ ] Spark Connect endpoint in Key Vault:    az keyvault secret show --name spark-connect-endpoint
+[ ] cert-manager pods Running:              kubectl get pods -n cert-manager
 [ ] Trino coordinator + workers Running:    kubectl get pods -n trino
 [ ] Trino auth proxy Running (ClusterIP):  kubectl get pods -n trino | grep auth-proxy
-[ ] port-forward → http://localhost:8080 → Azure AD login → Trino UI works
+[ ] TLS certificate issued:                kubectl get certificate -n trino
+[ ] Browser: https://forge-compute-dev.westcentralus.cloudapp.azure.com/ui/ → Azure AD login → Trino UI
 [ ] Workload identity test passed:         test pod reads from ADLS bronze/ container
 ```
 
