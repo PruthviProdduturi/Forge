@@ -53,6 +53,8 @@ api:
     azureTenantId: ""
     azureClientId: ""             # portal app registration client ID (for AAD auth)
     airflowUrl: "http://airflow-api-server.airflow.svc.cluster.local:8080"
+    airflowUsername: "portal-api-svc"  # local Airflow service account for REST API auth
+    airflowPassword: ""                # set at deploy time from Key Vault
     # Trino and Spark Connect run on the compute cluster (separate AKS cluster).
     # .svc.cluster.local DNS does NOT resolve cross-cluster.
     # Set these to the internal LoadBalancer IP/hostname of each service so the

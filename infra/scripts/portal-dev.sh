@@ -20,7 +20,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 PORTAL_DIR="$ROOT/portal/frontend"
 API_DIR="$ROOT/portal/backend"

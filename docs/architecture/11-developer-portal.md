@@ -116,7 +116,7 @@ The FastAPI backend is a thin aggregation layer. It does not own platform data �
 | Azure Resource API (AKS) | Compute cluster provisioning state, node pools | Azure SDK |
 | Kubernetes in-cluster API | Pod phase and readiness in orchestration namespaces | kubernetes-client |
 | Azure Key Vault | Auth provider config (provider, client ID, tenant ID) | Azure SDK |
-| PostgreSQL | Per-user theme preferences only | SQLAlchemy |
+| PostgreSQL | Per-user theme preferences only | asyncpg (AAD WorkloadIdentityCredential token) |
 
 ---
 
@@ -265,7 +265,7 @@ The `null` state is important for cross-cluster networking: Trino and Spark Conn
 
 | Service | Probe Method |
 |---------|-------------|
-| Airflow | `GET /api/v1/health` with basic auth credentials from settings |
+| Airflow | `GET /api/v2/monitor/health` with JWT Bearer token (POST /auth/token for JWT first) |
 | Trino | `GET /v1/info` HTTP — no SQL query executed |
 | Spark Connect | HTTP GET to the configured `SPARK_CONNECT_URL` |
 | ADLS | `GET https://{ADLS_ACCOUNT}.dfs.core.windows.net/` |
@@ -446,8 +446,8 @@ Service: portal-auth-proxy  (ClusterIP, port 8080)
 Service: portal-api         (ClusterIP, port 8080)
 Service: portal-web         (ClusterIP, port 3001)
 
-Ingress: NGINX ingress controller (public LB 57.151.140.215)
-  host: forge-portal-dev.westcentralus.cloudapp.azure.com
+Ingress: NGINX ingress controller (public LB — IP assigned by Azure at deploy time)
+  host: forge-portal-{env}.westcentralus.cloudapp.azure.com
   TLS: cert-manager / Let's Encrypt
   rules:
     - path: /oauth2/*  → portal-auth-proxy:8080  (OAuth2 flow endpoints)
@@ -524,8 +524,8 @@ When these are set to `.svc.cluster.local` DNS names (the default for intra-clus
                                    │  HTTPS (session cookie)
                                    ▼
                     ┌──────────────────────────────────────────┐
-                    │  NGINX Ingress (public LB 57.151.140.215) │
-                    │  forge-portal-dev.westcentralus.cloud...  │
+                    │  NGINX Ingress (public LB, IP at deploy)   │
+                    │  forge-portal-{env}.westcentralus.cloud..  │
                     │  TLS: cert-manager / Let's Encrypt        │
                     └──────────────────┬───────────────────────┘
                                        │  all paths
@@ -592,7 +592,7 @@ When these are set to `.svc.cluster.local` DNS names (the default for intra-clus
   Health probes (parallel, tri-state: true / false / null)
   ┌────────────────────────────────────────────────────────────────────────────┐
   │                                                                            │
-  │  Airflow  GET /api/v1/health (basic auth)    ← .svc.cluster.local → null  │
+  │  Airflow  GET /api/v2/monitor/health (JWT)   ← .svc.cluster.local → null  │
   │  Trino    GET /v1/info (no SQL)              ← internal LB IP → true/false│
   │  Spark    GET {SPARK_CONNECT_URL}/            ← internal LB IP → true/false│
   │  ADLS     GET https://{account}.dfs.core...  ← public endpoint → true/false│

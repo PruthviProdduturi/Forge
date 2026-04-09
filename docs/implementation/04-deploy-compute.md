@@ -313,33 +313,33 @@ helm upgrade --install trino \
 
 Key sections in `infra/helm/compute/trino/values.yaml`:
 ```yaml
+# Coordinator-only config via server.coordinatorExtraConfig (multiline string).
+# NOTE: coordinator.additionalConfigProperties is NOT a real field in trino chart
+# v1.36.0 — it is silently ignored. Use server.coordinatorExtraConfig instead.
+server:
+  coordinatorExtraConfig: |
+    web-ui.authentication.type=fixed
+    web-ui.user=trino-user
+    http-server.process-forwarded=true
+
 coordinator:
-  # web-ui.authentication.type=fixed: accepts any username without password.
-  # Real auth enforced by trino-auth-proxy (X-Trino-User on /v1/* paths).
-  # web-ui.user=trino-user: required non-null field when type=fixed.
-  # http-server.process-forwarded=true: honour X-Forwarded-* from the proxy.
-  # These are coordinator-only — workers reject web-ui.* properties.
-  additionalConfigProperties:
-    - "web-ui.authentication.type=fixed"
-    - "web-ui.user=trino-user"
-    - "http-server.process-forwarded=true"
   jvm:
-    maxHeapSize: "24G"
+    maxHeapSize: "6G"
   resources:
-    requests: { cpu: "4", memory: "28Gi" }
-    limits:   { cpu: "8", memory: "28Gi" }
+    requests: { cpu: "2", memory: "8Gi" }
+    limits:   { cpu: "4", memory: "8Gi" }
   nodeSelector:
-    agentpool: trino
+    agentpool: trinopool
 
 worker:
-  replicas: 2        # initial; HPA scales to 8
+  replicas: 3        # initial; HPA scales to 8
   jvm:
-    maxHeapSize: "48G"
+    maxHeapSize: "7G"
   resources:
-    requests: { cpu: "8",  memory: "56Gi" }
-    limits:   { cpu: "16", memory: "56Gi" }
+    requests: { cpu: "2", memory: "9Gi" }
+    limits:   { cpu: "4", memory: "9Gi" }
   nodeSelector:
-    agentpool: trino
+    agentpool: trinopool
 
 additionalCatalogs:
   lakehouse: |
@@ -347,17 +347,20 @@ additionalCatalogs:
     hive.metastore.uri=thrift://hive-metastore.hive-metastore.svc.cluster.local:9083
     delta.hive-catalog-name=hive
     fs.native-azure.enabled=true
-    azure.auth-type=MANAGED_IDENTITY
+    azure.auth-type=DEFAULT
 
   hive: |
     connector.name=hive
     hive.metastore.uri=thrift://hive-metastore.hive-metastore.svc.cluster.local:9083
     fs.native-azure.enabled=true
-    azure.auth-type=MANAGED_IDENTITY
+    azure.auth-type=DEFAULT
+
+service:
+  type: ClusterIP  # Access is via trino-auth-proxy HTTPS ingress, not direct
 
 autoscaling:
   enabled: true
-  minReplicas: 2
+  minReplicas: 1
   maxReplicas: 8
   targetCPUUtilizationPercentage: 60
 ```
@@ -371,26 +374,27 @@ kubectl get pods -n trino
 # trino-worker-xxx-0      1/1     Running   0
 # trino-worker-xxx-1      1/1     Running   0
 
-# Port-forward coordinator and run a test query
-kubectl port-forward -n trino svc/trino 8080:8080 &
-sleep 2
+# Verify process-forwarded is set in coordinator config.properties
+kubectl exec -n trino deploy/trino-coordinator -- \
+  grep -i "process-forwarded" /etc/trino/config.properties
+# http-server.process-forwarded=true
 
-# Using trino CLI (or curl)
-curl -s -X POST http://localhost:8080/v1/statement \
-  -H "X-Trino-User: platform-test" \
-  -H "X-Trino-Catalog: tpch" \
-  -H "X-Trino-Schema: tiny" \
-  -d "SELECT count(*) FROM orders" | jq .
-
-# Kill port-forward
-kill %1
+# After trino-auth-proxy ingress is deployed, access directly via HTTPS (no port-forward):
+# Trino UI: https://forge-compute-{env}.westcentralus.cloudapp.azure.com/ui/
+# Trino CLI:
+TOKEN=$(az account get-access-token \
+  --resource d0ce7c35-cc10-4ae7-b6be-60d002f43059 \
+  --query accessToken -o tsv)
+trino --server https://forge-compute-{env}.westcentralus.cloudapp.azure.com \
+      --access-token "$TOKEN" \
+      --execute "SELECT count(*) FROM tpch.tiny.orders"
 ```
 
 ---
 
 ## 4.5 cert-manager (compute cluster)
 
-cert-manager v1.17.1 must be deployed on the compute cluster before deploying the ingress-nginx and trino-auth-proxy stack. It issues and renews the Let's Encrypt TLS certificate for `forge-compute-dev.westcentralus.cloudapp.azure.com`.
+cert-manager v1.17.1 must be deployed on the compute cluster before deploying the ingress-nginx and trino-auth-proxy stack. It issues and renews the Let's Encrypt TLS certificate for `forge-compute-{env}.westcentralus.cloudapp.azure.com`.
 
 This is deployed automatically by `forge-up.sh` phase [6.0.5/8]. To deploy manually:
 

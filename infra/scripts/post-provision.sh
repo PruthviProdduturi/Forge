@@ -103,7 +103,40 @@ tag_ips_in_rg "$MC_RG_COMPUTE"
 tag_ips_in_rg "$MC_RG_ORCH"
 
 # ---------------------------------------------------------------------------
-# 2. Fetch kubeconfig for both clusters
+# 2. Grant portal MI Cost Management Reader on the managed node RGs
+#    so the Cost Explorer page can query Azure Cost Management per RG.
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Granting portal MI Cost Management Reader on node RGs"
+
+_A_VAR="${OWNER_ALIAS:+${OWNER_ALIAS}-}"
+PORTAL_MI_PRINCIPAL=$(az identity show \
+  --resource-group "rg-forge-${_A_VAR}${ENVIRONMENT}" \
+  --name "id-forge-portal-${ENVIRONMENT}" \
+  --query principalId -o tsv 2>/dev/null || echo "")
+
+if [[ -z "$PORTAL_MI_PRINCIPAL" ]]; then
+  echo "    portal MI not found — skipping (run after identity.bicep is deployed)"
+else
+  # Cost Management Reader role definition ID (built-in, immutable)
+  COST_READER_ROLE="72fef05d-4f52-4db4-b412-d74b965b3dd5"
+  for _MC_RG in "$MC_RG_COMPUTE" "$MC_RG_ORCH"; do
+    if az group show --name "$_MC_RG" --query id -o tsv &>/dev/null; then
+      az role assignment create \
+        --role "$COST_READER_ROLE" \
+        --assignee-object-id "$PORTAL_MI_PRINCIPAL" \
+        --assignee-principal-type ServicePrincipal \
+        --scope "/subscriptions/${SUBSCRIPTION}/resourceGroups/${_MC_RG}" \
+        --output none 2>/dev/null && echo "    Granted on: $_MC_RG" \
+        || echo "    Already exists or skipped: $_MC_RG"
+    else
+      echo "    RG not found — skipping: $_MC_RG"
+    fi
+  done
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Fetch kubeconfig for both clusters
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Fetching kubeconfig"
@@ -123,7 +156,7 @@ az aks get-credentials \
 echo "    Orchestration cluster: $CLUSTER_ORCH"
 
 # ---------------------------------------------------------------------------
-# 3. Quick sanity check
+# 4. Quick sanity check
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- kubectl get nodes (compute)"

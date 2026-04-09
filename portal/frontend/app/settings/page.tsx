@@ -6,13 +6,13 @@ import { apiFetch } from "../../utils/api";
 
 interface PlatformInfo {
   env: string;
-  auth_provider: string;
   platform: {
     airflow_host: string;
     trino_host: string;
     adls_account: string;
     purview_endpoint: string;
     resource_group: string;
+    subscription_id: string;
   };
 }
 
@@ -25,6 +25,18 @@ export default function PlatformSettingsPage() {
       .then(setPlatformInfo)
       .catch(() => {});
   }, [getToken]);
+
+  const p = platformInfo?.platform;
+  const subId = p?.subscription_id;
+
+  const trinoUrl = p?.trino_host ? `https://${p.trino_host}` : null;
+  const adlsUrl = subId && p?.adls_account && p?.resource_group
+    ? `https://portal.azure.com/#resource/subscriptions/${subId}/resourceGroups/${p.resource_group}/providers/Microsoft.Storage/storageAccounts/${p.adls_account}/overview`
+    : null;
+  const purviewUrl = p?.purview_endpoint || null;
+  const rgUrl = subId && p?.resource_group
+    ? `https://portal.azure.com/#resource/subscriptions/${subId}/resourceGroups/${p.resource_group}/overview`
+    : null;
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -56,12 +68,11 @@ export default function PlatformSettingsPage() {
           {platformInfo ? (
             <div style={{ padding: "8px 24px 20px" }}>
               <Row label="Environment" value={(platformInfo.env ?? "dev").toUpperCase()} badge={platformInfo.env === "prod" ? "red" : "green"} />
-              <Row label="Auth Provider" value="Azure AD (SSO)" />
-              <Row label="Airflow" value={platformInfo.platform?.airflow_host ?? "—"} mono />
-              <Row label="Trino" value={platformInfo.platform?.trino_host ?? "—"} mono />
-              <Row label="ADLS Account" value={platformInfo.platform?.adls_account ?? "—"} mono />
-              <Row label="Purview" value={(platformInfo.platform?.purview_endpoint ?? "").replace("https://", "") || "—"} mono />
-              <Row label="Resource Group" value={platformInfo.platform?.resource_group ?? "—"} mono />
+              <Row label="Airflow" value={p?.airflow_host ?? "—"} mono />
+              <Row label="Trino" value={p?.trino_host ?? "—"} mono href={trinoUrl ?? undefined} />
+              <Row label="ADLS Account" value={p?.adls_account ?? "—"} mono href={adlsUrl ?? undefined} />
+              <Row label="Purview" value={(p?.purview_endpoint ?? "").replace("https://", "") || "—"} mono href={purviewUrl ?? undefined} />
+              <Row label="Resource Group" value={p?.resource_group ?? "—"} mono href={rgUrl ?? undefined} />
             </div>
           ) : (
             <div style={{ padding: "32px 24px", color: "#94a3b8", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
@@ -75,8 +86,8 @@ export default function PlatformSettingsPage() {
   );
 }
 
-function Row({ label, value, mono = false, badge }: {
-  label: string; value: string; mono?: boolean; badge?: "red" | "green";
+function Row({ label, value, mono = false, badge, href }: {
+  label: string; value: string; mono?: boolean; badge?: "red" | "green"; href?: string;
 }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #f8fafc", gap: 16 }}>
@@ -89,6 +100,15 @@ function Row({ label, value, mono = false, badge }: {
         }}>
           {value}
         </span>
+      ) : href && value !== "—" ? (
+        <a href={href} target="_blank" rel="noopener noreferrer" style={{
+          fontSize: 13, fontWeight: 500, color: "var(--forge-primary)",
+          fontFamily: mono ? "monospace" : "inherit", wordBreak: "break-all",
+          textAlign: "right", textDecoration: "none", display: "flex", alignItems: "center", gap: 5,
+        }}>
+          {value}
+          <i className="fas fa-arrow-up-right-from-square" style={{ fontSize: 10, opacity: 0.7 }} />
+        </a>
       ) : (
         <span style={{ fontSize: 13, fontWeight: 500, color: "#0f172a", fontFamily: mono ? "monospace" : "inherit", wordBreak: "break-all", textAlign: "right" }}>
           {value}

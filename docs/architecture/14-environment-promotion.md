@@ -248,7 +248,7 @@ Before creating a `release/` branch, confirm:
 | ADLS bronze/silver/gold | ✅ dev account | ✅ prod account |
 | ACR | `forgeacr-dev.azurecr.io` | `forgeacr-prod.azurecr.io` |
 | Key Vault | `kv-forge-dev` | `kv-forge-prod` |
-| AKS cluster names | `aks-forge-compute-dev` / `aks-forge-orch-dev` | `aks-forge-compute-prod` / `aks-forge-orch-prod` |
+| AKS cluster names | `aks-forge-compute-dev` / `aks-forge-orchestration-dev` | `aks-forge-compute-prod` / `aks-forge-orchestration-prod` |
 | Manual approval gate | ❌ Not required | ✅ Required before deployment |
 | Spark Operator executor count | Smaller (cost) | Larger (SLA) |
 

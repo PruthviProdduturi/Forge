@@ -36,14 +36,24 @@ async def _check_trino() -> bool | None:
 
 
 async def _check_spark_connect() -> bool | None:
-    import httpx
-    url = settings.spark_connect_url
-    if not url or (".svc.cluster.local" in url and not _running_in_cluster()):
+    """TCP reachability check for Spark Connect gRPC port (15002).
+
+    Spark Connect is gRPC-only — no HTTP endpoint to probe. We do a TCP
+    socket connect to the public compute cluster host on port 15002.
+    Returns None when no host is configured so the UI shows '—' rather
+    than 'Unreachable'.
+    """
+    import asyncio
+    host = settings.trino_host  # compute public host (same LB as Trino)
+    if not host or ".svc.cluster.local" in host:
         return None
     try:
-        async with httpx.AsyncClient(timeout=5.0, verify=False) as client:
-            resp = await client.get(url)
-            return resp.status_code < 500
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, 15002), timeout=5.0
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True
     except Exception:
         return False
 
@@ -100,6 +110,7 @@ async def health_check() -> dict[str, Any]:
             "adls_account": settings.adls_account,
             "purview_endpoint": settings.purview_endpoint,
             "resource_group": settings.resource_group,
+            "subscription_id": settings.subscription_id,
         },
         "checks": {
             "airflow": airflow_ok,

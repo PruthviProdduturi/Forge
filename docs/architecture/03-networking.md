@@ -46,8 +46,8 @@ Internet
   ├── HTTPS :443  ──────────────────────────────────────────────────────────────┐
   │                                                                             │
   │   ┌──────────────────────────────────────────────────────────────────────┐ │
-  │   │  Public LB IP: 57.151.140.215  (orch cluster, westcentralus)         │ │
-  │   │  DNS: forge-portal-dev.westcentralus.cloudapp.azure.com              │ │
+  │   │  DNS: forge-portal-{env}.westcentralus.cloudapp.azure.com             │ │
+  │   │  Public LB IP: assigned by Azure at deploy time                      │ │
   │   │  ingress-nginx → TLS terminated (cert-manager / Let's Encrypt)       │ │
   │   │                                                                      │ │
   │   │    /oauth2/*    → portal-auth-proxy:8080  (Flask OAuth2 proxy)       │ │
@@ -60,8 +60,8 @@ Internet
   │   TCP   :9083  ─────────────────────────────────────────────────────────────┼──┤
   │                                                                             │  │
   │   ┌──────────────────────────────────────────────────────────────────────┐    │
-  │   │  Public LB IP: 20.69.44.76  (compute cluster, westcentralus)         │    │
-  │   │  DNS: forge-compute-dev.westcentralus.cloudapp.azure.com             │    │
+  │   │  DNS: forge-compute-{env}.westcentralus.cloudapp.azure.com            │    │
+  │   │  Public LB IP: assigned by Azure at deploy time                      │    │
   │   │                                                                      │    │
   │   │  :443  ingress-nginx → TLS (cert-manager / Let's Encrypt)            │    │
   │   │    /*  → trino-auth-proxy:8080  (Flask OAuth2 proxy) → Trino         │    │
@@ -81,7 +81,7 @@ Internet
 │  │  NSG: nsg-forge-compute-dev — AllowHttpHttpsInbound (80,443,8080,9083,15002)     │ │
 │  │                                                                                  ││
 │  │  ┌────────────────────────────────────────────────────────────────────────────┐  ││
-│  │  │  aks-forge-compute-dev  (AKS cluster, public LB IP 20.69.44.76)           │  │ │
+│  │  │  aks-forge-compute-{env}  (AKS cluster, public LB — IP assigned at deploy)  │  │ │
 │  │  ││                                                                           │  ││
 │  │  │  Node Pool: system   (1–3 × Standard_D4s_v5, CriticalAddonsOnly taint)    │  ││
 │  │  │  Node Pool: spark    (0–20 × Standard_E8s_v5, spot)                       │  ││
@@ -96,7 +96,7 @@ Internet
 │  │  ││    spark-jobs     — driver/executor pods (ephemeral)                      │  ││
 │  │  ││    hive-metastore — HMS server                                            │  ││
 │  │  ││    cert-manager   — cert-manager v1.17.1 (ACME HTTP-01, LB probe /healthz)│  ││
-│  │  ││    ingress-nginx  — ingress controller (LB on 20.69.44.76)               │  ││
+│  │  ││    ingress-nginx  — ingress controller (public LB, IP assigned at deploy)  │  ││
 │  │  ││                                                                           │  ││
 │  │  │  Azure Monitor Agent DaemonSet ────────────────────────────────────────────┼──┼──┼──▶ Azure Monitor / Log Analytics
 │  │  └────────────────────────────────────────────────────────────────────────────┘  ││
@@ -107,7 +107,7 @@ Internet
 │  │  (No subnet-level NSG — public access via AKS node NSG only)                    │ │
 │  │                                                                                  ││
 │  │  ┌────────────────────────────────────────────────────────────────────────────┐  ││
-│  │  │  aks-forge-orchestration-dev  (AKS cluster, public LB IP 57.151.140.215)  │  │ │
+│  │  │  aks-forge-orchestration-{env}  (AKS cluster, public LB — IP assigned at deploy) │  │ │
 │  │  ││                                                                           │  ││
 │  │  │  Node Pool: system    (1–3 × Standard_D4s_v5)                              │  ││
 │  │  │  Node Pool: airflow   (2–10 × Standard_D8s_v5)                             │  ││
@@ -119,7 +119,7 @@ Internet
 │  │  ││  Namespaces:                                                              │  ││
 │  │  ││    airflow        — scheduler, webserver, workers (KubernetesExecutor)    │  ││
 │  │  ││    portal         — portal-auth-proxy, portal-api, portal-web             │  ││
-│  │  ││    ingress-nginx  — ingress controller (LB on 57.151.140.215)             │  ││
+│  │  ││    ingress-nginx  — ingress controller (public LB, IP assigned at deploy)  │  ││
 │  │  ││    monitoring     — azure-monitor-agent, otel-collector                   │  ││
 │  │  └────────────────────────────────────────────────────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
@@ -134,8 +134,8 @@ Internet
 │  │  10.3.0.8   — PostgreSQL (Airflow metadata)   privatelink.postgres.database...   ││
 │  │  10.3.0.9   — Microsoft Purview               privatelink.purview.azure.com      ││
 │  │  10.3.0.10  — Azure Monitor (metrics)         privatelink.monitor.azure.com      ││
-│  │  10.3.0.11  — Compute AKS API server          (AKS private endpoint)             ││
-│  │  10.3.0.12  — Orchestration AKS API server    (AKS private endpoint)             ││
+│  │  10.3.0.11  — (reserved for Compute AKS API server, prod private cluster only)   ││
+│  │  10.3.0.12  — (reserved for Orch AKS API server, prod private cluster only)      ││
 │  │  10.3.0.13  — Azure DevOps (agent outbound)   (service endpoint, not PE)         ││
 │  │                                                                                  ││
 │  └─────────────────────────────────────────────────────────────────────────────────┘ │
@@ -160,10 +160,10 @@ Internet
 └──────────────────────────────────────────────────────────────────────────────────────┘
 
 Traffic flows (dev):
-  Internet :443  → ingress-nginx (orch LB 57.151.140.215) → portal-auth-proxy / portal-api / portal-web
-  Internet :443  → ingress-nginx (compute LB 20.69.44.76) → trino-auth-proxy → Trino
-  Internet :15002 → Spark Connect (compute LB 20.69.44.76, TCP)
-  Internet :9083  → Hive Metastore Thrift (compute LB 20.69.44.76, TCP)
+  Internet :443  → ingress-nginx (orch LB, forge-portal-{env}.westcentralus.cloudapp.azure.com) → portal-auth-proxy / portal-api / portal-web
+  Internet :443  → ingress-nginx (compute LB, forge-compute-{env}.westcentralus.cloudapp.azure.com) → trino-auth-proxy → Trino
+  Internet :15002 → Spark Connect (compute LB, TCP)
+  Internet :9083  → Hive Metastore Thrift (compute LB, TCP)
   Corp VPN → Bastion → node shell (emergency only)
   Airflow (orch cluster) → Compute AKS API server private endpoint (10.3.0.11)
   Any pod → ADLS/KV/ACR/PostgreSQL → private endpoint (10.3.0.x)
@@ -326,54 +326,49 @@ The `168.63.129.16` address is Azure's internal DNS resolver. Because the privat
 
 ---
 
-## 5. Private AKS Clusters
+## 5. AKS Cluster API Server Access
 
-### 5.1 Private API Server Endpoint
+### 5.1 Dev: Public API Server (current)
 
-Both AKS clusters have `--enable-private-cluster` set. This means:
-
-- The Kubernetes API server (`kube-apiserver`) does **not** have a public endpoint
-- An Azure Private Endpoint NIC is created in the VNet with a private IP
-- The API server FQDN (e.g., `forge-compute-aks-abc123.abc123.privatelink.northcentralus.azmk8s.io`) resolves to the private IP when queried from within the VNet
-- From the public internet, the FQDN does not resolve at all (no public DNS record)
+In the dev environment both AKS clusters have `privateCluster: false` — the Kubernetes API server has a **public endpoint**. This keeps the deploy loop simple: `kubectl` and `helm` can be run directly from any developer laptop or CI/CD agent without VPN or jump host.
 
 ```
-Before private cluster:
-  kubectl → public.api.server:443 ← accessible from internet
-
-After private cluster:
-  kubectl → private.api.server:443 ← private IP in VNet (10.3.0.11)
-                                      only accessible from VNet or connected networks
+Developer laptop / CI agent
+  → kubectl → public AKS API server:443
+  → authenticates via Azure AD kubeconfig token (az aks get-credentials)
 ```
 
-The private endpoint for the AKS API server is placed in the `private-endpoints-subnet` (`10.3.0.0/24`) alongside all other PaaS private endpoints. A private DNS zone entry is created by AKS automatically in the `privatelink.northcentralus.azmk8s.io` zone.
+> **Note:** `enablePrivateCluster` is **immutable** — a cluster must be recreated to change it. Dev clusters will remain public until prod is stood up. This is a deliberate trade-off: dev is a non-production environment with no sensitive customer data.
 
-### 5.2 Developer kubectl Access
+### 5.2 Prod: Private API Server (planned)
 
-Developers cannot reach the AKS API server from their laptops directly over the internet. Access requires one of three methods:
+Production clusters will have `privateCluster: true`. This means:
+
+- The Kubernetes API server has no public endpoint
+- An Azure Private Endpoint NIC is created in `private-endpoints-subnet` (`10.3.0.0/24`) with a private IP (10.3.0.11 / 10.3.0.12 reserved)
+- API server FQDN resolves to the private IP only from within the VNet
+- Subnets 10.3.0.11/10.3.0.12 are pre-reserved in the VNet for this purpose
+
+Prod developer access will require one of:
 
 **Method 1 — Corporate VPN / ExpressRoute (Standard)**
 
-The VNet is connected to the corporate network via ExpressRoute or Site-to-Site VPN. Developers on the corporate network (or connected via VPN client) resolve the AKS FQDN to the private IP via the linked private DNS zone and can run kubectl normally:
-
 ```
 Developer laptop (VPN active)
-  → corporate DNS server
-  → forwards *.privatelink.northcentralus.azmk8s.io to Azure DNS 168.63.129.16
-  → Azure DNS returns 10.3.0.12 (private IP of orch cluster API server)
-  → kubectl connects to 10.3.0.12:443
-  → API server authenticates via Azure AD kubeconfig token
+  → corporate DNS → forwards *.azmk8s.io to Azure DNS 168.63.129.16
+  → Azure DNS returns private IP of API server
+  → kubectl connects to private API server:443
 ```
 
 **Method 2 — Azure Bastion + Jump Host (Break-glass)**
 
-For situations where VPN is unavailable (e.g., a new engineer onboarding, an incident without VPN access), Azure Bastion provides browser-based SSH to a jump VM in the VNet. From the jump VM, kubectl works normally as the jump VM is inside the VNet.
+Azure Bastion provides browser-based SSH to a jump VM in the VNet. From the jump VM, kubectl works normally.
 
 See Section 9 for Bastion details.
 
 **Method 3 — Azure Cloud Shell (Ad-hoc)**
 
-Azure Cloud Shell sessions are injected into a VNet subnet via Azure Cloud Shell VNet integration. Forge provisions a dedicated `/27` subnet (`10.6.0.0/27`) for Cloud Shell VNet injection. From a Cloud Shell session connected to this subnet, the AKS API server private endpoint is reachable.
+Forge pre-provisions a `/27` subnet (`10.6.0.0/27`) for Cloud Shell VNet injection. A Cloud Shell session attached to this subnet can reach the private API server endpoint.
 
 ### 5.3 CI/CD Pipeline Access
 
@@ -569,16 +564,14 @@ In the dev environment, both clusters use **ingress-nginx** as the public ingres
 ```
 Internet (HTTPS :443)
     │
-    ├─▶ orch cluster LB 57.151.140.215
+    ├─▶ orch cluster LB (forge-portal-{env}.westcentralus.cloudapp.azure.com)
     │     ingress-nginx → TLS termination (cert-manager / Let's Encrypt)
-    │     forge-portal-dev.westcentralus.cloudapp.azure.com
     │       /oauth2/*  → portal-auth-proxy:8080
     │       /api/*     → portal-api:8080
     │       /*         → portal-web:3001
     │
-    └─▶ compute cluster LB 20.69.44.76
+    └─▶ compute cluster LB (forge-compute-{env}.westcentralus.cloudapp.azure.com)
           ingress-nginx → TLS termination (cert-manager / Let's Encrypt)
-          forge-compute-dev.westcentralus.cloudapp.azure.com
             /*  → trino-auth-proxy:8080 → Trino coordinator:8080
 ```
 

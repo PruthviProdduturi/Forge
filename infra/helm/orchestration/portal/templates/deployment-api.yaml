@@ -45,6 +45,14 @@ spec:
               value: {{ .Values.api.env.azureClientId | quote }}
             - name: AIRFLOW_URL
               value: {{ .Values.api.env.airflowUrl | quote }}
+            {{- if .Values.api.env.airflowUsername }}
+            - name: AIRFLOW_USERNAME
+              value: {{ .Values.api.env.airflowUsername | quote }}
+            {{- end }}
+            {{- if .Values.api.env.airflowPassword }}
+            - name: AIRFLOW_PASSWORD
+              value: {{ .Values.api.env.airflowPassword | quote }}
+            {{- end }}
             {{- if .Values.api.env.trinoHost }}
             - name: TRINO_HOST
               value: {{ .Values.api.env.trinoHost | quote }}

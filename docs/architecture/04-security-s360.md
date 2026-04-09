@@ -58,8 +58,11 @@ Internet
   │
   │  HTTPS only
   ▼
-AKS API server (public endpoint)       ← secured by AAD RBAC; disableLocalAccounts: true
-Azure Application Gateway (WAF v2)     ← portal/grafana ingress
+AKS API server (public endpoint — dev; private endpoint planned for prod)
+  ← secured by AAD RBAC; disableLocalAccounts: true
+NGINX ingress-nginx (public LoadBalancer) ← portal + Trino ingress (dev)
+  TLS terminated via cert-manager / Let's Encrypt
+Application Gateway (WAF v2)     ← planned for prod only; not deployed in dev
 
 All data plane traffic:
   ADLS Gen2        → private endpoint only (public network access: DENIED)
@@ -72,10 +75,10 @@ All data plane traffic:
 
 | Subnet | CIDR | Allowed inbound | Allowed outbound |
 |--------|------|-----------------|-----------------|
-| compute-cluster | 10.1.0.0/16 | orchestration-cluster (Spark API) | private-endpoints-subnet |
-| orchestration-cluster | 10.2.0.0/16 | appgw-subnet (portal/grafana) | compute-cluster, private-endpoints-subnet |
+| compute-cluster | 10.1.0.0/16 | Internet (HTTPS :443, TCP :15002, :9083 via AKS node NSG) | private-endpoints-subnet |
+| orchestration-cluster | 10.2.0.0/16 | Internet (HTTPS :443 via AKS node NSG) | compute-cluster, private-endpoints-subnet |
 | private-endpoints-subnet | 10.3.0.0/24 | compute + orchestration subnets | None (PaaS services) |
-| appgw-subnet | 10.4.0.0/24 | Internet (HTTPS) | orchestration-cluster |
+| appgw-subnet | 10.4.0.0/24 | Internet (HTTPS) — reserved for prod AppGateway WAF | orchestration-cluster |
 | bastion-subnet | 10.5.0.0/24 | Corporate VPN/ExpressRoute | compute + orchestration subnets |
 
 Calico network policies enforce pod-to-pod traffic rules within each cluster — namespaces cannot communicate unless explicitly allowed.

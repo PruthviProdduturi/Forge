@@ -33,11 +33,6 @@ controller:
       http: http
       https: https
 
-  # TCP port mappings — proxied by nginx to ClusterIP services
-  # ConfigMap is created by the tcp section below
-  extraArgs:
-    tcp-services-configmap: "$(POD_NAMESPACE)/tcp-services"
-
   # Schedule on the compute worker pool (spark nodes would work but systempool is safer)
   nodeSelector:
     kubernetes.io/os: linux
@@ -76,4 +71,4 @@ defaultBackend:
 # Trino UI/API is no longer here — it uses HTTP Ingress (port 80/443) instead.
 tcp:
   9083: "hive-metastore/hive-metastore:9083"
-  15002: "spark-system/spark-connect:15002"
+  15002: "spark-system/spark-connect-lb:15002"

@@ -818,7 +818,7 @@ else
     --set "cainjector.image.repository=${ACR}.azurecr.io/cert-manager-cainjector" \
     --set "acmesolver.image.repository=${ACR}.azurecr.io/cert-manager-acmesolver" \
     --set "startupapicheck.image.repository=${ACR}.azurecr.io/cert-manager-startupapicheck" \
-    --wait --timeout 5m
+    --wait --timeout 8m
   kubectl rollout status deployment/cert-manager-webhook -n cert-manager \
     --context "$COMPUTE_CLUSTER" --timeout=120s 2>/dev/null || true
   kubectl apply -f "${REPO_ROOT}/infra/helm/compute/cert-manager/letsencrypt-issuer.yaml" \
@@ -1426,8 +1426,30 @@ MIGJOB
     --set "images.gitSync.repository=${ACR}.azurecr.io/git-sync" \
     --set "images.gitSync.tag=v4.4.2" \
     --set "env[0].value=${ENV}" \
+    --set "extraEnv[0].name=AIRFLOW__API__AUTH_BACKENDS" \
+    --set "extraEnv[0].value=airflow.providers.fab.auth_manager.api.auth.backend.basic_auth" \
     ${AIRFLOW_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${AIRFLOW_WI_CLIENT_ID}"} \
     --wait --timeout 10m
+
+  # Create portal-api-svc local user for REST API auth (idempotent).
+  # Password is stored in Key Vault and injected into portal-api at deploy time.
+  echo "  [7.4.1] Airflow portal service user..."
+  _AIRFLOW_SVC_PWD=$(az keyvault secret show --vault-name "$KV_NAME" \
+    --name airflow-portal-api-password --query value -o tsv 2>/dev/null || echo "")
+  if [[ -z "$_AIRFLOW_SVC_PWD" ]]; then
+    _AIRFLOW_SVC_PWD=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 32)
+    az keyvault secret set --vault-name "$KV_NAME" \
+      --name airflow-portal-api-password --value "$_AIRFLOW_SVC_PWD" \
+      --output none 2>/dev/null || true
+  fi
+  kubectl exec -n airflow --context "$ORCH_CLUSTER" \
+    deploy/airflow-api-server -- \
+    airflow users create \
+      --username portal-api-svc \
+      --password "$_AIRFLOW_SVC_PWD" \
+      --role Viewer \
+      --email portal-api@forge.internal \
+      --firstname Portal --lastname API 2>/dev/null || true
   echo "    Done"
 
   echo "  [7.5] Portal..."
@@ -1461,6 +1483,8 @@ MIGJOB
     --set "proxy.env.redirectUri=https://${PUBLIC_HOST}/oauth2/callback" \
     --set "proxy.env.allowedDomain=${FORGE_ALLOWED_DOMAIN}" \
     ${PORTAL_MI_CLIENT_ID:+--set "proxy.env.managedIdentityClientId=${PORTAL_MI_CLIENT_ID}"} \
+    ${PORTAL_MI_CLIENT_ID:+--set "api.env.azureClientId=${PORTAL_MI_CLIENT_ID}"} \
+    --set "api.env.azureTenantId=${FORGE_TENANT_ID}" \
     --set "api.image.repository=${ACR}.azurecr.io/portal-api" \
     --set "api.image.tag=${API_TAG}" \
     --set "web.image.repository=${ACR}.azurecr.io/portal-web" \
@@ -1472,10 +1496,16 @@ MIGJOB
     --set "api.env.ownerAlias=${ALIAS}" \
     --set "api.env.computeClusterName=${COMPUTE_CLUSTER}" \
     --set "api.env.orchClusterName=${ORCH_CLUSTER}" \
+    --set "api.env.trinoHost=${COMPUTE_PUBLIC_HOST}" \
+    --set "api.env.trinoPort=443" \
+    --set "api.env.airflowUsername=portal-api-svc" \
+    --set "api.env.airflowPassword=${_AIRFLOW_SVC_PWD}" \
     --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
     --set "ingress.host=${PUBLIC_HOST}" \
     --set "api.env.pgHost=${PG_HOST}" \
     --set "api.env.pgUser=id-forge-portal-${ENV}" \
+    --set "api.env.computeRg=rg-mc-compute-${_A}${ENV}" \
+    --set "api.env.orchRg=rg-mc-orch-${_A}${ENV}" \
     --wait --timeout 5m
   # Force repull of portal images even when tags are stable (image tag :1.0 is
   # a moving target — new ACR pushes don't trigger Kubernetes restarts otherwise)
@@ -1908,7 +1938,7 @@ echo "║  PORTAL                                              ║"
 printf "║    URL:    https://%-34s║\n" "$PUBLIC_HOST"
 echo "║                                                      ║"
 echo "║  TRINO UI (direct — no port-forward needed)          ║"
-printf "║    URL:    http://%-35s║\n" "${COMPUTE_PUBLIC_HOST}:8080"
+printf "║    URL:    https://%-34s║\n" "${COMPUTE_PUBLIC_HOST}"
 echo "║                                                      ║"
 echo "║  SPARK CONNECT (VS Code / notebooks)                 ║"
 printf "║    Endpoint: sc://%-35s║\n" "${COMPUTE_PUBLIC_HOST}:15002"

@@ -675,31 +675,31 @@ Airflow Variables (non-secret configuration values) are also stored in Key Vault
 
 ## 9. Airflow Webserver — Authentication and RBAC
 
-### OIDC via Azure AD
+### OAuth2 via Azure AD
 
-The Airflow webserver uses **Azure AD as the OIDC identity provider**. Users are not created in Airflow's local user database — every login goes through Azure AD, enforcing corporate MFA and conditional access policies automatically.
+The Airflow webserver uses **Azure AD as the OAuth2 identity provider** via Flask-AppBuilder's OAuth integration (`AUTH_TYPE = AUTH_OAUTH`). Users are not created in Airflow's local user database — every login goes through Azure AD, enforcing corporate MFA and conditional access policies automatically.
 
-Configuration uses Flask-AppBuilder's OIDC integration via the `AUTH_TYPE = AUTH_OID` setting. The Azure AD app registration is stored in Key Vault as `airflow-connections--azure-ad-oidc`.
+The configuration is in `infra/helm/orchestration/airflow/webserver-config-configmap.yaml`. The Azure AD app client ID is injected via the `airflow-oauth-credentials` Kubernetes secret and the `AIRFLOW__WEBSERVER__OAUTH_CLIENT_ID` env var. No client secret is used — the webserver uses the Airflow workload identity's OIDC token as `client_assertion` (federated credential registered on the app registration with subject `system:serviceaccount:airflow:airflow`).
 
-The OIDC flow:
+The OAuth2 flow:
 
 ```
-User navigates to https://airflow.forge.internal
+User navigates to Airflow webserver (via port-forward or ingress)
           │
           │  redirect to Azure AD login
           ▼
 Azure AD authenticates user (MFA required)
           │
-          │  ID token + access token returned
+          │  authorization code returned to /oidc/callback
           ▼
-Airflow webserver validates token against OIDC discovery document
+Airflow webserver exchanges code for tokens via workload identity client_assertion
           │
           │  maps user's Azure AD groups to Airflow RBAC roles (see below)
           ▼
 User sees Airflow UI with permissions per their role
 ```
 
-The OIDC callback URL is `https://airflow.forge.internal/oidc/callback`, served through the Application Gateway (WAF v2) which terminates TLS and forwards to the `airflow-webserver` service on the orchestration cluster.
+The Airflow webserver service is `ClusterIP` — it is not exposed via public ingress. Access is via port-forward in dev. In prod, it will be served through an Application Gateway (WAF v2). The Airflow **REST API** (`/api/v2/*`) uses a separate JWT Bearer token auth flow: clients POST to `/auth/token` with basic credentials to obtain a JWT, then use that JWT as `Bearer` token for all subsequent API calls.
 
 ### RBAC Roles
 
@@ -726,25 +726,19 @@ AUTH_ROLES_SYNC_AT_LOGIN = True   # roles updated on every login, not just first
 
 ### Accessing the Webserver
 
-The Airflow UI is accessible at `https://airflow.forge.internal` from the corporate network or VPN. It is not exposed to the public internet. Traffic path:
+The Airflow webserver service is `ClusterIP` — it is not exposed via public ingress in dev. Access via port-forward:
 
-```
-Corporate laptop (on VPN)
-        │  HTTPS
-        ▼
-Azure Application Gateway (WAF v2)
-        │  private routing (internal listener)
-        ▼
-Kubernetes Ingress (NGINX)
-        │
-        ▼
-airflow-webserver Service (ClusterIP :8080)
-        │
-        ▼
-Airflow webserver pod
+```bash
+kubectl port-forward svc/airflow-webserver 8081:8080 \
+  -n airflow --context aks-forge-orchestration-prproddu-dev
+# Open: http://localhost:8081
 ```
 
-TLS termination is at the Application Gateway. The internal path uses HTTP (the cluster is private; no external path exists). Certificate is issued by the corporate CA, not a public CA.
+In prod, the webserver will be exposed through an Application Gateway (WAF v2) with TLS termination and a corporate CA certificate. No AppGateway is deployed in dev.
+
+**REST API access (portal-api and CI):**
+
+The Airflow REST API uses `/api/v2/*` endpoints. Auth is basic_auth backend: POST to `/auth/token` with `airflowUsername`/`airflowPassword` (the `portal-api-svc` local service account) to receive a JWT, then use `Authorization: Bearer <jwt>` for all API calls. The `portal-api-svc` account and password are created and stored in Key Vault by `forge-up.sh` and injected into the portal-api pod at deploy time.
 
 ---
 

@@ -195,11 +195,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <i className="fas fa-server" aria-hidden="true" />
                 Platform
               </Link>
-              <Link href="/settings/auth" role="menuitem"
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}>
-                <i className="fas fa-shield-halved" aria-hidden="true" />
-                Auth
-              </Link>
             </div>
           </div>
 

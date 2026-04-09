@@ -169,12 +169,18 @@ def get_dq_dataset(safe_name: str, limit: int = 50) -> list[dict[str, Any]]:
 
 
 def ping() -> bool:
-    """Return True if Trino HTTP endpoint is reachable (no query executed)."""
+    """Return True if Trino endpoint is reachable (no query executed).
+
+    Uses https when port is 443 (HTTPS ingress) regardless of env.
+    Accepts any HTTP response including 302/401 — those mean the ingress/proxy
+    is up even if the request is unauthenticated.
+    """
     import httpx
     try:
-        scheme = "https" if settings.forge_env != "dev" else "http"
-        url = f"{scheme}://{settings.trino_host}:{settings.trino_port}/v1/info"
-        resp = httpx.get(url, timeout=5, verify=False)
+        port = settings.trino_port
+        scheme = "https" if port == 443 else "http"
+        url = f"{scheme}://{settings.trino_host}:{port}/v1/info"
+        resp = httpx.get(url, timeout=5, verify=False, follow_redirects=False)
         return resp.status_code < 500
     except Exception:
         return False
