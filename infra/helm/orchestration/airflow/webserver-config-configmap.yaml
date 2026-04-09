@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: airflow-webserver-config
+  namespace: airflow
+data:
+  webserver_config.py: |
+    import os
+    import logging
+    from flask_appbuilder.security.manager import AUTH_OAUTH
+
+    log = logging.getLogger(__name__)
+
+    AUTH_TYPE = AUTH_OAUTH
+    AUTH_USER_REGISTRATION = True
+    AUTH_USER_REGISTRATION_ROLE = "Viewer"
+    AUTH_ROLES_SYNC_AT_LOGIN = True
+
+    _tenant = os.environ.get("AZURE_TENANT_ID", "common")
+    _client_id = os.environ.get("AIRFLOW__WEBSERVER__OAUTH_CLIENT_ID", "")
+
+    OAUTH_PROVIDERS = [
+      {
+        "name": "microsoft",
+        "icon": "fa-windows",
+        "token_key": "access_token",
+        "remote_app": {
+          "client_id": _client_id,
+          "api_base_url": f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/",
+          "access_token_url": f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/token",
+          "authorize_url": f"https://login.microsoftonline.com/{_tenant}/oauth2/v2.0/authorize",
+          "jwks_uri": f"https://login.microsoftonline.com/{_tenant}/discovery/v2.0/keys",
+          "request_token_url": None,
+          "client_kwargs": {"scope": "openid profile email"},
+        },
+      }
+    ]
+
+    try:
+      from airflow.providers.fab.auth_manager.security_manager.override import (
+          FabAirflowSecurityManagerOverride as _Base,
+      )
+    except ImportError:
+      from airflow.auth.managers.fab.security_manager.override import (
+          FabAirflowSecurityManagerOverride as _Base,
+      )
+
+    class WorkloadIdentityOAuthManager(_Base):
+      def init_oauth(self):
+        super().init_oauth()
+        remote = self.oauth_remotes.get("microsoft")
+        if remote is None:
+          return
+        _orig = remote.authorize_access_token
+        def _with_fed_assertion(**kwargs):
+          fed_path = os.environ.get("AZURE_FEDERATED_TOKEN_FILE", "")
+          if fed_path and os.path.exists(fed_path):
+            try:
+              with open(fed_path) as _f:
+                kwargs["client_assertion"] = _f.read().strip()
+              kwargs["client_assertion_type"] = (
+                "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+              )
+            except Exception:
+              log.exception("Could not read federated token file")
+          else:
+            log.warning("AZURE_FEDERATED_TOKEN_FILE not available — token exchange may fail")
+          return _orig(**kwargs)
+        remote.authorize_access_token = _with_fed_assertion
+
+    CUSTOM_SECURITY_MANAGER = WorkloadIdentityOAuthManager

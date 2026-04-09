@@ -18,7 +18,8 @@ Quick start::
         OrdersIngest().execute()
 
 Public API:
-    forge_session  — SparkSession factory (Delta + ADLS + OpenLineage)
+    forge_session  — SparkSession factory (Delta + ADLS + OpenLineage) for batch jobs
+    forge_connect  — Spark Connect session for VS Code / notebook interactive dev
     bronze         — Path helper: abfss://bronze@…
     silver         — Path helper: abfss://silver@…
     gold           — Path helper: abfss://gold@…
@@ -29,13 +30,15 @@ Public API:
 """
 from forge_sdk.config.platform import PlatformConfig
 from forge_sdk.job.base import ForgeJob
+from forge_sdk.spark.connect import forge_connect
 from forge_sdk.spark.session import forge_session
 from forge_sdk.storage.paths import bronze, checkpoint, gold, sandbox, silver
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "forge_session",
+    "forge_connect",
     "bronze",
     "silver",
     "gold",

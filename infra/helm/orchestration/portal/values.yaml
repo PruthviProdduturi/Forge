@@ -50,7 +50,6 @@ api:
     ownerAlias: ""                # e.g. prproddu
     computeClusterName: ""        # e.g. aks-forge-compute-prproddu-dev
     orchClusterName: ""           # e.g. aks-forge-orchestration-prproddu-dev
-    authProvider: "azure_ad"      # "local" | "azure_ad"
     azureTenantId: ""
     azureClientId: ""             # portal app registration client ID (for AAD auth)
     airflowUrl: "http://airflow-api-server.airflow.svc.cluster.local:8080"
@@ -66,6 +65,37 @@ api:
     orchRg: ""                    # e.g. rg-forge-orchestration-prproddu-dev
     corsOrigins: ""               # comma-separated; leave blank to use defaults
     keyVaultUrl: ""              # e.g. https://kv-forge-prproddu-dev.vault.azure.net/
+    pgHost: ""                   # FQDN of PostgreSQL Flexible Server, e.g. psql-forge-prproddu-dev.postgres.database.azure.com
+    pgUser: ""                   # portal-api managed identity name used as Postgres AAD user, e.g. id-forge-portal-dev
+
+# ---------------------------------------------------------------------------
+# Auth Proxy (Flask — server-side OAuth2, same pattern as Trino auth proxy)
+# ---------------------------------------------------------------------------
+proxy:
+  image:
+    repository: ""   # e.g. forgeacrprproddu.azurecr.io/portal-auth-proxy
+    tag: "1.0"
+    pullPolicy: Always
+
+  replicaCount: 2
+
+  serviceAccount:
+    name: portal-api   # reuse portal-api SA — same workload identity for IMDS
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
+
+  env:
+    tenantId: ""
+    clientId: ""
+    redirectUri: ""              # https://<host>/oauth2/callback
+    allowedDomain: "microsoft.com"
+    managedIdentityClientId: "" # client ID of the portal-api managed identity
 
 # ---------------------------------------------------------------------------
 # Web (Next.js frontend)
@@ -93,9 +123,16 @@ ingress:
   enabled: true
   className: nginx
   # Public hostname — set by deploy script.
-  # e.g. forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+  # e.g. forge-portal-dev.westcentralus.cloudapp.azure.com
   host: ""
-  annotations: {}
+  # TLS — cert-manager provisions the certificate automatically via Let's Encrypt HTTP-01.
+  # The secret is created by cert-manager; no manual cert generation needed.
+  tls:
+    enabled: true
+    secretName: forge-portal-tls
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 
 # ---------------------------------------------------------------------------
 # Node placement — orchestration worker pool

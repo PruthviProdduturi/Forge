@@ -296,6 +296,11 @@ extraVolumes:
   - name: forge-dev-policy
     configMap:
       name: forge-dev-dag-policy
+  # webserver_config.py — Airflow 3.x chart no longer auto-mounts webserverConfig
+  # into the api-server pod. Mount it explicitly so FABAuthManager picks up OAuth.
+  - name: webserver-config
+    configMap:
+      name: airflow-webserver-config
 
 extraVolumeMounts:
   - name: compute-kubeconfig
@@ -304,6 +309,10 @@ extraVolumeMounts:
   - name: forge-dev-policy
     mountPath: /opt/airflow/plugins/forge_dev_policy.py
     subPath: forge_dev_policy.py
+    readOnly: true
+  - name: webserver-config
+    mountPath: /opt/airflow/webserver_config.py
+    subPath: webserver_config.py
     readOnly: true
 
 # ---------------------------------------------------------------------------

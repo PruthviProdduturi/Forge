@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal-auth-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: portal-auth-proxy
+spec:
+  replicas: {{ .Values.proxy.replicaCount }}
+  selector:
+    matchLabels:
+      app: portal-auth-proxy
+  template:
+    metadata:
+      labels:
+        app: portal-auth-proxy
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: {{ .Values.proxy.serviceAccount.name }}
+      containers:
+        - name: portal-auth-proxy
+          image: "{{ .Values.proxy.image.repository }}:{{ .Values.proxy.image.tag }}"
+          imagePullPolicy: {{ .Values.proxy.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: TENANT_ID
+              value: {{ .Values.proxy.env.tenantId | quote }}
+            - name: CLIENT_ID
+              value: {{ .Values.proxy.env.clientId | quote }}
+            - name: REDIRECT_URI
+              value: {{ .Values.proxy.env.redirectUri | quote }}
+            - name: ALLOWED_DOMAIN
+              value: {{ .Values.proxy.env.allowedDomain | quote }}
+            - name: MANAGED_IDENTITY_CLIENT_ID
+              value: {{ .Values.proxy.env.managedIdentityClientId | quote }}
+            - name: PORTAL_API_URL
+              value: "http://portal-api:8080"
+            - name: PORTAL_WEB_URL
+              value: "http://portal-web:3001"
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-proxy-session-secret
+                  key: secret
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tolerations }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      {{- end }}

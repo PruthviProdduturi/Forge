@@ -1,4 +1,6 @@
 {{- if .Values.ingress.enabled }}
+# All portal traffic routes through portal-auth-proxy.
+# The proxy handles OAuth2 server-side and forwards to portal-web or portal-api.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -8,8 +10,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-body-size: "10m"
-    # Strip the /api prefix before forwarding to portal-api so FastAPI sees /health etc.
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
     {{- range $k, $v := .Values.ingress.annotations }}
     {{ $k }}: {{ $v | quote }}
     {{- end }}
@@ -17,24 +17,21 @@ metadata:
     app: forge-portal
 spec:
   ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
-          # /api/* → portal-api (strip /api prefix via rewrite-target /$2)
-          - path: /api(/|$)(.*)
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: portal-api
-                port:
-                  number: 8080
-          # /* → portal-web
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: portal-web
+                name: portal-auth-proxy
                 port:
-                  number: 3001
+                  number: 8080
 {{- end }}

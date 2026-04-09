@@ -23,14 +23,6 @@ class Settings(BaseSettings):
     compute_cluster_name: str = ""   # e.g. aks-forge-compute-prproddu-dev
     orch_cluster_name: str = ""      # e.g. aks-forge-orchestration-prproddu-dev
 
-    # Auth
-    auth_provider: str = "azure_ad"  # "local" | "azure_ad"
-    local_admin_user: str = "admin"
-    local_admin_password: str = "admin"  # dev default; override via LOCAL_ADMIN_PASSWORD env var or KV secret in prod
-    jwt_secret: str = "forge-dev-secret-change-in-prod"
-    jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 480
-
     # Airflow
     airflow_url: str = "http://airflow-api-server.airflow.svc.cluster.local:8080"
     airflow_username: str = "admin"
@@ -47,6 +39,14 @@ class Settings(BaseSettings):
 
     # Purview
     purview_endpoint: str = "https://purview-forge-dev.purview.azure.com"
+
+    # Postgres — portal database for user preferences.
+    # pg_host: FQDN of the Azure PostgreSQL Flexible Server.
+    # pg_user: name of the portal-api managed identity (the Postgres AAD user).
+    # Both are injected at deploy time by forge-up.sh. When blank, theme.py falls
+    # back to a local JSON file (local dev with no Postgres).
+    pg_host: str = ""
+    pg_user: str = ""
 
     # CORS — frontend origin. Override CORS_ORIGINS env var in production.
     cors_origins: list[str] = ["http://localhost:3001", "https://portal.forge.internal"]

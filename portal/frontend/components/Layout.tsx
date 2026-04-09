@@ -131,7 +131,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                   </div>
                   {[
                     ["Environment", (platformInfo.env ?? "unknown").toUpperCase()],
-                    ["Auth", platformInfo.auth_provider === "azure_ad" ? "Azure AD" : "Local"],
+                    ["Auth", "Azure AD"],
                     ["Airflow", platformInfo.platform?.airflow_host ?? "—"],
                     ["Trino", platformInfo.platform?.trino_host ?? "—"],
                     ["ADLS", platformInfo.platform?.adls_account ?? "—"],

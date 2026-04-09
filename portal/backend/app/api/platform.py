@@ -2,14 +2,8 @@
 
 Reads and writes Azure AD auth configuration to Azure Key Vault:
 
-  forge-portal-auth-provider   → "local" | "azure_ad"
   forge-portal-aad-client-id   → Azure AD App Registration Client ID
   forge-portal-aad-tenant-id   → Azure AD Tenant ID
-
-Auth logic:
-  - If the KV secret forge-portal-auth-provider == "azure_ad" AND
-    forge-portal-aad-client-id is non-empty → portal uses Azure SSO.
-  - Otherwise → local username/password auth.
 
 The portal-api managed identity needs Key Vault Secrets Officer on the vault
 (granted in identity.bicep / keyvault.bicep).  For local dev, falls back to
@@ -116,14 +110,12 @@ def get_auth_config_from_kv() -> dict[str, str]:
     """Return current auth config. Hot-read from KV — no in-memory cache.
 
     Called on every GET /api/auth/provider so the frontend always gets
-    the live value without a pod restart.
+    the live value without a pod restart.  auth_provider is always azure_ad.
     """
-    # Invalidate lru_cache of _kv_client if KV URL changed (pod restart covers this)
-    provider  = _kv_get(_KV_SECRET_PROVIDER,  "local")
     client_id = _kv_get(_KV_SECRET_CLIENT_ID, settings.azure_client_id or "")
     tenant_id = _kv_get(_KV_SECRET_TENANT_ID, settings.azure_tenant_id or "common")
     return {
-        "auth_provider":  provider,
+        "auth_provider":  "azure_ad",
         "azure_client_id": client_id,
         "azure_tenant_id": tenant_id,
     }
@@ -151,13 +143,12 @@ def _require_admin(current_user: Annotated[dict[str, Any], Depends(get_current_u
 # ---------------------------------------------------------------------------
 
 class AuthConfigRequest(BaseModel):
-    auth_provider: str          # "local" | "azure_ad"
     azure_client_id: str = ""
     azure_tenant_id: str = ""
 
 
 class AuthConfigResponse(BaseModel):
-    auth_provider: str
+    auth_provider: str          # always "azure_ad"
     azure_client_id: str
     azure_tenant_id: str
     aad_configured: bool        # True when client_id is non-empty
@@ -187,34 +178,28 @@ async def save_auth_config(
     body: AuthConfigRequest,
     _: Annotated[dict[str, Any], Depends(_require_admin)],
 ) -> AuthConfigResponse:
-    """Write auth config to Key Vault (or local override in dev).
+    """Write AAD client/tenant config to Key Vault (or local override in dev).
 
-    After saving:
-    - GET /api/auth/provider immediately reflects the new config
-    - No pod restart needed — the next browser load picks up the new provider
+    After saving, GET /api/auth/provider immediately reflects the new config
+    — no pod restart needed.
     """
-    if body.auth_provider not in ("local", "azure_ad"):
-        raise HTTPException(status_code=400, detail="auth_provider must be 'local' or 'azure_ad'")
-
-    if body.auth_provider == "azure_ad" and not body.azure_client_id.strip():
-        raise HTTPException(status_code=400, detail="azure_client_id is required when auth_provider is azure_ad")
+    if not body.azure_client_id.strip():
+        raise HTTPException(status_code=400, detail="azure_client_id is required")
 
     client_id = body.azure_client_id.strip()
     tenant_id = body.azure_tenant_id.strip() or "common"
 
-    _kv_set(_KV_SECRET_PROVIDER,  body.auth_provider)
     _kv_set(_KV_SECRET_CLIENT_ID, client_id)
     _kv_set(_KV_SECRET_TENANT_ID, tenant_id)
 
     log.info(
         "auth_config_saved",
-        provider=body.auth_provider,
         client_id=client_id[:8] + "…" if client_id else "",
         kv_backed=bool(settings.key_vault_url),
     )
 
     return AuthConfigResponse(
-        auth_provider=body.auth_provider,
+        auth_provider="azure_ad",
         azure_client_id=client_id,
         azure_tenant_id=tenant_id,
         aad_configured=bool(client_id),

@@ -1,0 +1,62 @@
+# =============================================================================
+# cert-manager — Helm Values (chart v1.17.x)
+#
+# Provisions TLS certificates automatically via Let's Encrypt HTTP-01 challenge.
+# HTTP-01 requires port 80 to be reachable from the internet — satisfied by the
+# ingress-nginx LoadBalancer with AllowHttpHttpsInbound NSG rule at priority 102.
+#
+# Flow:
+#   1. cert-manager creates a CertificateRequest against the Let's Encrypt ACME API
+#   2. Let's Encrypt issues an HTTP-01 challenge token
+#   3. cert-manager creates a temporary Ingress to serve /.well-known/acme-challenge/<token>
+#   4. Let's Encrypt validates, cert-manager stores the signed cert in a TLS Secret
+#   5. ingress-nginx picks up the Secret and serves HTTPS
+#
+# Certificate auto-renews 30 days before expiry (Let's Encrypt certs are 90 days).
+# =============================================================================
+
+installCRDs: true
+
+# All images pulled from ACR — Azure Policy blocks quay.io on corp AKS nodes.
+# Repository overridden at deploy time via --set image.repository=forgeacr{alias}.azurecr.io/cert-manager-controller
+image:
+  repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-controller
+  tag: "v1.17.1"
+
+webhook:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-webhook
+    tag: "v1.17.1"
+  nodeSelector:
+    agentpool: workerpool
+
+cainjector:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-cainjector
+    tag: "v1.17.1"
+  nodeSelector:
+    agentpool: workerpool
+
+acmesolver:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-acmesolver
+    tag: "v1.17.1"
+
+startupapicheck:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-startupapicheck
+    tag: "v1.17.1"
+  nodeSelector:
+    agentpool: workerpool
+
+# Schedule on the orchestration worker pool
+nodeSelector:
+  agentpool: workerpool
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "256Mi"

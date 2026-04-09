@@ -19,7 +19,7 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-ARG API_URL=http://portal-api:8080
+ARG API_URL=
 ARG AZURE_CLIENT_ID=""
 ARG AZURE_TENANT_ID=""
 ARG WEB_URL=http://localhost:3001

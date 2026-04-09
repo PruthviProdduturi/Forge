@@ -93,7 +93,7 @@ async def health_check() -> dict[str, Any]:
     return {
         "status": "ok" if all_ok else "degraded",
         "env": settings.forge_env,
-        "auth_provider": settings.auth_provider,
+        "auth_provider": "azure_ad",
         "platform": {
             "airflow_host": airflow_host,
             "trino_host": settings.trino_host,

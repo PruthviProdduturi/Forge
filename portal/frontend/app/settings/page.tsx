@@ -56,7 +56,7 @@ export default function PlatformSettingsPage() {
           {platformInfo ? (
             <div style={{ padding: "8px 24px 20px" }}>
               <Row label="Environment" value={(platformInfo.env ?? "dev").toUpperCase()} badge={platformInfo.env === "prod" ? "red" : "green"} />
-              <Row label="Auth Provider" value={platformInfo.auth_provider === "azure_ad" ? "Azure AD (SSO)" : "Local"} />
+              <Row label="Auth Provider" value="Azure AD (SSO)" />
               <Row label="Airflow" value={platformInfo.platform?.airflow_host ?? "—"} mono />
               <Row label="Trino" value={platformInfo.platform?.trino_host ?? "—"} mono />
               <Row label="ADLS Account" value={platformInfo.platform?.adls_account ?? "—"} mono />

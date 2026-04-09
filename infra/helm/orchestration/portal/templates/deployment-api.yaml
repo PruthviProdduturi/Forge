@@ -39,8 +39,6 @@ spec:
               value: {{ .Values.api.env.computeClusterName | quote }}
             - name: ORCH_CLUSTER_NAME
               value: {{ .Values.api.env.orchClusterName | quote }}
-            - name: AUTH_PROVIDER
-              value: {{ .Values.api.env.authProvider | quote }}
             - name: AZURE_TENANT_ID
               value: {{ .Values.api.env.azureTenantId | quote }}
             - name: AZURE_CLIENT_ID
@@ -74,6 +72,14 @@ spec:
             {{- if .Values.api.env.keyVaultUrl }}
             - name: KEY_VAULT_URL
               value: {{ .Values.api.env.keyVaultUrl | quote }}
+            {{- end }}
+            {{- if .Values.api.env.pgHost }}
+            - name: PG_HOST
+              value: {{ .Values.api.env.pgHost | quote }}
+            {{- end }}
+            {{- if .Values.api.env.pgUser }}
+            - name: PG_USER
+              value: {{ .Values.api.env.pgUser | quote }}
             {{- end }}
           resources:
             {{- toYaml .Values.api.resources | nindent 12 }}

@@ -74,6 +74,7 @@ SKIP_COMPUTE=false
 SKIP_ORCH=false
 SKIP_IMPORTS=false  # skip third-party image and Helm chart imports (use when already in ACR)
 SKIP_SECRETS=false  # skip phases 2-4 (KV seeds, Postgres grants, K8s secrets) on re-deploys
+PUBLISH_PACKAGES=false  # publish forge-sdk + forge-dq to ADO Artifacts after deploy
 
 # ---------------------------------------------------------------------------
 # Parse args — collect only; env file is sourced after --env is known
@@ -97,7 +98,8 @@ while [[ $# -gt 0 ]]; do
     --skip-compute)  SKIP_COMPUTE=true;  shift ;;
     --skip-orch)     SKIP_ORCH=true;     shift ;;
     --skip-imports)  SKIP_IMPORTS=true;  shift ;;
-    --skip-secrets)  SKIP_SECRETS=true;  shift ;;
+    --skip-secrets)      SKIP_SECRETS=true;      shift ;;
+    --publish-packages)  PUBLISH_PACKAGES=true;  shift ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -137,7 +139,7 @@ EOF
 FORGE_CLIENT_ID=$(_jq '.forge.clientId')
 FORGE_TENANT_ID=$(_jq '.parameters.tenantId.value')
 FORGE_ALLOWED_DOMAIN=$(_jq '.forge.allowedDomain')
-FORGE_REDIRECT_URI="http://localhost:8080/oauth2/callback"
+# FORGE_REDIRECT_URI is computed after LOCATION is known (line ~188)
 
 GIT_BRANCH="${GIT_BRANCH:-main}"
 API_TAG="${API_TAG:-1.0}"
@@ -186,6 +188,9 @@ NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUS
   --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 
 PUBLIC_HOST="${DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
+COMPUTE_DNS_LABEL="forge-compute-${_A}${ENV}"
+COMPUTE_PUBLIC_HOST="${COMPUTE_DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
+FORGE_REDIRECT_URI="http://${COMPUTE_PUBLIC_HOST}:8080/oauth2/callback"
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +205,9 @@ printf "║  alias      : %-38s║\n" "$ALIAS"
 printf "║  ACR        : %-38s║\n" "${ACR}.azurecr.io"
 printf "║  compute    : %-38s║\n" "$COMPUTE_CLUSTER"
 printf "║  orch       : %-38s║\n" "$ORCH_CLUSTER"
-printf "║  portal URL : %-38s║\n" "http://$PUBLIC_HOST"
-printf "║  airflow UI : %-38s║\n" "http://$PUBLIC_HOST:8080"
+printf "║  portal URL : %-38s║\n" "https://$PUBLIC_HOST"
+printf "║  trino UI   : %-38s║\n" "http://$COMPUTE_PUBLIC_HOST:8080"
+printf "║  spark conn : %-38s║\n" "sc://$COMPUTE_PUBLIC_HOST:15002"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 
@@ -269,6 +275,21 @@ _kv_seed() {
 _kv_seed "forge-portal-auth-provider" "azure_ad"
 _kv_seed "forge-portal-aad-client-id" "$FORGE_CLIENT_ID"
 _kv_seed "forge-portal-aad-tenant-id" "$FORGE_TENANT_ID"
+
+# Register OAuth2 redirect URIs on the app registration.
+#
+# Both portal and Trino use server-side OAuth2 (Web redirect URIs).
+# The portal-auth-proxy uses the same pattern as the Trino auth proxy —
+# no MSAL.js, no SPA platform, no PKCE required.
+echo "  Registering OAuth2 redirect URIs..."
+MSYS_NO_PATHCONV=1 az ad app update --id "$FORGE_CLIENT_ID" \
+  --web-redirect-uris \
+    "https://${PUBLIC_HOST}/oauth2/callback" \
+    "http://localhost:8080/oauth2/callback" \
+    "http://${COMPUTE_PUBLIC_HOST}:8080/oauth2/callback" \
+  2>/dev/null \
+  && echo "    Web redirect URIs registered (portal + Trino auth proxies)" \
+  || echo "    WARN: could not set Web redirect URIs — add manually"
 
 # No Airflow DB password — Postgres is AAD-only. Airflow pods authenticate
 # via workload identity token (see Phase 3 and Airflow Helm values).
@@ -415,6 +436,64 @@ if [[ -n "$APP_OBJ_ID" ]]; then
     echo "    WARN: could not get orch OIDC issuer — federated credential not configured"
   fi
 fi
+
+# Portal auth proxy — ensure app registration has federated credential for portal MI.
+# The proxy exchanges its SA OIDC token (AZURE_FEDERATED_TOKEN_FILE) for a portal MI
+# access token (via fc-portal-orchestration-dev on the MI), then uses that MI token as
+# client_assertion.  The app registration must trust tokens from the portal MI's
+# principalId (sub) issued by login.microsoftonline.com/v2.0 (AAD issuer — not AKS
+# OIDC issuer, which is blocked by tenant policy).
+APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
+PORTAL_MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
+  --name "id-forge-portal-${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
+if [[ -n "$APP_OBJ_ID" && -n "$PORTAL_MI_PRINCIPAL_ID" ]]; then
+  FC_ISSUER="https://login.microsoftonline.com/${FORGE_TENANT_ID}/v2.0"
+  EXISTING_FC=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+    --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+    --query "value[?subject=='${PORTAL_MI_PRINCIPAL_ID}'].id" -o tsv 2>/dev/null || echo "")
+  if [[ -z "$EXISTING_FC" ]]; then
+    # Upsert: rename any stale managed-identity-federation entry, or create new
+    STALE_FC_ID=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+      --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+      --query "value[?name=='managed-identity-federation'].id" -o tsv 2>/dev/null || echo "")
+    if [[ -n "$STALE_FC_ID" ]]; then
+      MSYS_NO_PATHCONV=1 az rest --method PATCH \
+        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FC_ID}" \
+        --headers "Content-Type=application/json" \
+        --body "{\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\"}" \
+        --output none 2>/dev/null || echo "    WARN: could not update managed-identity-federation"
+      echo "    Updated managed-identity-federation subject → portal MI"
+    else
+      MSYS_NO_PATHCONV=1 az rest --method POST \
+        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+        --headers "Content-Type=application/json" \
+        --body "{\"name\":\"managed-identity-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+        --output none 2>/dev/null || echo "    WARN: could not create managed-identity-federation"
+      echo "    Created managed-identity-federation: portal MI → app reg"
+    fi
+  else
+    echo "    Federated credential already correct: portal MI → app reg"
+  fi
+fi
+
+# Assign id-forge-portal-{env} MI to orch cluster VMSS nodes so IMDS works from
+# portal-auth-proxy pods (same pattern as id-forge-trino-{env} on compute VMSS).
+PORTAL_MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-portal-${ENV}"
+NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
+  --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
+if [[ -n "$NODE_RG_ORCH" ]]; then
+  ORCH_VMSS_NAMES=$(az vmss list --resource-group "$NODE_RG_ORCH" \
+    --query "[].name" -o tsv 2>/dev/null || echo "")
+  for VMSS_NAME in $ORCH_VMSS_NAMES; do
+    MSYS_NO_PATHCONV=1 az vmss identity assign \
+      --resource-group "$NODE_RG_ORCH" \
+      --name "$VMSS_NAME" \
+      --identities "$PORTAL_MI_RESOURCE_ID" \
+      --output none 2>/dev/null || true
+  done
+  echo "    Portal MI assigned to orch cluster VMSS nodes"
+fi
+
 kubectl create secret generic airflow-oauth-credentials \
   --from-literal="client-id=${FORGE_CLIENT_ID}" \
   --namespace airflow \
@@ -528,9 +607,15 @@ else
       --source "$src" --image "$dst" --output none 2>/dev/null \
       && echo "    ✓ $dst (imported)" || echo "    WARN: $dst import failed"
   }
-  _acr_import "registry.k8s.io/git-sync/git-sync:v4.4.2"               "git-sync:v4.4.2"
-  _acr_import "ghcr.io/kubeflow/spark-operator/controller:2.5.0"        "spark-operator-controller:2.5.0"
-  _acr_import "ghcr.io/kubeflow/spark-operator/kubectl:2.5.0"           "spark-operator-kubectl:2.5.0"
+  _acr_import "registry.k8s.io/git-sync/git-sync:v4.4.2"                        "git-sync:v4.4.2"
+  _acr_import "ghcr.io/kubeflow/spark-operator/controller:2.5.0"               "spark-operator-controller:2.5.0"
+  _acr_import "ghcr.io/kubeflow/spark-operator/kubectl:2.5.0"                  "spark-operator-kubectl:2.5.0"
+  # cert-manager — all 5 images must come from ACR (Azure Policy blocks quay.io)
+  _acr_import "quay.io/jetstack/cert-manager-controller:v1.17.1"               "cert-manager-controller:v1.17.1"
+  _acr_import "quay.io/jetstack/cert-manager-webhook:v1.17.1"                  "cert-manager-webhook:v1.17.1"
+  _acr_import "quay.io/jetstack/cert-manager-cainjector:v1.17.1"               "cert-manager-cainjector:v1.17.1"
+  _acr_import "quay.io/jetstack/cert-manager-acmesolver:v1.17.1"               "cert-manager-acmesolver:v1.17.1"
+  _acr_import "quay.io/jetstack/cert-manager-startupapicheck:v1.17.1"          "cert-manager-startupapicheck:v1.17.1"
 
   # Helm charts — pull from public repos, push to ACR OCI registry
   echo "  Importing Helm charts → ACR OCI..."
@@ -553,6 +638,7 @@ else
   _helm_import "spark-operator" "2.5.0"  "https://kubeflow.github.io/spark-operator"
   _helm_import "airflow"        "1.20.0" "https://airflow.apache.org"
   _helm_import "trino"          "1.36.0" "https://trinodb.github.io/charts"
+  _helm_import "cert-manager"   "v1.17.1" "https://charts.jetstack.io"
 fi
 
 if [[ -n "$BUILD_ONLY" ]]; then
@@ -612,12 +698,10 @@ else
   _queue_build "trino"            "trino"            "$TRINO_TAG"   "${REPO_ROOT}/infra/docker/trino/Dockerfile"             "${REPO_ROOT}/infra/docker/trino/"
   _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/infra/docker/airflow/"
   _queue_build "hive-metastore"   "hive-metastore"   "$HMS_TAG"     "${REPO_ROOT}/infra/docker/hive-metastore/Dockerfile"   "${REPO_ROOT}/infra/docker/hive-metastore/"
-  _queue_build "trino-auth-proxy" "trino-auth-proxy" "1.2"          "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/trino-auth-proxy/"
-  _queue_build "portal-api"       "portal-api"       "$API_TAG"     "${REPO_ROOT}/infra/docker/portal-api/Dockerfile"       "${REPO_ROOT}/portal/backend/"
-  _queue_build "portal-web"       "portal-web"       "$WEB_TAG"     "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"       "${REPO_ROOT}/portal/frontend/" \
-    --build-arg "API_URL=/api" \
-    --build-arg "AZURE_CLIENT_ID=${FORGE_CLIENT_ID}" \
-    --build-arg "AZURE_TENANT_ID=${FORGE_TENANT_ID}"
+  _queue_build "trino-auth-proxy"  "trino-auth-proxy"  "1.2"      "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile"  "${REPO_ROOT}/infra/docker/trino-auth-proxy/"
+  _queue_build "portal-auth-proxy" "portal-auth-proxy" "1.0"      "${REPO_ROOT}/infra/docker/portal-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/portal-auth-proxy/"
+  _queue_build "portal-api"        "portal-api"        "$API_TAG"  "${REPO_ROOT}/infra/docker/portal-api/Dockerfile"        "${REPO_ROOT}/portal/backend/"
+  _queue_build "portal-web"        "portal-web"        "$WEB_TAG"  "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"        "${REPO_ROOT}/portal/frontend/"
 
   echo "  Waiting for ${#_BUILD_PIDS[@]} builds to complete..."
   _BUILD_FAILED=()
@@ -760,7 +844,10 @@ else
   kubectl create serviceaccount trino -n trino --context "$COMPUTE_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
   if [[ -n "$TRINO_WI_CLIENT_ID" ]]; then
+    # Annotate both the trino workload SA and the auth proxy SA
     kubectl annotate serviceaccount trino -n trino --context "$COMPUTE_CLUSTER" --overwrite \
+      "azure.workload.identity/client-id=${TRINO_WI_CLIENT_ID}" 2>/dev/null || true
+    kubectl annotate serviceaccount oauth2-proxy-sa -n trino --context "$COMPUTE_CLUSTER" --overwrite \
       "azure.workload.identity/client-id=${TRINO_WI_CLIENT_ID}" 2>/dev/null || true
   fi
   TRINO_WI_ARG=""
@@ -823,6 +910,7 @@ else
     --set "env.allowedDomain=${FORGE_ALLOWED_DOMAIN}" \
     --set "env.trinoBackend=trino:8080" \
     ${TRINO_WI_CLIENT_ID:+--set "env.managedIdentityClientId=${TRINO_WI_CLIENT_ID}"} \
+    ${TRINO_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${TRINO_WI_CLIENT_ID}"} \
     --wait --timeout 3m
   echo "    Done"
 ) >"$_COMPUTE_LOG" 2>&1 &
@@ -994,6 +1082,91 @@ PGJOB
              exit 1; }
     fi
 
+    # Step 2c: Portal Postgres setup — create `portal` DB and grant portal-api MI access.
+    # Runs under the Airflow SA (which already has Postgres admin privileges from Bicep).
+    # Idempotent: CREATE DATABASE IF NOT EXISTS + GRANT are safe to re-run.
+    PORTAL_MI_NAME="id-forge-portal-${ENV}"
+    if [[ "$SKIP_PG_GRANTS" == "true" ]]; then
+      echo "  Skipped portal DB setup (--skip-pg-grants)"
+    else
+      kubectl delete job/portal-pg-setup -n airflow \
+        --context "$ORCH_CLUSTER" --ignore-not-found 2>/dev/null || true
+
+      kubectl apply --context "$ORCH_CLUSTER" -f - <<PORTALPGJOB 2>&1 | grep -v "^$" || true
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: portal-pg-setup
+  namespace: airflow
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    metadata:
+      labels:
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: airflow
+      restartPolicy: Never
+      containers:
+        - name: portal-pg-setup
+          image: ${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}
+          command: [python3, -c]
+          args:
+            - |
+              import urllib.request, urllib.parse, json, os, psycopg2
+              tenant_id = os.environ['AZURE_TENANT_ID']
+              client_id = os.environ['AZURE_CLIENT_ID']
+              with open(os.environ['AZURE_FEDERATED_TOKEN_FILE']) as f:
+                  federated_token = f.read().strip()
+              data = urllib.parse.urlencode({
+                  'grant_type': 'client_credentials',
+                  'client_id': client_id,
+                  'client_assertion': federated_token,
+                  'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                  'scope': 'https://ossrdbms-aad.database.windows.net/.default',
+              })
+              req = urllib.request.Request(
+                  f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+                  data=data.encode(), method='POST')
+              token = json.loads(urllib.request.urlopen(req, timeout=15).read())['access_token']
+              pg_host = '${PG_HOST}'
+              airflow_mi = '${AIRFLOW_MI_NAME_CONN}'
+              portal_mi  = '${PORTAL_MI_NAME}'
+              # Step 1: create portal database (connect as Airflow MI to postgres DB)
+              conn = psycopg2.connect(host=pg_host, dbname='postgres',
+                  user=airflow_mi, password=token, sslmode='require')
+              conn.autocommit = True
+              cur = conn.cursor()
+              cur.execute("SELECT 1 FROM pg_database WHERE datname='portal'")
+              if not cur.fetchone():
+                  cur.execute('CREATE DATABASE portal')
+                  print('portal database created', flush=True)
+              else:
+                  print('portal database already exists', flush=True)
+              cur.execute(f'GRANT ALL PRIVILEGES ON DATABASE portal TO "{portal_mi}"')
+              print(f'DB grant done for {portal_mi}', flush=True)
+              conn.close()
+              # Step 2: schema grants inside the portal database
+              conn2 = psycopg2.connect(host=pg_host, dbname='portal',
+                  user=airflow_mi, password=token, sslmode='require')
+              conn2.autocommit = True
+              cur2 = conn2.cursor()
+              cur2.execute(f'GRANT ALL ON SCHEMA public TO "{portal_mi}"')
+              cur2.execute(f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{portal_mi}"')
+              print('Schema grants done', flush=True)
+              conn2.close()
+PORTALPGJOB
+
+      kubectl wait job/portal-pg-setup \
+        -n airflow \
+        --context "$ORCH_CLUSTER" \
+        --for=condition=complete \
+        --timeout=3m \
+        && echo "    Portal DB setup done" \
+        || { echo "    WARN: portal-pg-setup job failed — theme preferences will fall back to local file."; \
+             echo "    Logs: kubectl logs -n airflow job/portal-pg-setup --context ${ORCH_CLUSTER}"; }
+    fi
+
     # Step 2b: Token-init Job — inject AAD token into airflow-db-credentials
     kubectl apply --context "$ORCH_CLUSTER" -f - <<JOB 2>&1 | grep -v "^$" || true
 apiVersion: batch/v1
@@ -1162,11 +1335,35 @@ MIGJOB
   fi
   echo "    Done"
 
-  echo "  [7.2] Airflow..."
+  echo "  [7.2] cert-manager + Let's Encrypt issuer..."
+  helm upgrade --install cert-manager \
+    "oci://${ACR}.azurecr.io/helm/cert-manager" \
+    --version "v1.17.1" \
+    --namespace cert-manager --create-namespace \
+    --kube-context "$ORCH_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/orchestration/cert-manager/values.yaml" \
+    --set "image.repository=${ACR}.azurecr.io/cert-manager-controller" \
+    --set "webhook.image.repository=${ACR}.azurecr.io/cert-manager-webhook" \
+    --set "cainjector.image.repository=${ACR}.azurecr.io/cert-manager-cainjector" \
+    --set "acmesolver.image.repository=${ACR}.azurecr.io/cert-manager-acmesolver" \
+    --set "startupapicheck.image.repository=${ACR}.azurecr.io/cert-manager-startupapicheck" \
+    --wait --timeout 5m
+  # Wait for cert-manager webhook to be ready before applying CRDs
+  kubectl rollout status deployment/cert-manager-webhook -n cert-manager \
+    --context "$ORCH_CLUSTER" --timeout=120s 2>/dev/null || true
+  kubectl apply -f "${REPO_ROOT}/infra/helm/orchestration/cert-manager/letsencrypt-issuer.yaml" \
+    --context "$ORCH_CLUSTER"
+  echo "    Done"
+
+  echo "  [7.4] Airflow..."
   az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
     | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
   # Apply dev DAG policy ConfigMap before Helm — policy plugin is mounted into pods.
   kubectl apply -f "${REPO_ROOT}/infra/helm/orchestration/airflow/forge-dev-policy-configmap.yaml" \
+    --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
+  # Apply webserver_config.py ConfigMap — Airflow 3.x chart no longer auto-mounts
+  # webserverConfig into the api-server pod; apply explicitly so FABAuthManager picks up OAuth.
+  kubectl apply -f "${REPO_ROOT}/infra/helm/orchestration/airflow/webserver-config-configmap.yaml" \
     --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
   # git-sync image must come from ACR — Azure Policy blocks registry.k8s.io.
   # Import is done in Phase 5 (_import_to_acr). Override image here.
@@ -1187,16 +1384,37 @@ MIGJOB
     --wait --timeout 10m
   echo "    Done"
 
-  echo "  [7.3] Portal..."
+  echo "  [7.5] Portal..."
   # portal-api service account must exist before the Deployment.
   kubectl create namespace portal --context "$ORCH_CLUSTER" --dry-run=client -o yaml \
     | kubectl apply --context "$ORCH_CLUSTER" -f - 2>/dev/null || true
   kubectl create serviceaccount portal-api -n portal --context "$ORCH_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f - 2>/dev/null || true
+
+  # Remove legacy split ingresses (forge-portal-web / forge-portal-api) that
+  # were replaced by the consolidated forge-portal ingress via portal-auth-proxy.
+  kubectl delete ingress forge-portal-web forge-portal-api -n portal \
+    --context "$ORCH_CLUSTER" --ignore-not-found 2>/dev/null || true
+
+  # Generate session secret for portal-auth-proxy (idempotent)
+  if ! kubectl get secret portal-proxy-session-secret -n portal \
+      --context "$ORCH_CLUSTER" &>/dev/null; then
+    kubectl create secret generic portal-proxy-session-secret \
+      --from-literal=secret="$(openssl rand -hex 32)" \
+      -n portal --context "$ORCH_CLUSTER"
+  fi
+
   helm upgrade --install forge-portal \
     "${REPO_ROOT}/infra/helm/orchestration/portal" \
     --namespace portal --create-namespace \
     --kube-context "$ORCH_CLUSTER" \
+    --set "proxy.image.repository=${ACR}.azurecr.io/portal-auth-proxy" \
+    --set "proxy.image.tag=1.0" \
+    --set "proxy.env.tenantId=${FORGE_TENANT_ID}" \
+    --set "proxy.env.clientId=${FORGE_CLIENT_ID}" \
+    --set "proxy.env.redirectUri=https://${PUBLIC_HOST}/oauth2/callback" \
+    --set "proxy.env.allowedDomain=${FORGE_ALLOWED_DOMAIN}" \
+    ${PORTAL_MI_CLIENT_ID:+--set "proxy.env.managedIdentityClientId=${PORTAL_MI_CLIENT_ID}"} \
     --set "api.image.repository=${ACR}.azurecr.io/portal-api" \
     --set "api.image.tag=${API_TAG}" \
     --set "web.image.repository=${ACR}.azurecr.io/portal-web" \
@@ -1210,8 +1428,15 @@ MIGJOB
     --set "api.env.orchClusterName=${ORCH_CLUSTER}" \
     --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
     --set "ingress.host=${PUBLIC_HOST}" \
-    ${PORTAL_MI_CLIENT_ID:+--set "api.env.azureClientId=${PORTAL_MI_CLIENT_ID}"} \
+    --set "api.env.pgHost=${PG_HOST}" \
+    --set "api.env.pgUser=id-forge-portal-${ENV}" \
     --wait --timeout 5m
+  # Force repull of portal images even when tags are stable (image tag :1.0 is
+  # a moving target — new ACR pushes don't trigger Kubernetes restarts otherwise)
+  kubectl rollout restart deployment/portal-web deployment/portal-api deployment/portal-auth-proxy \
+    -n portal --context "$ORCH_CLUSTER" 2>/dev/null || true
+  kubectl rollout status deployment/portal-web deployment/portal-api deployment/portal-auth-proxy \
+    -n portal --context "$ORCH_CLUSTER" --timeout=3m 2>/dev/null || true
   echo "    Done"
 
   # ── Token refresh CronJob ─────────────────────────────────────────────────
@@ -1219,7 +1444,7 @@ MIGJOB
   # IMDS token and patch airflow-db-credentials. Kubernetes syncs mounted secret
   # files within ~1 min. pool_recycle (3000s) then opens new connections using
   # the refreshed URL — no pod restart needed.
-  echo "  [7.4] Airflow token-refresh CronJob..."
+  echo "  [7.6] Airflow token-refresh CronJob..."
   kubectl apply --context "$ORCH_CLUSTER" -f - <<CRONJOB
 apiVersion: batch/v1
 kind: CronJob
@@ -1634,30 +1859,43 @@ echo "║  Forge is up                                         ║"
 echo "╠══════════════════════════════════════════════════════╣"
 echo "║                                                      ║"
 echo "║  PORTAL                                              ║"
-printf "║    URL:    http://%-35s║\n" "$PUBLIC_HOST"
-echo "║    Login:  admin / admin                             ║"
+printf "║    URL:    https://%-34s║\n" "$PUBLIC_HOST"
+echo "║                                                      ║"
+echo "║  TRINO UI (direct — no port-forward needed)          ║"
+printf "║    URL:    http://%-35s║\n" "${COMPUTE_PUBLIC_HOST}:8080"
+echo "║                                                      ║"
+echo "║  SPARK CONNECT (VS Code / notebooks)                 ║"
+printf "║    Endpoint: sc://%-35s║\n" "${COMPUTE_PUBLIC_HOST}:15002"
+echo "║    export FORGE_COMPUTE_HOST=\\                      ║"
+printf "║      %-48s║\n" "$COMPUTE_PUBLIC_HOST"
 echo "║                                                      ║"
 echo "║  AIRFLOW                                             ║"
 echo "║    kubectl port-forward svc/airflow-api-server \\     ║"
 echo "║      8081:8080 -n airflow \\                         ║"
 printf "║      --context %-37s║\n" "$ORCH_CLUSTER"
 echo "║    Then open: http://localhost:8081                  ║"
-echo "║    Login:  admin / admin                             ║"
-echo "║                                                      ║"
-echo "║  TRINO                                               ║"
-echo "║    kubectl port-forward svc/trino-auth-proxy \\      ║"
-echo "║      8080:8080 -n trino \\                           ║"
-printf "║      --context %-37s║\n" "$COMPUTE_CLUSTER"
-echo "║    Then open: http://localhost:8080                  ║"
 echo "║                                                      ║"
 echo "║  TABLES (after pipelines run)                        ║"
 echo "║    SELECT * FROM delta.bronze.nyctaxi LIMIT 10;      ║"
 echo "║    SELECT * FROM delta.silver.nyctaxi LIMIT 10;      ║"
 echo "║    SELECT * FROM delta.gold.nyctaxi   LIMIT 10;      ║"
 echo "║                                                      ║"
-echo "║  RUN TEST PIPELINES (one-shot end-to-end)            ║"
+echo "║  PUBLISH PACKAGES                                    ║"
 echo "║    bash infra/scripts/forge-up.sh \\                 ║"
 echo "║      --env dev --alias prproddu \\                   ║"
 echo "║      --skip-infra --skip-build --skip-sync \\        ║"
-echo "║      --run-test                                      ║"
+echo "║      --skip-compute --skip-orch \\                   ║"
+echo "║      --publish-packages --git-pat <pat>              ║"
 echo "╚══════════════════════════════════════════════════════╝"
+
+# ---------------------------------------------------------------------------
+# Publish Python packages to ADO Artifacts (opt-in via --publish-packages)
+# ---------------------------------------------------------------------------
+if [[ "$PUBLISH_PACKAGES" == "true" ]]; then
+  echo ""
+  echo "━━━ Publishing Python packages to ADO Artifacts ━━━━━━━━━━━━━━━━━━━━━━━━"
+  [[ -z "$GIT_PAT" ]] && { echo "ERROR: --git-pat <pat> required for --publish-packages"; exit 1; }
+  bash "${REPO_ROOT}/infra/scripts/publish-packages.sh" \
+    --pat "$GIT_PAT" \
+    --repo-root "$REPO_ROOT"
+fi

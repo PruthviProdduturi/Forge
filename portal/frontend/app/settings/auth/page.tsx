@@ -21,26 +21,10 @@ const MicrosoftIcon = (
   </svg>
 );
 
-const PROVIDER_CARDS = [
-  {
-    id: "local" as const,
-    title: "Local",
-    desc: "Username & password — dev/test only",
-    icon: <i className="fas fa-user-lock" style={{ fontSize: 16, color: "#64748b" }} />,
-  },
-  {
-    id: "azure_ad" as const,
-    title: "Azure AD (SSO)",
-    desc: "Enterprise single sign-on via Microsoft Entra ID",
-    icon: MicrosoftIcon,
-  },
-];
-
 export default function AuthSettingsPage() {
   const { getToken, role, isConnecting } = useAuth();
   const isAdmin = role === "Admin";
 
-  const [provider, setProvider] = useState<"local" | "azure_ad">("local");
   const [clientId, setClientId] = useState("");
   const [tenantId, setTenantId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -64,10 +48,9 @@ export default function AuthSettingsPage() {
         return;
       }
       try {
-        const d = await apiFetch<{ auth_provider: string; azure_client_id: string; azure_tenant_id: string }>(
+        const d = await apiFetch<{ azure_client_id: string; azure_tenant_id: string }>(
           "/api/platform/auth-config", getTokenRef.current
         );
-        setProvider(d.auth_provider as "local" | "azure_ad");
         setClientId(d.azure_client_id ?? "");
         setTenantId(d.azure_tenant_id ?? "");
         setLoaded(true);
@@ -84,7 +67,7 @@ export default function AuthSettingsPage() {
     try {
       await apiFetch("/api/platform/auth-config", getToken, {
         method: "POST",
-        body: JSON.stringify({ auth_provider: provider, azure_client_id: clientId, azure_tenant_id: tenantId }),
+        body: JSON.stringify({ azure_client_id: clientId, azure_tenant_id: tenantId }),
       });
       setMsg({ ok: true, text: "Saved. Users will see the new login flow on next page load." });
       setEditingClientId(false);
@@ -94,9 +77,7 @@ export default function AuthSettingsPage() {
     } finally {
       setSaving(false);
     }
-  }, [getToken, provider, clientId, tenantId]);
-
-  const azureActive = provider === "azure_ad";
+  }, [getToken, clientId, tenantId]);
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -157,61 +138,11 @@ export default function AuthSettingsPage() {
               </div>
             )}
 
-            {/* Provider cards */}
-            <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", padding: "24px" }}>
-              <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#94a3b8", marginBottom: 14 }}>
-                Login method
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {PROVIDER_CARDS.map((card) => {
-                  const sel = provider === card.id;
-                  return (
-                    <button
-                      key={card.id}
-                      onClick={() => setProvider(card.id)}
-                      type="button"
-                      style={{
-                        width: "100%", padding: "14px 16px", borderRadius: 12,
-                        border: `2px solid ${sel ? "var(--forge-primary)" : "#e2e8f0"}`,
-                        background: sel ? "rgba(var(--forge-primary-rgb), 0.04)" : "#f8fafc",
-                        cursor: "pointer", display: "flex", alignItems: "center", gap: 14,
-                        textAlign: "left", transition: "all 0.15s",
-                      }}
-                    >
-                      <div style={{
-                        width: 40, height: 40, borderRadius: 10,
-                        background: sel ? "rgba(var(--forge-primary-rgb), 0.1)" : "#f1f5f9",
-                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                      }}>
-                        {card.icon}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, fontWeight: 700, color: sel ? "var(--forge-primary)" : "#0f172a" }}>
-                          {card.title}
-                        </div>
-                        <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{card.desc}</div>
-                      </div>
-                      <div style={{
-                        width: 18, height: 18, borderRadius: "50%",
-                        border: `2px solid ${sel ? "var(--forge-primary)" : "#cbd5e1"}`,
-                        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-                      }}>
-                        {sel && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--forge-primary)" }} />}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Azure AD credentials */}
             <div style={{
               background: "#fff", borderRadius: 14,
-              border: `1px solid ${azureActive ? "rgba(var(--forge-primary-rgb), 0.3)" : "#e2e8f0"}`,
+              border: "1px solid rgba(var(--forge-primary-rgb), 0.3)",
               padding: "24px",
-              opacity: azureActive ? 1 : 0.5,
-              pointerEvents: azureActive ? "auto" : "none",
-              transition: "all 0.2s",
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 20 }}>
                 {MicrosoftIcon}
@@ -285,12 +216,12 @@ export default function AuthSettingsPage() {
 
             <button
               onClick={handleSave}
-              disabled={saving || (provider === "azure_ad" && !clientId.trim())}
+              disabled={saving || !clientId.trim()}
               type="button"
               style={{
                 alignSelf: "flex-start", padding: "11px 24px", borderRadius: 10, border: "none",
-                background: saving || (provider === "azure_ad" && !clientId.trim()) ? "#e2e8f0" : "var(--forge-primary)",
-                color: saving || (provider === "azure_ad" && !clientId.trim()) ? "#94a3b8" : "#fff",
+                background: saving || !clientId.trim() ? "#e2e8f0" : "var(--forge-primary)",
+                color: saving || !clientId.trim() ? "#94a3b8" : "#fff",
                 fontSize: 14, fontWeight: 700, cursor: saving ? "default" : "pointer",
                 display: "flex", alignItems: "center", gap: 8,
               }}
