@@ -29,11 +29,10 @@ FROM trinodb/trino:480
 USER root
 
 # ----------------------------------------------------------------------------
-# S360: apply OS-level security patches
-# trinodb/trino:480 uses Red Hat UBI9-minimal — package manager is microdnf
-# ----------------------------------------------------------------------------
-RUN microdnf upgrade -y && microdnf clean all
-
+# NOTE: trinodb/trino:480 is a stripped image with no package manager
+# (yum, apt-get, apk, and microdnf are all absent). OS-level S360 patches
+# are achieved by upgrading to the latest Trino release, not by running
+# package manager upgrade commands inside the image.
 # ----------------------------------------------------------------------------
 # Copy Forge catalog-discovery plugin (optional)
 #
