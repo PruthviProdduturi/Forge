@@ -53,6 +53,9 @@ azure-keyvault-secrets>=4.8.0
 # Azure Core (transitive dependency)
 azure-core>=1.31.0
 
+# Security: pin cryptography to fix GHSA-r6ph-v2qm-q3c2 (S360 VulnId 5007602)
+cryptography==46.0.5
+
 # =============================================================================
 # Data processing
 # =============================================================================
