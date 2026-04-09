@@ -30,10 +30,9 @@ USER root
 
 # ----------------------------------------------------------------------------
 # S360: apply OS-level security patches
-# trinodb/trino:480+ uses a Debian base — apt-get replaces yum from prior releases
+# trinodb/trino:480 uses Alpine — apk replaces yum (used in releases <~460)
 # ----------------------------------------------------------------------------
-RUN apt-get update && apt-get upgrade -y --no-install-recommends \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN apk upgrade --no-cache
 
 # ----------------------------------------------------------------------------
 # Copy Forge catalog-discovery plugin (optional)
