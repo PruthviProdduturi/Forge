@@ -1425,9 +1425,6 @@ MIGJOB
     --set "dags.gitSync.branch=${GIT_BRANCH}" \
     --set "images.gitSync.repository=${ACR}.azurecr.io/git-sync" \
     --set "images.gitSync.tag=v4.4.2" \
-    --set "env[0].value=${ENV}" \
-    --set "extraEnv[0].name=AIRFLOW__API__AUTH_BACKENDS" \
-    --set "extraEnv[0].value=airflow.providers.fab.auth_manager.api.auth.backend.basic_auth" \
     ${AIRFLOW_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${AIRFLOW_WI_CLIENT_ID}"} \
     --wait --timeout 10m
 

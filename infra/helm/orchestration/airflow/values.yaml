@@ -286,6 +286,8 @@ extraEnv: |
         name: airflow-oauth-credentials
         key: client-id
         optional: true
+  - name: AIRFLOW__API__AUTH_BACKENDS
+    value: "airflow.providers.fab.auth_manager.api.auth.backend.basic_auth"
 
 extraVolumes:
   - name: compute-kubeconfig

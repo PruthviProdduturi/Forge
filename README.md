@@ -6,7 +6,7 @@
 
 *Scalable compute. Reliable orchestration. Governed analytics.*
 
-[![Bicep](https://img.shields.io/badge/Bicep-latest-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/AKS-1.29+-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://azure.microsoft.com/en-us/products/kubernetes-service) [![Apache Spark](https://img.shields.io/badge/Spark-4.1-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-468-DD00A1?style=for-the-badge&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-3.1-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta_Lake-4.0-003366?style=for-the-badge)](https://delta.io)
+[![Bicep](https://img.shields.io/badge/Bicep-latest-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/AKS-1.29+-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://azure.microsoft.com/en-us/products/kubernetes-service) [![Apache Spark](https://img.shields.io/badge/Spark-4.1.1-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-480-DD00A1?style=for-the-badge&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-3.1.8-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta_Lake-4.1-003366?style=for-the-badge)](https://delta.io)
 
 <br/>
 
@@ -145,15 +145,16 @@ df.show()
 
 | Component | Version | Namespace |
 |-----------|---------|-----------|
-| Spark Operator | 1.4.x | `spark-system` |
-| Spark Connect | 4.1.x | `spark-system` |
-| Trino | 468 | `trino` |
+| Spark Operator | 2.5.0 | `spark-system` |
+| Spark Connect | 4.1.1 | `spark-system` |
+| Trino | 480 | `trino` |
+| Hive Metastore | 4.0.0 | `trino` |
 
 ### Orchestration Cluster (`forge-orchestration`)
 
 | Component | Version | Namespace |
 |-----------|---------|-----------|
-| Apache Airflow | 3.1.x | `airflow` |
+| Apache Airflow | 3.1.8 | `airflow` |
 | Microsoft Purview | Managed service (org-wide license) | Azure-hosted |
 | Azure Monitor / Container Insights | AKS add-on (managed) | `kube-system` (AMA DaemonSet) |
 | Azure Managed Grafana | Azure-native service | Azure-hosted |
@@ -177,7 +178,7 @@ spec:
   type: Python
   pythonVersion: "3"
   mode: cluster
-  image: "forge.azurecr.io/spark:4.1"
+  image: "forgeacr{alias}.azurecr.io/spark:4.1.1"
   mainApplicationFile: "abfss://code@<account>.dfs.core.windows.net/jobs/my_job.py"
 ```
 
