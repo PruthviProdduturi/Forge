@@ -1,7 +1,7 @@
 # Forge — Component Versions & Container Registry Strategy
 
 > **Status:** Production
-> **Last updated:** 2026-03-27
+> **Last updated:** 2026-04-09
 
 [![Bicep](https://img.shields.io/badge/Bicep-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-DD00A1?style=flat-square&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta%20Lake-003366?style=flat-square&logo=delta&logoColor=white)](https://delta.io) [![Azure Monitor](https://img.shields.io/badge/Azure%20Monitor-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/monitor) [![Azure Managed Grafana](https://img.shields.io/badge/Azure%20Managed%20Grafana-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/managed-grafana) [![OpenLineage](https://img.shields.io/badge/OpenLineage-7B2FBE?style=flat-square&logoColor=white)](https://openlineage.io) [![Azure Key Vault](https://img.shields.io/badge/Key%20Vault-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/key-vault) [![ADLS Gen2](https://img.shields.io/badge/ADLS%20Gen2-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/storage/data-lake-storage)
 
@@ -47,8 +47,8 @@ No cluster node ever pulls from a public registry. This eliminates:
 |-----------|---------|-----------|---------|-------|
 | **Apache Spark** | 4.1.1 | `eclipse-temurin:17-jre-jammy` | `forgeacr/spark:4.1.1` | Custom image — see below |
 | **Spark Operator** | 2.5.0 | `ghcr.io/kubeflow/spark-operator:v2.5.0` | `forgeacr/spark-operator:2.5.0` | Imported, not modified |
-| **Trino** | 479 | `trinodb/trino:479` | `forgeacr/trino:479` | Custom image (catalog-discovery plugin) |
-| **Hive Metastore** | 3.1.3 | `eclipse-temurin:17-jre-jammy` | `forgeacr/hive-metastore:3.1.3` | Custom image — adds `azure-identity-extensions` for AAD PostgreSQL auth |
+| **Trino** | 480 | `trinodb/trino:480` | `forgeacr/trino:480` | Custom image (catalog-discovery plugin) |
+| **Hive Metastore** | 4.0.0 | `apache/hive:4.0.0` | `forgeacr/hive-metastore:4.0.0` | Custom image — adds `azure-identity-extensions` for AAD PostgreSQL auth; upgraded from 3.1.3 (Hadoop 3.3.6, resolves 232 S360 CVEs) |
 | **Delta Lake** | 4.1.0 | — | — | Bundled in Spark image as JAR; no separate container |
 | **Apache Iceberg** | 1.10.1 | — | — | Bundled in Spark image as JAR (`iceberg-spark-runtime-4.0_2.13`) |
 
@@ -127,12 +127,12 @@ Built from `infra/docker/airflow/Dockerfile`.
 - Azure Workload Identity dependencies
 - Provider versions pinned by the official Airflow 3.1.8 constraints file
 
-### `forgeacr/trino:479`
+### `forgeacr/trino:480`
 
 Built from `infra/docker/trino/Dockerfile`.
 
 **What's included:**
-- Official `trinodb/trino:479` base (includes Delta Lake connector)
+- Official `trinodb/trino:480` base (includes Delta Lake connector)
 - Custom `catalog-discovery` plugin for dynamic per-tenant catalog registration (Forge-built JAR)
 - Shell access removed for `trino` user (`/sbin/nologin`) — security hardening
 

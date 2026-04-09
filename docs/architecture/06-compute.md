@@ -846,7 +846,7 @@ Forge uses these connectors:
 
 | Connector | Catalog Name | Data Source | Notes |
 |-----------|--------------|-------------|-------|
-| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 479; reads Delta log |
+| `delta` | `lakehouse` | silver/ and gold/ Delta tables | Built into Trino 480; reads Delta log |
 | `hive` | `bronze` | bronze/ Delta files | Legacy Hive-compatible for Bronze layer |
 | `tpch` | `tpch` | In-memory benchmark data | Benchmarking and query testing only |
 
@@ -1048,7 +1048,7 @@ Without HMS, every query would need to specify the full ABFS path. HMS is not a 
 
 ### Schema and Storage
 
-HMS metadata is stored in a PostgreSQL database (`hms_db` in the Forge PostgreSQL Flexible Server instance). The HMS schema is the standard Hive Metastore schema (Hive 3.1.3 compatible):
+HMS metadata is stored in a PostgreSQL database (`hms_db` in the Forge PostgreSQL Flexible Server instance). The HMS schema is the standard Hive Metastore schema (Hive 4.0.0 / Hadoop 3.3.6):
 
 Key tables:
 - `DBS` — databases (maps to Delta namespaces: `raw`, `curated`, `serving`)
@@ -1072,7 +1072,7 @@ HMS runs as a Kubernetes `Deployment` in the `trino` namespace on the compute cl
 ```
 hive-metastore Deployment (1 replica)
 ├── Container: hive-metastore
-│   ├── Image: forgeacr-prod.azurecr.io/hive-metastore:3.1.3
+│   ├── Image: forgeacr-prod.azurecr.io/hive-metastore:4.0.0
 │   ├── Command: /opt/hive/bin/hive --service metastore
 │   ├── Port: 9083/TCP (Thrift)
 │   └── Env:

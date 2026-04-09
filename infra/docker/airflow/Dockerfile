@@ -30,9 +30,12 @@ ARG CONSTRAINTS_URL="https://raw.githubusercontent.com/apache/airflow/constraint
 # ----------------------------------------------------------------------------
 USER root
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl \
-        git \
+# S360: upgrade OS packages and install only the minimal build-time packages
+# needed to compile native Python extensions (e.g. psycopg2).
+# curl and git are NOT needed — pip handles HTTP downloads internally and
+# DAG sources are synced via the git-sync sidecar at runtime, not at build time.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
         build-essential \
         libpq-dev \
     && apt-get clean \
@@ -134,7 +137,49 @@ ENV AIRFLOW__CORE__LOAD_EXAMPLES="False" \
 # Microsoft security scanning. These are transitive dependencies pulled in by
 # the apache/airflow base image or its providers — not used by this platform.
 # ----------------------------------------------------------------------------
-RUN pip uninstall -y litellm || true
+RUN pip uninstall -y litellm ray || true
+
+# S360: security-fix pip overrides (April 2026)
+# The apache/airflow:3.1.8 base image ships several packages at vulnerable
+# versions via its own constraint set. Installing newer versions here takes
+# precedence over the base image copies. Java-bundled CVEs (jackson-core,
+# commons-lang, log4j-core) cannot be fixed via pip — they require an
+# Airflow base image upgrade when apache/airflow ships a patched build.
+# ray is uninstalled above because it bundles its own aiohttp 3.x copy;
+# removing ray eliminates that bundled copy entirely.
+#
+#   pip>=25.0           — GHSA-4xh5-x5gv-qwph, GHSA-6vgw-5pg2-w6jp
+#   tornado>=6.5.5      — GHSA-78cv-mqj4-43f7, GHSA-qjxf-f2mg-c6mc
+#   PyJWT>=2.12.0       — GHSA-752w-5fwx-jx9f
+#   pyasn1>=0.6.3       — GHSA-jr27-m4p2-rc6r
+#   requests>=2.32.4    — GHSA-9hjg-9r4m-mvj7
+#   ecdsa>=0.19.2       — GHSA-9f5j-8jwj-x28g
+#   aiohttp>=3.13.4     — GHSA-54jq, GHSA-69f9, GHSA-6jhg, GHSA-6mq8,
+#                         GHSA-9548, GHSA-fh55, GHSA-g84x, GHSA-jj3x,
+#                         GHSA-mqqc (9 CVEs; also removes ray-bundled copy)
+#   werkzeug>=3.0.6     — GHSA-2g68, GHSA-87hc, GHSA-f9vj (3 CVEs)
+#   starlette>=0.36.3   — GHSA-7f5h
+#   protobuf>=4.25.5    — GHSA-7gcm
+#   wheel>=0.44.0       — GHSA-8rrh
+#   jaraco.context>=6.0 — GHSA-58pv
+RUN pip install --no-cache-dir \
+        "pip>=25.0" \
+        "tornado>=6.5.5" \
+        "PyJWT>=2.12.0" \
+        "pyasn1>=0.6.3" \
+        "requests>=2.32.4" \
+        "ecdsa>=0.19.2" \
+        "aiohttp>=3.13.4" \
+        "werkzeug>=3.0.6" \
+        "starlette>=0.36.3" \
+        "protobuf>=4.25.5" \
+        "wheel>=0.44.0" \
+        "jaraco.context>=6.0"
+
+# S360: HEALTHCHECK — Airflow webserver exposes /health
+# Uses Python's built-in urllib so curl is not required in the image.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
 
 LABEL org.opencontainers.image.title="forge-airflow" \
       org.opencontainers.image.version="3.1.8" \

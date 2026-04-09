@@ -118,7 +118,7 @@ sparkConf:
   spark.sql.extensions: io.delta.sql.DeltaSparkSessionExtension
   spark.sql.catalog.spark_catalog: org.apache.spark.sql.delta.catalog.DeltaCatalog
   spark.hadoop.hive.metastore.uris: thrift://hive-metastore.metastore.svc.cluster.local:9083
-  spark.sql.hive.metastore.version: "3.1.3"
+  spark.sql.hive.metastore.version: "4.0.0"
   spark.sql.hive.metastore.jars: builtin
 ```
 

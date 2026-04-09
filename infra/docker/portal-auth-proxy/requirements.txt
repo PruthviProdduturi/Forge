@@ -1,6 +1,7 @@
 flask==3.0.3
-msal==1.29.0
-requests==2.32.3
+# msal>=1.30.0: 1.29.0 pins cryptography<45 which conflicts with our cryptography==46.0.5
+msal>=1.30.0
+# S360: requests>=2.32.4 fixes GHSA-9hjg-9r4m-mvj7
+requests>=2.32.4
 gunicorn==22.0.0
-PyJWT==2.8.0
 cryptography==46.0.5

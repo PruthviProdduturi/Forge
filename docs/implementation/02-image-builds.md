@@ -17,11 +17,11 @@
 4. [Enabling ACR Tasks (public access)](#4-enabling-acr-tasks-public-access)
 5. [Custom Images](#5-custom-images)
    - [spark:4.1.1](#51-spark411)
-   - [trino:479](#52-trino479)
+   - [trino:480](#52-trino480)
    - [airflow:3.1.8](#53-airflow318)
    - [portal-api](#54-portal-api)
    - [portal-web](#55-portal-web)
-   - [hive-metastore:3.1.3](#56-hive-metastore313)
+   - [hive-metastore:4.0.0](#56-hive-metastore400)
 6. [Third-Party Image Import](#6-third-party-image-import)
 7. [Helm Chart Import](#7-helm-chart-import)
 8. [Lock ACR Back Down](#8-lock-acr-back-down)
@@ -99,11 +99,11 @@ Custom images have a Dockerfile in `infra/docker/<name>/`. Each image uses `az a
 | Image | Version | Dockerfile |
 |-------|---------|-----------|
 | `spark` | `4.1.1` | `infra/docker/spark/Dockerfile` |
-| `trino` | `479` | `infra/docker/trino/Dockerfile` |
+| `trino` | `480` | `infra/docker/trino/Dockerfile` |
 | `airflow` | `3.1.8` | `infra/docker/airflow/Dockerfile` |
 | `portal-api` | `{git-sha}` | `portal/backend/Dockerfile` |
 | `portal-web` | `{git-sha}` | `portal/frontend/Dockerfile` |
-| `hive-metastore` | `3.1.3` | `infra/docker/hive-metastore/Dockerfile` |
+| `hive-metastore` | `4.0.0` | `infra/docker/hive-metastore/Dockerfile` |
 
 ---
 
@@ -147,12 +147,12 @@ az acr build \
 
 ---
 
-### 5.2 trino:479
+### 5.2 trino:480
 
 **Purpose:** Trino coordinator and worker pods for ad-hoc SQL queries against Delta tables in the Silver and Gold layers.
 
 **What is included:**
-- Official `trinodb/trino:479` base (includes Delta Lake connector)
+- Official `trinodb/trino:480` base (includes Delta Lake connector)
 - Custom `catalog-discovery` plugin — dynamic per-tenant catalog registration without static property files (Forge-built JAR; build context includes a `.gitkeep` placeholder if not yet built)
 - Proper file ownership on plugin directories for the `trino` user
 - Shell access removed for the `trino` user (`/sbin/nologin`) — security hardening
@@ -164,7 +164,7 @@ interactive SQL queries — meaningful lineage is captured upstream at the Spark
 ```bash
 az acr build \
   --registry $ACR \
-  --image trino:479 \
+  --image trino:480 \
   --file infra/docker/trino/Dockerfile \
   infra/docker/trino/
 ```
@@ -250,7 +250,7 @@ az acr build \
   portal/frontend/
 ```
 
-### 5.6 hive-metastore:3.1.3
+### 5.6 hive-metastore:4.0.0
 
 **Purpose:** Hive Metastore standalone server. Provides the Thrift catalog endpoint used by both Spark (`DeltaCatalog`) and Trino (`delta_lake` connector) to resolve table names to ADLS paths.
 
@@ -275,7 +275,7 @@ The `schema-init` init container runs `schematool` to initialize the PostgreSQL 
 ```bash
 az acr build \
   --registry $ACR \
-  --image "hive-metastore:3.1.3" \
+  --image "hive-metastore:4.0.0" \
   --file infra/docker/hive-metastore/Dockerfile \
   .
 ```
@@ -332,7 +332,7 @@ rm -f spark-operator-*.tgz trino-*.tgz airflow-*.tgz
 | Chart | Chart Version | App Version | ACR path |
 |-------|--------------|-------------|----------|
 | `spark-operator` | `2.5.0` | Spark Operator 2.5.0 | `oci://{acr}.azurecr.io/helm/spark-operator:2.5.0` |
-| `trino` | `1.36.0` | Trino 479 | `oci://{acr}.azurecr.io/helm/trino:1.36.0` |
+| `trino` | `1.36.0` | Trino 480 | `oci://{acr}.azurecr.io/helm/trino:1.36.0` |
 | `airflow` | `1.20.0` | Airflow 3.1.8 | `oci://{acr}.azurecr.io/helm/airflow:1.20.0` |
 
 ---

@@ -18,53 +18,25 @@
 #   az acr build must be run from the repo root with -f infra/docker/spark/Dockerfile
 # =============================================================================
 
-FROM eclipse-temurin:17-jre-jammy
+# =============================================================================
+# Stage 1: downloader — curl is used here to fetch Spark and JARs.
+# curl is NOT present in the final runtime image.
+# =============================================================================
+FROM eclipse-temurin:17-jre-jammy AS downloader
 
-# ----------------------------------------------------------------------------
-# Build arguments — override at build time if needed
-# ----------------------------------------------------------------------------
 ARG SPARK_VERSION=4.1.1
 ARG HADOOP_VERSION=3
 ARG DELTA_VERSION=4.1.0
 ARG ICEBERG_VERSION=1.10.1
 ARG HADOOP_AZURE_VERSION=3.4.1
 ARG OPENLINEAGE_VERSION=1.39.0
-ARG PYTHON_VERSION=3.11
 
-# ----------------------------------------------------------------------------
-# Environment variables
-# ----------------------------------------------------------------------------
-ENV SPARK_VERSION=${SPARK_VERSION} \
-    SPARK_HOME=/opt/spark \
-    JAVA_HOME=/opt/java/openjdk \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV SPARK_HOME=/opt/spark
 
-ENV PATH="${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${JAVA_HOME}/bin:${PATH}"
-
-# ----------------------------------------------------------------------------
-# System packages: Python 3.11, curl, procps (for Spark scripts)
-# ----------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.11 \
-        python3.11-venv \
-        python3-pip \
-        python3.11-dev \
-        curl \
-        procps \
-        tini \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
-    && ln -sf /usr/bin/python3.11 /usr/bin/python \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# ----------------------------------------------------------------------------
-# Create spark user (non-root, UID 185 — matches spark-operator convention)
-# ----------------------------------------------------------------------------
-RUN groupadd --gid 185 spark \
-    && useradd --uid 185 --gid 185 --no-create-home --shell /bin/bash spark
+# S360: upgrade OS packages and install curl for downloading artifacts only
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends curl \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------------------------------------------------------
 # Download and verify Apache Spark
@@ -152,13 +124,69 @@ RUN set -eux; \
         "${MAVEN_CENTRAL}/io/openlineage/openlineage-spark_2.12/${OPENLINEAGE_VERSION}/openlineage-spark_2.12-${OPENLINEAGE_VERSION}.jar" \
         -o "${JARS_DIR}/openlineage-spark_2.12-${OPENLINEAGE_VERSION}.jar"
 
+# =============================================================================
+# Stage 2: runtime — no curl in the final image
+# =============================================================================
+FROM eclipse-temurin:17-jre-jammy
+
+# ----------------------------------------------------------------------------
+# Build arguments — override at build time if needed
+# ----------------------------------------------------------------------------
+ARG SPARK_VERSION=4.1.1
+ARG HADOOP_VERSION=3
+ARG DELTA_VERSION=4.1.0
+ARG ICEBERG_VERSION=1.10.1
+ARG HADOOP_AZURE_VERSION=3.4.1
+ARG OPENLINEAGE_VERSION=1.39.0
+ARG PYTHON_VERSION=3.11
+
+# ----------------------------------------------------------------------------
+# Environment variables
+# ----------------------------------------------------------------------------
+ENV SPARK_VERSION=${SPARK_VERSION} \
+    SPARK_HOME=/opt/spark \
+    JAVA_HOME=/opt/java/openjdk \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+ENV PATH="${SPARK_HOME}/bin:${SPARK_HOME}/sbin:${JAVA_HOME}/bin:${PATH}"
+
+# ----------------------------------------------------------------------------
+# S360: apply OS-level security patches; install Python and tini only.
+# curl is NOT installed — it was only needed in the downloader stage.
+# procps is needed by Spark launch scripts (ps command).
+# ----------------------------------------------------------------------------
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
+        python3.11 \
+        python3.11-venv \
+        python3-pip \
+        python3.11-dev \
+        procps \
+        tini \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ----------------------------------------------------------------------------
+# Create spark user (non-root, UID 185 — matches spark-operator convention)
+# ----------------------------------------------------------------------------
+RUN groupadd --gid 185 spark \
+    && useradd --uid 185 --gid 185 --no-create-home --shell /bin/bash spark
+
+# Copy Spark distribution and downloaded JARs from the downloader stage
+COPY --from=downloader /opt/spark /opt/spark
+
 # ----------------------------------------------------------------------------
 # Python packages
 #   - pyspark must match Spark version exactly
 #   - delta-spark must match Delta Lake version exactly
 # ----------------------------------------------------------------------------
-RUN pip3 install --upgrade pip && \
-    pip3 install \
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir \
         "pyspark==${SPARK_VERSION}" \
         "delta-spark==${DELTA_VERSION}" \
         "pandas==2.2.2" \
@@ -185,8 +213,8 @@ RUN pip3 install --upgrade pip && \
 COPY sdk/python/forge_catalog /tmp/forge_catalog
 COPY sdk/python/forge_sdk     /tmp/forge_sdk
 COPY sdk/python/forge_dq      /tmp/forge_dq
-RUN pip3 install /tmp/forge_catalog \
-    && pip3 install /tmp/forge_sdk /tmp/forge_dq \
+RUN pip3 install --no-cache-dir /tmp/forge_catalog \
+    && pip3 install --no-cache-dir /tmp/forge_sdk /tmp/forge_dq \
     && rm -rf /tmp/forge_catalog /tmp/forge_sdk /tmp/forge_dq
 
 # ----------------------------------------------------------------------------
@@ -237,6 +265,12 @@ USER spark
 #   8080  — Spark history server
 # ----------------------------------------------------------------------------
 EXPOSE 4040 7077 8080
+
+# ----------------------------------------------------------------------------
+# S360: HEALTHCHECK — driver mode exposes Spark UI on 4040
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:4040')" || exit 1
 
 # ----------------------------------------------------------------------------
 # ENTRYPOINT

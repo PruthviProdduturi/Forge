@@ -50,7 +50,7 @@
 | Item | Status | Notes |
 |------|--------|-------|
 | Spark 4.1.1 Dockerfile — Delta 4.1.0, Iceberg 1.10.1, ADLS driver, OpenLineage | ✅ Done | Build context is repo root (COPY sdk/python requires it) |
-| Trino 479 Dockerfile | ✅ Done | |
+| Trino 480 Dockerfile | ✅ Done | |
 | Airflow 3.1.8 Dockerfile | ✅ Done | |
 | Hive Metastore Dockerfile | ✅ Done | |
 | Portal API (FastAPI) Dockerfile | ✅ Done | |
@@ -83,7 +83,7 @@
 | Spark Operator (kubeflow/spark-operator) | ✅ Done | Manages SparkApplication CRDs in `spark-jobs` namespace |
 | Spark Connect | ✅ Done | Interactive Spark from laptop via `forge_connect()`; dev-only |
 | Hive Metastore | ✅ Done | PostgreSQL backend (AAD auth); Delta table registry for Trino |
-| Trino 479 | ✅ Done | Delta connector via HMS; queries silver/gold Delta tables |
+| Trino 480 | ✅ Done | Delta connector via HMS; queries silver/gold Delta tables |
 | Trino Auth Proxy | ✅ Done | IMDS managed identity → MSAL federated credential; S360-compliant, no client secrets |
 | Airflow — git-sync + AAD token workload identity Postgres connection | ✅ Done | Init container fetches IMDS token; no password in connection string |
 | Portal chart — FastAPI + Next.js, ingress, managed identity | ✅ Done | |

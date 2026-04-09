@@ -22,7 +22,7 @@
 
 image:
   repository: forgeacr.azurecr.io/hive-metastore
-  tag: "3.1.3"
+  tag: "4.0.0"
   pullPolicy: IfNotPresent
 
 # ----------------------------------------------------------------------------

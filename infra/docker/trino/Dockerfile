@@ -1,6 +1,6 @@
 # =============================================================================
-# Forge — Trino 479 Image
-# Base: trinodb/trino:479
+# Forge — Trino 480 Image
+# Base: trinodb/trino:480
 #
 # Additions over the official image:
 #   - Custom catalog-discovery plugin (Forge-built JAR)
@@ -14,15 +14,26 @@
 # the Spark (job) and Airflow (pipeline) layers where it has real value.
 # Instrumenting ad-hoc Trino queries produces noise, not signal.
 #
+# Trino 480 ships with:
+#   - jetty-server 12.1.7 (fixes GHSA-xxh7-fcf3-rj7f / S360 VulnId 5008782)
+#   - netty-codec-http 4.2.10.Final (fixes GHSA-84h7-rjj3-6jx4 / S360 VulnId 5006602)
+#
 # Build context: infra/docker/trino/
 # =============================================================================
 
-FROM trinodb/trino:479
+FROM trinodb/trino:480
 
 # ----------------------------------------------------------------------------
 # Switch to root for installation steps
 # ----------------------------------------------------------------------------
 USER root
+
+# ----------------------------------------------------------------------------
+# S360: apply OS-level security patches
+# trinodb/trino:480+ uses a Debian base — apt-get replaces yum from prior releases
+# ----------------------------------------------------------------------------
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------------------------------------------------------
 # Copy Forge catalog-discovery plugin (optional)
@@ -71,7 +82,13 @@ USER trino
 # ----------------------------------------------------------------------------
 # Metadata
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# S360: HEALTHCHECK — Trino exposes a /v1/info REST endpoint
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:8080/v1/info || exit 1
+
 LABEL org.opencontainers.image.title="forge-trino" \
-      org.opencontainers.image.version="479" \
-      org.opencontainers.image.description="Trino 479 for the Forge data platform" \
+      org.opencontainers.image.version="480" \
+      org.opencontainers.image.description="Trino 480 for the Forge data platform" \
       org.opencontainers.image.vendor="Forge Platform Team"

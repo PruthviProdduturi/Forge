@@ -19,6 +19,12 @@ FROM grafana/grafana:10.4.2
 USER root
 
 # ----------------------------------------------------------------------------
+# S360: apply OS-level security patches
+# Grafana ships on Alpine — use apk to upgrade installed packages.
+# ----------------------------------------------------------------------------
+RUN apk upgrade --no-cache
+
+# ----------------------------------------------------------------------------
 # Datasource provisioning
 # Grafana reads all YAML files in /etc/grafana/provisioning/datasources/
 # on startup and creates/updates datasources automatically.
@@ -88,6 +94,12 @@ ENV GF_PATHS_PROVISIONING="/etc/grafana/provisioning" \
 # Switch back to grafana user (UID/GID 472) for runtime
 # ----------------------------------------------------------------------------
 USER 472
+
+# ----------------------------------------------------------------------------
+# S360: define a HEALTHCHECK so the container runtime can detect unhealthy pods
+# ----------------------------------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD wget -qO- http://localhost:3000/api/health || exit 1
 
 # ----------------------------------------------------------------------------
 # Metadata

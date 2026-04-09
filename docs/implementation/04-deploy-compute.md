@@ -73,7 +73,7 @@ helm upgrade --install hive-metastore \
   infra/helm/compute/hive-metastore \
   --namespace hive-metastore \
   --set image.repository=forgeacr{alias}.azurecr.io/hive-metastore \
-  --set image.tag=3.1.3 \
+  --set image.tag=4.0.0 \
   --set db.host="${HMS_HOST}" \
   --set db.user="id-forge-hms-{env}" \
   --set adls.account=forgeadls{alias}{env} \
@@ -306,7 +306,7 @@ helm upgrade --install trino \
   --create-namespace \
   --values infra/helm/compute/trino/values.yaml \
   --set image.repository=forgeacr{alias}.azurecr.io/trino \
-  --set image.tag=479 \
+  --set image.tag=480 \
   --set serviceAccount.annotations."azure\.workload\.identity/client-id"=${WI_CLIENT_ID} \
   --wait --timeout 10m
 ```

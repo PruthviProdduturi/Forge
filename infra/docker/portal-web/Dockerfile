@@ -8,6 +8,9 @@
 
 FROM node:20-alpine AS deps
 
+# S360: apply OS-level security patches
+RUN apk upgrade --no-cache
+
 WORKDIR /app
 
 # Install dependencies only (layer cached unless package.json changes)
@@ -18,6 +21,9 @@ RUN npm ci --frozen-lockfile
 FROM node:20-alpine AS builder
 
 WORKDIR /app
+
+# S360: apply OS-level security patches
+RUN apk upgrade --no-cache
 
 ARG API_URL=
 ARG AZURE_CLIENT_ID=""
@@ -39,6 +45,9 @@ RUN npm run build
 # ── Runner ───────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 
+# S360: apply OS-level security patches
+RUN apk upgrade --no-cache
+
 WORKDIR /app
 
 ENV NODE_ENV=production \
@@ -58,5 +67,9 @@ EXPOSE 3001
 
 ENV PORT=3001 \
     HOSTNAME="0.0.0.0"
+
+# S360: HEALTHCHECK — Next.js serves on PORT 3001
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3001/', (r) => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
 
 CMD ["node", "server.js"]
