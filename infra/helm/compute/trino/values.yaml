@@ -23,15 +23,6 @@ image:
 # Coordinator — always-on, handles query planning and client connections
 # ----------------------------------------------------------------------------
 coordinator:
-  # web-ui.authentication.type=fixed: accepts any username without password.
-  # Real auth is enforced by trino-auth-proxy (X-Trino-User on /v1/* paths).
-  # web-ui.user=trino-user: required when type=fixed (Trino validates non-null).
-  # http-server.process-forwarded=true: honour X-Forwarded-* from the proxy.
-  # These are coordinator-only — workers reject web-ui.* properties.
-  additionalConfigProperties:
-    - "web-ui.authentication.type=fixed"
-    - "web-ui.user=trino-user"
-    - "http-server.process-forwarded=true"
   jvm:
     maxHeapSize: "6G"
   resources:
@@ -113,14 +104,23 @@ podLabels:
   azure.workload.identity/use: "true"
 
 # ----------------------------------------------------------------------------
-# Additional config.properties for the coordinator.
+# Additional coordinator-only config properties (server.coordinatorExtraConfig).
 # web-ui.authentication.type=fixed  — accepts any username without password;
 #   real auth is enforced by trino-auth-proxy (X-Trino-User on API paths).
-# http-server.process-forwarded=true — honour X-Forwarded-* from the proxy.
+# web-ui.user=trino-user            — required when type=fixed (non-null check).
+# http-server.process-forwarded=true — honour X-Forwarded-* from nginx ingress;
+#   without this Trino rejects requests with X-Forwarded-For headers (406).
+# Workers do not need these — only the coordinator accepts web traffic.
 # ----------------------------------------------------------------------------
+server:
+  coordinatorExtraConfig: |
+    web-ui.authentication.type=fixed
+    web-ui.user=trino-user
+    http-server.process-forwarded=true
+
 # ----------------------------------------------------------------------------
 # Service — ClusterIP (internal only).
-# Access goes through trino-auth-proxy via kubectl port-forward.
+# Access goes through trino-auth-proxy via HTTPS ingress.
 # ----------------------------------------------------------------------------
 service:
   type: ClusterIP
