@@ -30,9 +30,9 @@ USER root
 
 # ----------------------------------------------------------------------------
 # S360: apply OS-level security patches
-# trinodb/trino:480 uses Alpine — apk replaces yum (used in releases <~460)
+# trinodb/trino:480 uses Red Hat UBI9-minimal — package manager is microdnf
 # ----------------------------------------------------------------------------
-RUN apk upgrade --no-cache
+RUN microdnf upgrade -y && microdnf clean all
 
 # ----------------------------------------------------------------------------
 # Copy Forge catalog-discovery plugin (optional)
