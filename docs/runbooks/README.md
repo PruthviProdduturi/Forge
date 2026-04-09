@@ -18,38 +18,42 @@ Step-by-step incident response guides for the Forge platform. Each runbook cover
 Before diving into a specific runbook:
 
 ```bash
+# Set context shortcuts (adjust alias if not prproddu)
+COMPUTE="aks-forge-compute-prproddu-dev"
+ORCH="aks-forge-orchestration-prproddu-dev"
+
 # 1. Check overall cluster health
-kubectl get nodes --context forge-compute-dev
-kubectl get nodes --context forge-orch-dev
+kubectl get nodes --context "$COMPUTE"
+kubectl get nodes --context "$ORCH"
 
 # 2. Check for any failing pods across all namespaces
-kubectl get pods -A --context forge-compute-dev | grep -v Running | grep -v Completed
-kubectl get pods -A --context forge-orch-dev   | grep -v Running | grep -v Completed
+kubectl get pods -A --context "$COMPUTE" | grep -v Running | grep -v Completed
+kubectl get pods -A --context "$ORCH"    | grep -v Running | grep -v Completed
 
-# 3. Check portal health API
-curl http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com/api/health
-curl http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com/api/status
+# 3. Check portal health API (unauthenticated endpoint)
+curl https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/health
+curl https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/status
 ```
 
 ## Accessing Logs
 
 | Component | Command |
 |---|---|
-| Airflow scheduler | `kubectl logs -n airflow -l component=scheduler --context forge-orch-dev` |
-| Airflow webserver | `kubectl logs -n airflow -l component=webserver --context forge-orch-dev` |
-| Spark driver (last job) | `kubectl logs -n spark-jobs -l spark-role=driver --context forge-compute-dev` |
-| Trino coordinator | `kubectl logs -n trino -l app=trino-coordinator --context forge-compute-dev` |
-| Hive Metastore | `kubectl logs -n hive -l app=hive-metastore --context forge-compute-dev` |
-| Portal API | `kubectl logs -n portal -l app=portal-api --context forge-orch-dev` |
+| Airflow scheduler | `kubectl logs -n airflow -l component=scheduler --context aks-forge-orchestration-prproddu-dev` |
+| Airflow webserver | `kubectl logs -n airflow -l component=webserver --context aks-forge-orchestration-prproddu-dev` |
+| Spark driver (last job) | `kubectl logs -n spark-jobs -l spark-role=driver --context aks-forge-compute-prproddu-dev` |
+| Trino coordinator | `kubectl logs -n trino -l app=trino-coordinator --context aks-forge-compute-prproddu-dev` |
+| Hive Metastore | `kubectl logs -n hive -l app=hive-metastore --context aks-forge-compute-prproddu-dev` |
+| Portal API | `kubectl logs -n portal -l app=portal-api --context aks-forge-orchestration-prproddu-dev` |
 
-## Key Resource Names (dev)
+## Key Resource Names (dev — alias prproddu)
 
 | Resource | Name |
 |---|---|
 | Compute cluster | `aks-forge-compute-prproddu-dev` |
 | Orchestration cluster | `aks-forge-orchestration-prproddu-dev` |
-| Resource group | `rg-forge-prproddu-dev` |
-| Storage account | `forgestoragedev` |
-| Key Vault | `kv-forge-prproddu-dev` |
-| ACR | `forgeacrprproddu` |
-| Postgres | `pg-forge-prproddu-dev` |
+| Resource group | `rg-forge-prproddu-dev` (alias) / `rg-forge-dev` (shared/no-alias) |
+| Storage account | `forgeadlsprproddudev` |
+| Key Vault | `kv-forge-prproddu-dev` (alias) / `kv-forge-eaa4a83d-dev` (shared) |
+| ACR | `forgeacrprproddu` (alias) / `forgeacreaa4a83d` (shared) |
+| Postgres | `psql-forge-prproddu-dev` (alias) / `psql-forge-eaa4a83d-dev` (shared) |

@@ -90,7 +90,7 @@ Source Systems
 
 | What | Detail |
 |---|---|
-| Cloud | Azure (North Central US) |
+| Cloud | Azure (West Central US) |
 | Infrastructure as Code | Bicep — single `az deployment sub create` provisions everything |
 | Kubernetes | AKS 1.32, Azure CNI Overlay, Calico network policy |
 | Storage | ADLS Gen2 with hierarchical namespace, Delta Lake 4.0 |

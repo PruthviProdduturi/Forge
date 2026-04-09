@@ -236,19 +236,19 @@ bash infra/scripts/forge-up.sh \
 
 Open in browser:
 ```
-http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
 ```
 
 Check:
-- [ ] Page loads (not 502/504)
-- [ ] Platform status panel shows all components
+- [ ] Page loads (not 502/504) — redirects to Azure AD login if not authenticated
+- [ ] After AAD login, platform status panel shows all components
 - [ ] Spark, Trino, Airflow show as healthy (green)
 - [ ] ADLS storage account shown
 - [ ] No errors in browser console
 
-Check API directly:
+Check API directly (unauthenticated — health endpoint is public):
 ```bash
-curl -s http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com/api/status \
+curl -s https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/health \
   | python3 -m json.tool
 ```
 

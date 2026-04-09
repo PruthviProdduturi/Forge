@@ -55,7 +55,7 @@ Set these once. All commands below reference them.
 
 ```bash
 ENV="dev"                    # change to "prod" for production
-LOCATION="northcentralus"
+LOCATION="westcentralus"
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 RG="rg-forge-platform-${ENV}"
 VNET_NAME="vnet-forge-${ENV}"

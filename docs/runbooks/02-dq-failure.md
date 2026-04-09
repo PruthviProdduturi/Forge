@@ -24,7 +24,7 @@ kubectl exec -n airflow --context forge-orch-dev \
   -- airflow tasks logs <dag_id> <task_id> <run_id>
 ```
 
-Or navigate to: `http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com/pipelines`
+Or navigate to: `https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/pipelines`
 
 Look for the DQ failure summary in the Spark driver logs:
 

@@ -108,7 +108,7 @@ The FastAPI backend is a thin aggregation layer. It does not own platform data â
 
 | Data Source | Purpose | Protocol |
 |-------------|---------|----------|
-| Airflow REST API | Health probe (`GET /api/v1/health` with basic auth) | HTTP/JSON |
+| Airflow REST API | Health probe (`GET /api/v2/monitor/health`, JWT Bearer token from `POST /auth/token`) | HTTP/JSON |
 | Trino coordinator | Health probe (`GET /v1/info`, no SQL executed) | HTTP |
 | ADLS Gen2 | Health probe (`GET https://{account}.dfs.core.windows.net/`) | HTTPS |
 | Spark Connect | Health probe (HTTP GET to configured URL) | HTTP |

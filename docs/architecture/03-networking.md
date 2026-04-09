@@ -408,8 +408,8 @@ Azure DevOps Pipelines run on ADO-hosted agents that reach the AKS API server ov
 | PostgreSQL (Airflow) | `psql-forge-airflow-<env>` | `pe-psql-airflow` | private-endpoints | 10.3.0.8 | `privatelink.postgres.database.azure.com` |
 | Microsoft Purview | `purview-forge-<env>` | `pe-purview` | private-endpoints | 10.3.0.9 | `privatelink.purview.azure.com` |
 | Azure Monitor | `azmon-forge-<env>` | `pe-azmon` | private-endpoints | 10.3.0.10 | `privatelink.monitor.azure.com` |
-| AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.northcentralus.azmk8s.io` |
-| AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.northcentralus.azmk8s.io` |
+| AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.westcentralus.azmk8s.io` |
+| AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.westcentralus.azmk8s.io` |
 
 **Why two ADLS private endpoints?** ADLS Gen2 has two sub-resources that each need their own private endpoint: `dfs` (Data Lake Storage — used by Spark and all Hadoop/ABFS clients) and `blob` (Blob Storage — used by ACR layer pulls and some Azure SDKs that fall back to blob). Both must be present for complete private access.
 
@@ -544,10 +544,10 @@ The pod would attempt to connect to the public IP. This connection would be **bl
 When the Airflow pod on the orchestration cluster reaches the compute cluster's Kubernetes API server:
 
 ```
-Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.northcentralus.azmk8s.io
+Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.westcentralus.azmk8s.io
   → CoreDNS (172.21.0.10)
   → 168.63.129.16 (Azure DNS)
-  → privatelink.northcentralus.azmk8s.io zone linked to vnet-forge-{env}
+  → privatelink.westcentralus.azmk8s.io zone linked to vnet-forge-{env}
   → A record: 10.3.0.11
   → Airflow connects to 10.3.0.11:443 (compute AKS API private endpoint)
   → kubectl auth via ServiceAccount token in the kubeconfig (fetched from Key Vault)

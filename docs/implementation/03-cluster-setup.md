@@ -56,7 +56,7 @@ az provider register --namespace Microsoft.ManagedIdentity
 The Forge clusters use `Standard_E8s_v5` (Spark node pool) and `Standard_E16s_v5` (Trino node pool) in the primary region. Verify the subscription has sufficient quota before attempting cluster creation — insufficient quota causes silent failures or partial scale-up.
 
 ```bash
-LOCATION="northcentralus"
+LOCATION="westcentralus"
 
 # Check Standard Esv5 Family quota
 az vm list-usage \
@@ -157,7 +157,7 @@ Edit `infra/bicep/environments/{env}/dev.parameters.json` with your values. All 
   "contentVersion": "1.0.0.0",
   "parameters": {
     "environment":                { "value": "dev" },
-    "location":                   { "value": "northcentralus" },
+    "location":                   { "value": "westcentralus" },
     "tenantId":                   { "value": "<your-tenant-id>" },
     "adminGroupObjectIds":        { "value": ["<aks-admin-group-object-id>"] },
     "platformAdminGroupObjectId": { "value": "<platform-admin-group-object-id>" },
@@ -198,7 +198,7 @@ Run a what-if to see exactly what will be created or modified:
 
 ```bash
 az deployment sub what-if \
-  --location northcentralus \
+  --location westcentralus \
   --template-file infra/bicep/environments/${ENV}/main.bicep \
   --parameters @infra/bicep/environments/${ENV}/dev.parameters.json \
   --name forge-${ENV}
@@ -222,7 +222,7 @@ A single command deploys all resources. Bicep resolves inter-module dependencies
 
 ```bash
 az deployment sub create \
-  --location northcentralus \
+  --location westcentralus \
   --template-file infra/bicep/environments/${ENV}/main.bicep \
   --parameters @infra/bicep/environments/${ENV}/dev.parameters.json \
   --name forge-${ENV} \
@@ -248,11 +248,11 @@ Expected output (values will differ by environment):
 computeClusterName:
   value: aks-forge-compute-prod
 computeOidcIssuerUrl:
-  value: https://northcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id>/
+  value: https://westcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id>/
 orchClusterName:
   value: aks-forge-orchestration-prod
 orchOidcIssuerUrl:
-  value: https://northcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id-2>/
+  value: https://westcentralus.oic.prod-aks.azure.com/<tenant-id>/<cluster-id-2>/
 storageAccountName:
   value: forgeadlsprod
 keyVaultUri:

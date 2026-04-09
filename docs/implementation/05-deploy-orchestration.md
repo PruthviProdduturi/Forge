@@ -82,13 +82,19 @@ az keyvault secret set \
 ### Access
 
 ```bash
-# Webserver port-forward
+# Webserver (UI) port-forward
 kubectl port-forward svc/airflow-webserver 8081:8080 \
   -n airflow \
   --context aks-forge-orchestration-prproddu-dev
-
 # Open: http://localhost:8081
-# Login: admin / admin (default dev credentials)
+# Login: Azure AD OAuth2 (AAD group membership determines Airflow role)
+
+# API server port-forward (REST API /api/v2/*)
+kubectl port-forward svc/airflow-api-server 8082:8080 \
+  -n airflow \
+  --context aks-forge-orchestration-prproddu-dev
+# POST http://localhost:8082/auth/token  → JWT
+# GET  http://localhost:8082/api/v2/dags → list DAGs
 ```
 
 ### Verify
@@ -167,16 +173,16 @@ env:
 
 | Property | Value |
 |----------|-------|
-| URL | `http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com` |
-| Login | `admin` / `admin` (local auth, dev only) |
-| Auth mode | Local (Key Vault secret `forge-portal-auth-provider=local`) |
+| URL | `https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com` |
+| Auth mode | Azure AD OAuth2 via `portal-auth-proxy` (Flask + MSAL ConfidentialClientApp) |
+| TLS | cert-manager / Let's Encrypt (ACME HTTP-01 on NGINX ingress) |
 | Values file | `infra/helm/orchestration/portal/values.yaml` |
 
 ### Access
 
 The portal is available publicly at:
 ```
-http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
+https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
 ```
 
 **Portal endpoints:**
@@ -225,7 +231,7 @@ kubectl get pods -n portal --context aks-forge-orchestration-prproddu-dev
 # portal-api-xxx          1/1     Running   0
 # portal-web-xxx          1/1     Running   0
 
-curl -s http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com/api/health
+curl -s https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/health
 # Expected: {"status": "ok", ...}
 ```
 
@@ -347,8 +353,8 @@ env:
 [ ] Portal API pod Running:                kubectl get pods -n portal
 [ ] Portal Web pod Running
 [ ] ingress-nginx controller Running:      kubectl get pods -n ingress-nginx
-[ ] Portal accessible at http://forge-portal-prproddu-dev.northcentralus.cloudapp.azure.com
-[ ] Portal login: admin / admin
+[ ] Portal accessible at https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
+[ ] Portal login: Azure AD OAuth2 (redirects to AAD on first visit)
 [ ] Portal /api/health returns 200
 [ ] Portal /api/pipelines lists DAGs from Airflow
 [ ] Portal /api/status shows both cluster states

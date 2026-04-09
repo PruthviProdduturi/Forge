@@ -62,7 +62,7 @@ Before running any command in this guide:
 ```bash
 # Set once — adjust for your environment
 ENV="prod"                                   # dev | prod
-LOCATION="northcentralus"
+LOCATION="westcentralus"
 LOCATION_SECONDARY="westus2"                 # prod only, for geo-replication
 SUBSCRIPTION_ID=$(az account show --query id -o tsv)
 VNET_RG="rg-forge-platform-${ENV}"
@@ -103,7 +103,7 @@ Expected output:
 ```
 Name           Location         State
 -------------  ---------------  ---------
-rg-forge-acr   northcentralus   Succeeded
+rg-forge-acr   westcentralus   Succeeded
 ```
 
 ---
@@ -139,7 +139,7 @@ az acr create \
 
 - `--admin-enabled false` — The admin account is a shared credential that cannot be audited per-user. Disabled permanently. All access goes through managed identities and service principals.
 - `--public-network-enabled false` — Immediately locks the registry to VNet-only access. The private endpoint created in the next step provides the actual access path.
-- `--zone-redundancy Disabled` — Zone redundancy is not supported in `northcentralus` for ACR. Set to `Enabled` only if deploying to a supported region.
+- `--zone-redundancy Disabled` — Zone redundancy is not supported in `westcentralus` for ACR. Set to `Enabled` only if deploying to a supported region.
 - `--retention-days 365` — Retains tagged images for a minimum of 365 days. Untagged manifests are swept by a separate retention policy.
 
 Retrieve the ACR resource ID (used in subsequent role assignments):
@@ -633,7 +633,7 @@ All resources in this guide are declared in the following Bicep files — refere
 **Deploy shared ACR:**
 ```bash
 az deployment sub create \
-  --location northcentralus \
+  --location westcentralus \
   --template-file infra/bicep/environments/shared/main.bicep \
   --parameters @infra/bicep/environments/shared/shared.parameters.json
 ```
@@ -650,7 +650,7 @@ The Bicep module handles everything covered in Sections 3–8 of this guide decl
 
 Before proceeding to [02-image-builds.md](./02-image-builds.md), verify every item:
 
-- [ ] Resource group `rg-forge-acr{-alias}` exists in `northcentralus`
+- [ ] Resource group `rg-forge-acr{-alias}` exists in `westcentralus`
 - [ ] Registry `forgeacr{alias}` is Premium SKU, admin account disabled
 - [ ] Geo-replication to secondary region is `Succeeded` (prod only)
 - [ ] Public network access is `Disabled`
