@@ -190,7 +190,7 @@ NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUS
 PUBLIC_HOST="${DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 COMPUTE_DNS_LABEL="forge-compute-${_A}${ENV}"
 COMPUTE_PUBLIC_HOST="${COMPUTE_DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
-FORGE_REDIRECT_URI="http://${COMPUTE_PUBLIC_HOST}:8080/oauth2/callback"
+FORGE_REDIRECT_URI="https://${COMPUTE_PUBLIC_HOST}/oauth2/callback"
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +206,7 @@ printf "║  ACR        : %-38s║\n" "${ACR}.azurecr.io"
 printf "║  compute    : %-38s║\n" "$COMPUTE_CLUSTER"
 printf "║  orch       : %-38s║\n" "$ORCH_CLUSTER"
 printf "║  portal URL : %-38s║\n" "https://$PUBLIC_HOST"
-printf "║  trino UI   : %-38s║\n" "http://$COMPUTE_PUBLIC_HOST:8080"
+printf "║  trino UI   : %-38s║\n" "https://$COMPUTE_PUBLIC_HOST"
 printf "║  spark conn : %-38s║\n" "sc://$COMPUTE_PUBLIC_HOST:15002"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
@@ -286,7 +286,7 @@ MSYS_NO_PATHCONV=1 az ad app update --id "$FORGE_CLIENT_ID" \
   --web-redirect-uris \
     "https://${PUBLIC_HOST}/oauth2/callback" \
     "http://localhost:8080/oauth2/callback" \
-    "http://${COMPUTE_PUBLIC_HOST}:8080/oauth2/callback" \
+    "https://${COMPUTE_PUBLIC_HOST}/oauth2/callback" \
   2>/dev/null \
   && echo "    Web redirect URIs registered (portal + Trino auth proxies)" \
   || echo "    WARN: could not set Web redirect URIs — add manually"
@@ -778,7 +778,51 @@ else
     --values "${REPO_ROOT}/infra/helm/compute/ingress-nginx/values.yaml" \
     --set "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=${_DNS_LABEL_COMPUTE}" \
     --wait --timeout 10m
-  echo "    Compute ingress: ${_DNS_LABEL_COMPUTE}.${LOCATION}.cloudapp.azure.com"
+  # Set DNS label and S360 tag on compute cluster public IP (same as orch)
+  COMPUTE_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
+    --context "$COMPUTE_CLUSTER" \
+    --output jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+  NODE_RG_COMPUTE=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$COMPUTE_CLUSTER" \
+    --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
+  if [[ -n "$COMPUTE_EXTERNAL_IP" && -n "$NODE_RG_COMPUTE" ]]; then
+    COMPUTE_PIP_NAME=$(az network public-ip list \
+      --resource-group "$NODE_RG_COMPUTE" \
+      --query "[?ipAddress=='${COMPUTE_EXTERNAL_IP}'].name" -o tsv 2>/dev/null || echo "")
+    if [[ -n "$COMPUTE_PIP_NAME" ]]; then
+      az network public-ip update \
+        --resource-group "$NODE_RG_COMPUTE" \
+        --name "$COMPUTE_PIP_NAME" \
+        --dns-name "$_DNS_LABEL_COMPUTE" \
+        --output none 2>/dev/null || true
+      az network public-ip update \
+        --resource-group "$NODE_RG_COMPUTE" \
+        --name "$COMPUTE_PIP_NAME" \
+        --ip-tags FirstPartyUsage=/NonProd \
+        --output none 2>/dev/null || true
+      echo "    FQDN: ${COMPUTE_PUBLIC_HOST}"
+    fi
+  fi
+  echo "    Done"
+
+  echo "  [6.0.5] cert-manager + Let's Encrypt issuer (compute)..."
+  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
+    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
+  helm upgrade --install cert-manager \
+    "oci://${ACR}.azurecr.io/helm/cert-manager" \
+    --version "v1.17.1" \
+    --namespace cert-manager --create-namespace \
+    --kube-context "$COMPUTE_CLUSTER" \
+    --values "${REPO_ROOT}/infra/helm/compute/cert-manager/values.yaml" \
+    --set "image.repository=${ACR}.azurecr.io/cert-manager-controller" \
+    --set "webhook.image.repository=${ACR}.azurecr.io/cert-manager-webhook" \
+    --set "cainjector.image.repository=${ACR}.azurecr.io/cert-manager-cainjector" \
+    --set "acmesolver.image.repository=${ACR}.azurecr.io/cert-manager-acmesolver" \
+    --set "startupapicheck.image.repository=${ACR}.azurecr.io/cert-manager-startupapicheck" \
+    --wait --timeout 5m
+  kubectl rollout status deployment/cert-manager-webhook -n cert-manager \
+    --context "$COMPUTE_CLUSTER" --timeout=120s 2>/dev/null || true
+  kubectl apply -f "${REPO_ROOT}/infra/helm/compute/cert-manager/letsencrypt-issuer.yaml" \
+    --context "$COMPUTE_CLUSTER"
   echo "    Done"
 
   echo "  [6.1] Hive Metastore..."
@@ -911,6 +955,8 @@ else
     --set "env.trinoBackend=trino:8080" \
     ${TRINO_WI_CLIENT_ID:+--set "env.managedIdentityClientId=${TRINO_WI_CLIENT_ID}"} \
     ${TRINO_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${TRINO_WI_CLIENT_ID}"} \
+    --set "ingress.enabled=true" \
+    --set "ingress.host=${COMPUTE_PUBLIC_HOST}" \
     --wait --timeout 3m
   echo "    Done"
 ) >"$_COMPUTE_LOG" 2>&1 &

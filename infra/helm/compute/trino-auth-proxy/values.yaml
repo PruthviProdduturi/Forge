@@ -1,17 +1,17 @@
 # =============================================================================
 # trino-auth-proxy — Helm Values
 #
-# Access model: kubectl port-forward svc/trino-auth-proxy 8080:8080 -n trino
-# No public IP, no TLS — Azure AD natively permits http://localhost redirect URIs.
+# Access model: https://<compute-host>/ui/  (HTTPS via ingress-nginx + cert-manager)
+# Same pattern as portal-auth-proxy on the orchestration cluster.
 #
 # Deploy:
-#   ./infra/scripts/deploy-auth-proxy.ps1 --env dev --alias prproddu
-#   bash infra/scripts/deploy-auth-proxy.sh --env dev --alias prproddu
+#   bash infra/scripts/forge-up.sh --env dev --alias prproddu
 #
 # Prerequisites:
 #   - K8s secret: proxy-session-secret  (key: session-secret)
 #   - App reg FC: issuer=https://login.microsoftonline.com/<tenant>/v2.0
 #                 subject=<managed identity principalId>
+#   - cert-manager installed on compute cluster with letsencrypt ClusterIssuer
 # =============================================================================
 
 image:
@@ -59,3 +59,20 @@ service:
   port: 8080
   targetPort: 8080
   annotations: {}
+
+# ---------------------------------------------------------------------------
+# Ingress — HTTPS via ingress-nginx + cert-manager/Let's Encrypt
+# Same pattern as portal helm chart.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  # Public hostname — set by forge-up.sh at deploy time.
+  # e.g. forge-compute-prproddudev.westcentralus.cloudapp.azure.com
+  host: ""
+  tls:
+    enabled: true
+    secretName: forge-trino-tls
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"

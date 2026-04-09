@@ -1,10 +1,13 @@
 # =============================================================================
 # ingress-nginx — Helm Values for Forge Compute Cluster
 #
-# Single public IP for all compute services on dedicated ports:
-#   8080  → trino-auth-proxy (Trino UI + API, AAD-protected)
-#   9083  → hive-metastore   (Thrift, TCP proxy)
-#   15002 → spark-connect    (gRPC, TCP proxy)
+# Single public IP for all compute services:
+#   80/443 → trino-auth-proxy (HTTP Ingress, TLS via cert-manager)
+#   9083   → hive-metastore   (Thrift, TCP proxy)
+#   15002  → spark-connect    (gRPC, TCP proxy)
+#
+# Trino is now served via HTTPS Ingress (same pattern as portal) instead of
+# raw TCP port 8080. Access: https://<compute-host>/ui/
 #
 # DNS label set at deploy time via --set:
 #   forge-compute-{alias}-{env}.{region}.cloudapp.azure.com
@@ -53,7 +56,7 @@ controller:
     compute-full-forwarded-for: "true"
 
   admissionWebhooks:
-    enabled: false   # no Ingress resources on compute — only TCP port mapping
+    enabled: false
 
 defaultBackend:
   enabled: true
@@ -65,8 +68,8 @@ defaultBackend:
     - key: CriticalAddonsOnly
       operator: Exists
 
-# TCP services — each port on the LoadBalancer proxied to a ClusterIP service
+# TCP services — raw TCP proxied to ClusterIP services (non-HTTP protocols)
+# Trino UI/API is no longer here — it uses HTTP Ingress (port 80/443) instead.
 tcp:
-  8080: "trino/trino-auth-proxy:8080"
   9083: "hive-metastore/hive-metastore:9083"
   15002: "spark-system/spark-connect:15002"

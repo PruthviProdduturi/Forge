@@ -1,0 +1,54 @@
+# =============================================================================
+# cert-manager — Helm Values (chart v1.17.x) for Forge Compute Cluster
+#
+# Same pattern as infra/helm/orchestration/cert-manager/values.yaml.
+# Provisions TLS certificates automatically via Let's Encrypt HTTP-01 challenge.
+# HTTP-01 requires port 80 to be reachable — satisfied by the ingress-nginx
+# LoadBalancer on the compute cluster.
+# =============================================================================
+
+installCRDs: true
+
+# All images pulled from ACR — Azure Policy blocks quay.io on corp AKS nodes.
+# Repository overridden at deploy time via --set image.repository=forgeacr{alias}.azurecr.io/cert-manager-controller
+image:
+  repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-controller
+  tag: "v1.17.1"
+
+webhook:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-webhook
+    tag: "v1.17.1"
+  nodeSelector:
+    agentpool: systempool
+
+cainjector:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-cainjector
+    tag: "v1.17.1"
+  nodeSelector:
+    agentpool: systempool
+
+acmesolver:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-acmesolver
+    tag: "v1.17.1"
+
+startupapicheck:
+  image:
+    repository: ""   # set at deploy time: forgeacr{alias}.azurecr.io/cert-manager-startupapicheck
+    tag: "v1.17.1"
+  nodeSelector:
+    agentpool: systempool
+
+# Schedule on the compute system pool
+nodeSelector:
+  agentpool: systempool
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "256Mi"
