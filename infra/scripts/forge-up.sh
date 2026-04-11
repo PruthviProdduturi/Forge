@@ -469,8 +469,32 @@ fi
 #   subject: system:serviceaccount:airflow:airflow
 APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
 if [[ -n "$APP_OBJ_ID" ]]; then
-  ORCH_OIDC_ISSUER=$(az aks show --resource-group "$RESOURCE_GROUP" \
-    --name "$ORCH_CLUSTER" --query oidcIssuerProfile.issuerUrl -o tsv 2>/dev/null || echo "")
+  # Pre-flight: verify Graph API write access before attempting any federated credential ops.
+  # Federated credential creation requires Application.ReadWrite.All or Application.ReadWrite.OwnedBy
+  # on the identity running forge-up.sh. Without it, all FC operations silently fail and
+  # auth (Airflow OAuth, Portal proxy, Trino proxy) breaks at runtime.
+  FC_TEST=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+    --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+    2>&1)
+  if echo "$FC_TEST" | grep -qi "Authorization_RequestDenied\|Forbidden\|Insufficient privileges\|does not have permission"; then
+    echo ""
+    echo "ERROR: Cannot manage federated credentials on app registration ${FORGE_CLIENT_ID}."
+    echo "       Grant 'Application.ReadWrite.All' (or OwnedBy) to the identity running forge-up.sh:"
+    echo "       az ad app owner add --id ${FORGE_CLIENT_ID} --owner-object-id <your-object-id>"
+    echo ""
+    exit 1
+  fi
+
+  # Airflow OAuth federated credential.
+  # Retry OIDC issuer fetch — on fresh AKS deploy it can take up to 60s to propagate.
+  ORCH_OIDC_ISSUER=""
+  for _i in 1 2 3 4 5 6; do
+    ORCH_OIDC_ISSUER=$(az aks show --resource-group "$RESOURCE_GROUP" \
+      --name "$ORCH_CLUSTER" --query oidcIssuerProfile.issuerUrl -o tsv 2>/dev/null || echo "")
+    [[ -n "$ORCH_OIDC_ISSUER" ]] && break
+    echo "    Waiting for AKS OIDC issuer (attempt ${_i}/6)..."
+    sleep 15
+  done
   if [[ -n "$ORCH_OIDC_ISSUER" ]]; then
     FC_SUBJECT="system:serviceaccount:airflow:airflow"
     EXISTING_FC=$(MSYS_NO_PATHCONV=1 az rest --method GET \
@@ -480,13 +504,15 @@ if [[ -n "$APP_OBJ_ID" ]]; then
       MSYS_NO_PATHCONV=1 az rest --method POST \
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
         --body "{\"name\":\"airflow-orch-federation\",\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-        --output none 2>/dev/null || echo "    WARN: federated credential creation failed (check app reg permissions)"
-      echo "    Federated credential created: airflow → app reg"
+        --output none 2>/dev/null \
+        && echo "    Federated credential created: airflow → app reg" \
+        || { echo "    ERROR: Failed to create airflow federated credential."; exit 1; }
     else
       echo "    Federated credential already exists: airflow → app reg"
     fi
   else
-    echo "    WARN: could not get orch OIDC issuer — federated credential not configured"
+    echo "    ERROR: AKS OIDC issuer not available after 90s — cannot create airflow federated credential."
+    exit 1
   fi
 fi
 
@@ -496,16 +522,19 @@ fi
 # client_assertion.  The app registration must trust tokens from the portal MI's
 # principalId (sub) issued by login.microsoftonline.com/v2.0 (AAD issuer — not AKS
 # OIDC issuer, which is blocked by tenant policy).
-APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
 PORTAL_MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
   --name "id-forge-portal-${_A}${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
-if [[ -n "$APP_OBJ_ID" && -n "$PORTAL_MI_PRINCIPAL_ID" ]]; then
+if [[ -z "$PORTAL_MI_PRINCIPAL_ID" ]]; then
+  echo "    ERROR: id-forge-portal-${_A}${ENV} MI not found — Bicep provisioning may have failed."
+  exit 1
+fi
+if [[ -n "$APP_OBJ_ID" ]]; then
   FC_ISSUER="https://login.microsoftonline.com/${FORGE_TENANT_ID}/v2.0"
   EXISTING_FC=$(MSYS_NO_PATHCONV=1 az rest --method GET \
     --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
     --query "value[?subject=='${PORTAL_MI_PRINCIPAL_ID}'].id" -o tsv 2>/dev/null || echo "")
   if [[ -z "$EXISTING_FC" ]]; then
-    # Upsert: rename any stale managed-identity-federation entry, or create new
+    # Upsert: update any stale managed-identity-federation entry (from prior env), or create new
     STALE_FC_ID=$(MSYS_NO_PATHCONV=1 az rest --method GET \
       --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
       --query "value[?name=='managed-identity-federation'].id" -o tsv 2>/dev/null || echo "")
@@ -514,15 +543,17 @@ if [[ -n "$APP_OBJ_ID" && -n "$PORTAL_MI_PRINCIPAL_ID" ]]; then
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FC_ID}" \
         --headers "Content-Type=application/json" \
         --body "{\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\"}" \
-        --output none 2>/dev/null || echo "    WARN: could not update managed-identity-federation"
-      echo "    Updated managed-identity-federation subject → portal MI"
+        --output none 2>/dev/null \
+        && echo "    Updated managed-identity-federation subject → portal MI" \
+        || { echo "    ERROR: Failed to update managed-identity-federation."; exit 1; }
     else
       MSYS_NO_PATHCONV=1 az rest --method POST \
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
         --headers "Content-Type=application/json" \
         --body "{\"name\":\"managed-identity-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-        --output none 2>/dev/null || echo "    WARN: could not create managed-identity-federation"
-      echo "    Created managed-identity-federation: portal MI → app reg"
+        --output none 2>/dev/null \
+        && echo "    Created managed-identity-federation: portal MI → app reg" \
+        || { echo "    ERROR: Failed to create managed-identity-federation."; exit 1; }
     fi
   else
     echo "    Federated credential already correct: portal MI → app reg"
@@ -974,11 +1005,26 @@ else
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
         --query "value[?subject=='${MI_PRINCIPAL_ID}'].id" -o tsv 2>/dev/null || echo "")
       if [[ -z "$EXISTING_FED" ]]; then
-        MSYS_NO_PATHCONV=1 az rest --method POST \
+        # Upsert: update any stale forge-trino-mi-federation (from prior env), or create new
+        STALE_FED_ID=$(MSYS_NO_PATHCONV=1 az rest --method GET \
           --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-          --body "{\"name\":\"forge-trino-mi-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-          --output none 2>/dev/null || echo "    WARN: could not create federated credential"
-        echo "    Federated credential created"
+          --query "value[?name=='forge-trino-mi-federation'].id" -o tsv 2>/dev/null || echo "")
+        if [[ -n "$STALE_FED_ID" ]]; then
+          MSYS_NO_PATHCONV=1 az rest --method PATCH \
+            --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FED_ID}" \
+            --headers "Content-Type=application/json" \
+            --body "{\"subject\":\"${MI_PRINCIPAL_ID}\"}" \
+            --output none 2>/dev/null \
+            && echo "    Updated forge-trino-mi-federation subject → trino MI" \
+            || { echo "    ERROR: Failed to update trino federated credential."; exit 1; }
+        else
+          MSYS_NO_PATHCONV=1 az rest --method POST \
+            --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+            --body "{\"name\":\"forge-trino-mi-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+            --output none 2>/dev/null \
+            && echo "    Federated credential created: trino MI → app reg" \
+            || { echo "    ERROR: Failed to create trino federated credential."; exit 1; }
+        fi
       fi
       NODE_RG_COMPUTE=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$COMPUTE_CLUSTER" \
         --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
@@ -1090,7 +1136,8 @@ roleRef:
 RBAC
 
     # Step 2: Wait for RBAC to propagate, then run Jobs
-    sleep 8
+    # 30s covers typical Azure RBAC propagation; 8s was too short on cold starts.
+    sleep 30
 
     # Step 2a: Postgres schema grants — idempotent, safe to re-run.
     # Runs as the Airflow MI (workload identity OIDC) so no engineer credentials
@@ -1214,58 +1261,69 @@ spec:
           command: [python3, -c]
           args:
             - |
-              import urllib.request, urllib.parse, json, os, psycopg2
-              tenant_id = os.environ['AZURE_TENANT_ID']
-              client_id = os.environ['AZURE_CLIENT_ID']
-              with open(os.environ['AZURE_FEDERATED_TOKEN_FILE']) as f:
-                  federated_token = f.read().strip()
-              data = urllib.parse.urlencode({
-                  'grant_type': 'client_credentials',
-                  'client_id': client_id,
-                  'client_assertion': federated_token,
-                  'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-                  'scope': 'https://ossrdbms-aad.database.windows.net/.default',
-              })
-              req = urllib.request.Request(
-                  f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
-                  data=data.encode(), method='POST')
-              token = json.loads(urllib.request.urlopen(req, timeout=15).read())['access_token']
-              pg_host = '${PG_HOST}'
-              airflow_mi = '${AIRFLOW_MI_NAME_CONN}'
-              portal_mi  = '${PORTAL_MI_NAME}'
-              # Step 1: create portal database (connect as Airflow MI to postgres DB)
-              conn = psycopg2.connect(host=pg_host, dbname='postgres',
-                  user=airflow_mi, password=token, sslmode='require')
-              conn.autocommit = True
-              cur = conn.cursor()
-              cur.execute("SELECT 1 FROM pg_database WHERE datname='portal'")
-              if not cur.fetchone():
-                  cur.execute('CREATE DATABASE portal')
-                  print('portal database created', flush=True)
-              else:
-                  print('portal database already exists', flush=True)
-              cur.execute(f'GRANT ALL PRIVILEGES ON DATABASE portal TO "{portal_mi}"')
-              print(f'DB grant done for {portal_mi}', flush=True)
-              conn.close()
-              # Step 2: schema grants inside the portal database
-              conn2 = psycopg2.connect(host=pg_host, dbname='portal',
-                  user=airflow_mi, password=token, sslmode='require')
-              conn2.autocommit = True
-              cur2 = conn2.cursor()
-              cur2.execute(f'GRANT ALL ON SCHEMA public TO "{portal_mi}"')
-              cur2.execute(f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{portal_mi}"')
-              print('Schema grants done', flush=True)
-              conn2.close()
+              import urllib.request, urllib.parse, json, os, sys, psycopg2
+              try:
+                  tenant_id = os.environ['AZURE_TENANT_ID']
+                  client_id = os.environ['AZURE_CLIENT_ID']
+                  with open(os.environ['AZURE_FEDERATED_TOKEN_FILE']) as f:
+                      federated_token = f.read().strip()
+                  data = urllib.parse.urlencode({
+                      'grant_type': 'client_credentials',
+                      'client_id': client_id,
+                      'client_assertion': federated_token,
+                      'client_assertion_type': 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                      'scope': 'https://ossrdbms-aad.database.windows.net/.default',
+                  })
+                  req = urllib.request.Request(
+                      f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token',
+                      data=data.encode(), method='POST')
+                  token = json.loads(urllib.request.urlopen(req, timeout=30).read())['access_token']
+                  print('AAD token acquired', flush=True)
+                  pg_host = '${PG_HOST}'
+                  airflow_mi = '${AIRFLOW_MI_NAME_CONN}'
+                  portal_mi  = '${PORTAL_MI_NAME}'
+                  if not pg_host or not airflow_mi or not portal_mi:
+                      print(f'ERROR: missing config — pg_host={pg_host!r} airflow_mi={airflow_mi!r} portal_mi={portal_mi!r}', flush=True)
+                      sys.exit(1)
+                  # Step 1: create portal database (connect as Airflow MI to postgres DB)
+                  conn = psycopg2.connect(host=pg_host, dbname='postgres',
+                      user=airflow_mi, password=token, sslmode='require',
+                      connect_timeout=15)
+                  conn.autocommit = True
+                  cur = conn.cursor()
+                  cur.execute("SELECT 1 FROM pg_database WHERE datname='portal'")
+                  if not cur.fetchone():
+                      cur.execute('CREATE DATABASE portal')
+                      print('portal database created', flush=True)
+                  else:
+                      print('portal database already exists', flush=True)
+                  cur.execute(f'GRANT ALL PRIVILEGES ON DATABASE portal TO "{portal_mi}"')
+                  print(f'DB grant done for {portal_mi}', flush=True)
+                  conn.close()
+                  # Step 2: schema grants inside the portal database
+                  conn2 = psycopg2.connect(host=pg_host, dbname='portal',
+                      user=airflow_mi, password=token, sslmode='require',
+                      connect_timeout=15)
+                  conn2.autocommit = True
+                  cur2 = conn2.cursor()
+                  cur2.execute(f'GRANT ALL ON SCHEMA public TO "{portal_mi}"')
+                  cur2.execute(f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{portal_mi}"')
+                  print('Schema grants done', flush=True)
+                  conn2.close()
+              except Exception as e:
+                  print(f'ERROR: portal-pg-setup failed: {e}', flush=True)
+                  sys.exit(1)
 PORTALPGJOB
 
       kubectl wait job/portal-pg-setup \
         -n airflow \
         --context "$ORCH_CLUSTER" \
         --for=condition=complete \
-        --timeout=3m \
+        --timeout=5m \
         && echo "    Portal DB setup done" \
-        || { echo "    WARN: portal-pg-setup job failed — theme preferences will fall back to local file."; \
-             echo "    Logs: kubectl logs -n airflow job/portal-pg-setup --context ${ORCH_CLUSTER}"; }
+        || { echo "    ERROR: portal-pg-setup job failed — portal-api will crash without DB access."; \
+             echo "    Logs: kubectl logs -n airflow job/portal-pg-setup --context ${ORCH_CLUSTER}"; \
+             exit 1; }
     fi
 
     # Step 2b: Token-init Job — inject AAD token into airflow-db-credentials
@@ -1356,11 +1414,14 @@ JOB
       -n airflow \
       --context "$ORCH_CLUSTER" \
       --for=condition=complete \
-      --timeout=3m 2>/dev/null \
+      --timeout=5m 2>/dev/null \
       && echo "    MI token injected" \
-      || echo "    WARN: token init job did not complete — check: kubectl logs -n airflow job/airflow-token-init --context ${ORCH_CLUSTER}"
+      || { echo "    ERROR: token-init job failed — Airflow cannot connect to Postgres without AAD token."; \
+           echo "    Logs: kubectl logs -n airflow job/airflow-token-init --context ${ORCH_CLUSTER}"; \
+           exit 1; }
   else
-    echo "    WARN: Airflow MI not found — skipping token pre-injection"
+    echo "    ERROR: Airflow MI not found — cannot inject Postgres token. Bicep provisioning may have failed."
+    exit 1
   fi
 
   # Step 2c: Run airflow db migrate before helm so wait-for-airflow-migrations
