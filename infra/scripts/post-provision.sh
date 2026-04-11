@@ -112,7 +112,7 @@ echo "--- Granting portal MI Cost Management Reader on node RGs"
 _A_VAR="${OWNER_ALIAS:+${OWNER_ALIAS}-}"
 PORTAL_MI_PRINCIPAL=$(az identity show \
   --resource-group "rg-forge-${_A_VAR}${ENVIRONMENT}" \
-  --name "id-forge-portal-${ENVIRONMENT}" \
+  --name "id-forge-portal-${_A_VAR}${ENVIRONMENT}" \
   --query principalId -o tsv 2>/dev/null || echo "")
 
 if [[ -z "$PORTAL_MI_PRINCIPAL" ]]; then

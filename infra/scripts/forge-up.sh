@@ -58,6 +58,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # ---------------------------------------------------------------------------
 ENV="dev"
 ALIAS=""
+LOCATION_ARG=""   # explicit --location override; empty = auto-detect
 SKIP_INFRA=false
 SKIP_BUILD=false
 SKIP_SYNC=false
@@ -100,6 +101,7 @@ while [[ $# -gt 0 ]]; do
     --skip-imports)  SKIP_IMPORTS=true;  shift ;;
     --skip-secrets)      SKIP_SECRETS=true;      shift ;;
     --publish-packages)  PUBLISH_PACKAGES=true;  shift ;;
+    --location)          LOCATION_ARG="$2";      shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -182,8 +184,17 @@ fi
 PG_HOST="${PG_SERVER}.postgres.database.azure.com"
 DNS_LABEL="forge-portal-${_A}${ENV}"
 
-LOCATION=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
-  --query location -o tsv 2>/dev/null || echo "westcentralus")
+# Resolve location: explicit arg > existing RG > existing cluster > westcentralus
+# Checking RG (not cluster) means this works correctly on first deploy too.
+if [[ -n "$LOCATION_ARG" ]]; then
+  LOCATION="$LOCATION_ARG"
+else
+  LOCATION=$(az group show --name "$RESOURCE_GROUP" --query location -o tsv 2>/dev/null || echo "")
+  if [[ -z "$LOCATION" ]]; then
+    LOCATION=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
+      --query location -o tsv 2>/dev/null || echo "westcentralus")
+  fi
+fi
 NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
   --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 
@@ -222,7 +233,7 @@ if [[ -z "$BUILD_ONLY" ]]; then
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_INFRA" == "false" ]]; then
   echo "━━━ [1/8] Provision infrastructure ━━━━━━━━━━━━━━━━━━━━"
-  bash "${SCRIPT_DIR}/provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
+  bash "${SCRIPT_DIR}/provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID" --location "$LOCATION"
 else
   echo "━━━ [1/8] Provision infrastructure — skipped (--skip-infra) ━━━━━━━━━"
   echo "         Refreshing kubeconfigs..."
@@ -244,8 +255,8 @@ if [[ "$SKIP_SECRETS" == "true" ]]; then
     --name "airflow-webserver-key" --query value -o tsv 2>/dev/null || echo "")
   AIRFLOW_MI_NAME_CONN=$(az identity show \
     --resource-group "$RESOURCE_GROUP" \
-    --name "id-forge-airflow-${ENV}" \
-    --query name -o tsv 2>/dev/null || echo "id-forge-airflow-${ENV}")
+    --name "id-forge-airflow-${_A}${ENV}" \
+    --query name -o tsv 2>/dev/null || echo "id-forge-airflow-${_A}${ENV}")
 else
 echo "━━━ [2/8] Seed Key Vault secrets ━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -291,6 +302,48 @@ MSYS_NO_PATHCONV=1 az ad app update --id "$FORGE_CLIENT_ID" \
   && echo "    Web redirect URIs registered (portal + Trino auth proxies)" \
   || echo "    WARN: could not set Web redirect URIs — add manually"
 
+# Expose an API scope so 'az account get-access-token --resource $FORGE_CLIENT_ID'
+# works from the CLI (needed for Trino CLI bearer-token auth).
+# Without this scope, Azure AD returns AADSTS650057 because the app has no
+# permissions exposed and the token endpoint rejects the resource request.
+# The scope UUID is fixed so re-runs are idempotent.
+# Set identifierUri so 'az account get-access-token --resource api://$FORGE_CLIENT_ID' works.
+# Without identifierUris, Azure AD returns AADSTS650057 ("List of valid resources: empty")
+# even when oauth2PermissionScopes are present.
+FORGE_IDENTIFIER_URI="api://${FORGE_CLIENT_ID}"
+EXISTING_URI=$(az ad app show --id "$FORGE_CLIENT_ID" \
+  --query "identifierUris[?@=='${FORGE_IDENTIFIER_URI}']" -o tsv 2>/dev/null || echo "")
+if [[ -z "$EXISTING_URI" ]]; then
+  MSYS_NO_PATHCONV=1 az ad app update --id "$FORGE_CLIENT_ID" \
+    --identifier-uris "$FORGE_IDENTIFIER_URI" \
+    2>/dev/null \
+    && echo "    identifierUri set: ${FORGE_IDENTIFIER_URI} (enables az account get-access-token)" \
+    || echo "    WARN: could not set identifierUri — add api://${FORGE_CLIENT_ID} manually"
+else
+  echo "    identifierUri already set: ${FORGE_IDENTIFIER_URI}"
+fi
+
+# Expose API scope 'access' on the app registration (required alongside identifierUri).
+FORGE_API_SCOPE_ID="7d2e8f1a-3b4c-5d6e-7f8a-9b0c1d2e3f4a"
+EXISTING_SCOPE=$(az ad app show --id "$FORGE_CLIENT_ID" \
+  --query "api.oauth2PermissionScopes[?value=='access'].id" -o tsv 2>/dev/null || echo "")
+if [[ -z "$EXISTING_SCOPE" ]]; then
+  APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv)
+  EXISTING_SCOPES_JSON=$(az ad app show --id "$FORGE_CLIENT_ID" \
+    --query "api.oauth2PermissionScopes" -o json 2>/dev/null || echo "[]")
+  NEW_SCOPE="{\"adminConsentDescription\":\"Access Forge\",\"adminConsentDisplayName\":\"Access Forge\",\"id\":\"${FORGE_API_SCOPE_ID}\",\"isEnabled\":true,\"type\":\"User\",\"userConsentDescription\":\"Access Forge\",\"userConsentDisplayName\":\"Access Forge\",\"value\":\"access\"}"
+  MERGED=$(echo "$EXISTING_SCOPES_JSON" | python3 -c "import sys,json; scopes=json.load(sys.stdin); scopes.append(json.loads('${NEW_SCOPE}')); print(json.dumps(scopes))")
+  MSYS_NO_PATHCONV=1 az rest --method PATCH \
+    --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}" \
+    --headers "Content-Type=application/json" \
+    --body "{\"api\":{\"oauth2PermissionScopes\":${MERGED}}}" \
+    2>/dev/null \
+    && echo "    API scope 'access' exposed on app registration" \
+    || echo "    WARN: could not expose API scope — add manually via app registration manifest"
+else
+  echo "    API scope 'access' already present on app registration"
+fi
+
 # No Airflow DB password — Postgres is AAD-only. Airflow pods authenticate
 # via workload identity token (see Phase 3 and Airflow Helm values).
 
@@ -325,7 +378,7 @@ echo "━━━ [3/8] Configure Postgres (Airflow schema grants) ━━━━━
 
 AIRFLOW_MI_NAME=$(az identity show \
   --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-airflow-${ENV}" \
+  --name "id-forge-airflow-${_A}${ENV}" \
   --query name -o tsv 2>/dev/null || echo "")
 
 if [[ "$SKIP_PG_GRANTS" == "true" ]]; then
@@ -352,8 +405,8 @@ echo "━━━ [4/8] Create Kubernetes secrets ━━━━━━━━━━�
 # startup (see infra/helm/orchestration/airflow/values.yaml extraInitContainers).
 AIRFLOW_MI_NAME_CONN=$(az identity show \
   --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-airflow-${ENV}" \
-  --query name -o tsv 2>/dev/null || echo "id-forge-airflow-${ENV}")
+  --name "id-forge-airflow-${_A}${ENV}" \
+  --query name -o tsv 2>/dev/null || echo "id-forge-airflow-${_A}${ENV}")
 AIRFLOW_DB_CONN="postgresql+psycopg2://${AIRFLOW_MI_NAME_CONN}@${PG_HOST}/airflow?sslmode=require"
 
 # Ensure airflow namespace exists before creating secrets
@@ -445,7 +498,7 @@ fi
 # OIDC issuer, which is blocked by tenant policy).
 APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
 PORTAL_MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-  --name "id-forge-portal-${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
+  --name "id-forge-portal-${_A}${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
 if [[ -n "$APP_OBJ_ID" && -n "$PORTAL_MI_PRINCIPAL_ID" ]]; then
   FC_ISSUER="https://login.microsoftonline.com/${FORGE_TENANT_ID}/v2.0"
   EXISTING_FC=$(MSYS_NO_PATHCONV=1 az rest --method GET \
@@ -478,7 +531,7 @@ fi
 
 # Assign id-forge-portal-{env} MI to orch cluster VMSS nodes so IMDS works from
 # portal-auth-proxy pods (same pattern as id-forge-trino-{env} on compute VMSS).
-PORTAL_MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-portal-${ENV}"
+PORTAL_MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-portal-${_A}${ENV}"
 NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUSTER" \
   --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 if [[ -n "$NODE_RG_ORCH" ]]; then
@@ -550,6 +603,8 @@ echo "━━━ [5/8] Build and push images to ACR (parallel) ━━━━━━
 echo "  Opening ACR public access..."
 az acr update --name "$ACR" --public-network-enabled true --default-action Allow --output none
 _ACR_OPENED=true
+# Wait for firewall rule to propagate before attempting login
+sleep 10
 
 _close_acr() {
   if [[ "${_ACR_OPENED:-false}" == "true" ]]; then
@@ -762,9 +817,9 @@ else
   set -euo pipefail
 
   HMS_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-    --name "id-forge-hms-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+    --name "id-forge-hms-${_A}${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
   TRINO_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-    --name "id-forge-trino-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+    --name "id-forge-trino-${_A}${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
   HMS_HOST=$(az keyvault secret show --vault-name "$KV_NAME" \
     --name "hms-postgres-host" --query value -o tsv 2>/dev/null || echo "$PG_HOST")
 
@@ -843,10 +898,10 @@ else
     --set "image.repository=${ACR}.azurecr.io/hive-metastore" \
     --set "image.tag=${HMS_TAG}" \
     --set "db.host=${HMS_HOST}" \
-    --set "db.user=id-forge-hms-${ENV}" \
+    --set "db.user=id-forge-hms-${_A}${ENV}" \
     --set "adls.account=${ADLS_ACCOUNT}" \
     ${HMS_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${HMS_WI_CLIENT_ID}"} \
-    --wait --timeout 5m
+    --wait --timeout 10m
   echo "    Done"
 
   echo "  [6.2] Spark Operator..."
@@ -910,7 +965,7 @@ else
 
   echo "  [6.5] Trino Auth Proxy..."
   MI_PRINCIPAL_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-    --name "id-forge-trino-${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
+    --name "id-forge-trino-${_A}${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
   if [[ -n "$MI_PRINCIPAL_ID" ]]; then
     APP_OBJ_ID=$(az ad app show --id "$FORGE_CLIENT_ID" --query id -o tsv 2>/dev/null || echo "")
     if [[ -n "$APP_OBJ_ID" ]]; then
@@ -932,7 +987,7 @@ else
           --query "[?contains(name,'trino')].name" -o tsv 2>/dev/null || \
           az vmss list --resource-group "$NODE_RG_COMPUTE" --query "[0].name" -o tsv 2>/dev/null || echo "")
         if [[ -n "$VMSS_NAME" ]]; then
-          MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-trino-${ENV}"
+          MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-trino-${_A}${ENV}"
           MSYS_NO_PATHCONV=1 az vmss identity assign \
             --resource-group "$NODE_RG_COMPUTE" \
             --name "$VMSS_NAME" \
@@ -973,9 +1028,9 @@ else
   set -euo pipefail
 
   PORTAL_MI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-    --name "id-forge-portal-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+    --name "id-forge-portal-${_A}${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
   AIRFLOW_WI_CLIENT_ID=$(az identity show --resource-group "$RESOURCE_GROUP" \
-    --name "id-forge-airflow-${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
+    --name "id-forge-airflow-${_A}${ENV}" --query clientId -o tsv 2>/dev/null || echo "")
 
   # ── Pre-flight: inject AAD token into airflow-db-credentials ──────────────
   # migrateDatabaseJob and wait-for-airflow-migrations both need a live Postgres
@@ -1131,7 +1186,7 @@ PGJOB
     # Step 2c: Portal Postgres setup — create `portal` DB and grant portal-api MI access.
     # Runs under the Airflow SA (which already has Postgres admin privileges from Bicep).
     # Idempotent: CREATE DATABASE IF NOT EXISTS + GRANT are safe to re-run.
-    PORTAL_MI_NAME="id-forge-portal-${ENV}"
+    PORTAL_MI_NAME="id-forge-portal-${_A}${ENV}"
     if [[ "$SKIP_PG_GRANTS" == "true" ]]; then
       echo "  Skipped portal DB setup (--skip-pg-grants)"
     else
@@ -1311,6 +1366,8 @@ JOB
   # Step 2c: Run airflow db migrate before helm so wait-for-airflow-migrations
   # passes immediately. migrateDatabaseJob is disabled in values.yaml — this Job
   # gives us a controlled timeout and clear error output.
+  # Uses serviceAccountName: default — no workload identity needed, only reads the
+  # airflow-db-credentials K8s secret (token already injected by token-init job above).
   echo "  [7.0] Running airflow db migrate (pre-helm)..."
   kubectl delete job/airflow-migrate -n airflow --context "$ORCH_CLUSTER" --ignore-not-found 2>/dev/null || true
   kubectl apply --context "$ORCH_CLUSTER" -f - <<MIGJOB
@@ -1323,7 +1380,7 @@ spec:
   ttlSecondsAfterFinished: 300
   template:
     spec:
-      serviceAccountName: airflow
+      serviceAccountName: default
       restartPolicy: Never
       containers:
         - name: migrate
@@ -1500,10 +1557,10 @@ MIGJOB
     --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
     --set "ingress.host=${PUBLIC_HOST}" \
     --set "api.env.pgHost=${PG_HOST}" \
-    --set "api.env.pgUser=id-forge-portal-${ENV}" \
+    --set "api.env.pgUser=id-forge-portal-${_A}${ENV}" \
     --set "api.env.computeRg=rg-mc-compute-${_A}${ENV}" \
     --set "api.env.orchRg=rg-mc-orch-${_A}${ENV}" \
-    --wait --timeout 5m
+    --wait --timeout 10m
   # Force repull of portal images even when tags are stable (image tag :1.0 is
   # a moving target — new ACR pushes don't trigger Kubernetes restarts otherwise)
   kubectl rollout restart deployment/portal-web deployment/portal-api deployment/portal-auth-proxy \

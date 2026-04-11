@@ -77,7 +77,7 @@ RUN mkdir /tmp/mvn-deps && \
     echo '    <dependency>'                                                                        >> /tmp/mvn-deps/pom.xml && \
     echo '      <groupId>com.azure</groupId>'                                                      >> /tmp/mvn-deps/pom.xml && \
     echo '      <artifactId>azure-core-http-okhttp</artifactId>'                                   >> /tmp/mvn-deps/pom.xml && \
-    echo '      <version>1.11.17</version>'                                                        >> /tmp/mvn-deps/pom.xml && \
+    echo '      <version>1.11.17</version>'                                                       >> /tmp/mvn-deps/pom.xml && \
     echo '    </dependency>'                                                                       >> /tmp/mvn-deps/pom.xml && \
     echo '  </dependencies>'                                                                       >> /tmp/mvn-deps/pom.xml && \
     echo '</project>'                                                                              >> /tmp/mvn-deps/pom.xml && \

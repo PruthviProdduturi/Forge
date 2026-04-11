@@ -48,9 +48,14 @@ data:
         <value>{{ .Values.service.port }}</value>
       </property>
 
-      <!-- Default warehouse on ADLS (path pointer only) -->
+      <!-- Warehouse dir: local path so HMS does not try to initialise ABFS on startup.
+           HMS is a pure metadata store — it writes table metadata to Postgres and stores
+           LOCATION strings as-is. Spark/Trino access ADLS directly with their own creds;
+           HMS never reads from the warehouse dir itself. External tables always supply an
+           explicit abfss:// LOCATION, so this default is only used for managed tables
+           (which we avoid). A local path eliminates the azure-identity classpath dependency. -->
       <property>
         <name>hive.metastore.warehouse.dir</name>
-        <value>abfss://silver@{{ .Values.adls.account }}.dfs.core.windows.net/</value>
+        <value>file:///opt/hive/data/warehouse</value>
       </property>
     </configuration>

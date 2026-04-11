@@ -13,6 +13,12 @@ param location string
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
+@description('Owner alias for resource naming (e.g. prproddu). Empty string for shared/unscoped environments.')
+param ownerAlias string = ''
+
+// Alias suffix: '-prproddu' when set, '' when blank
+var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
+
 // ---------------------------------------------------------------------------
 // Address space — dev uses 10.x.x.x, prod uses 10.1x.x.x
 // ---------------------------------------------------------------------------
@@ -46,7 +52,7 @@ var orchPodCidr = '10.101.0.0/16'
 // S360: Network activity audit trail. All NSGs send diagnostic logs here.
 // ---------------------------------------------------------------------------
 resource platformLaw 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
-  name: 'law-forge-platform-${environment}'
+  name: 'law-forge-platform${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -77,7 +83,7 @@ resource platformLaw 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 // rules for every pod CIDR combination and fights against AKS networking.
 // ---------------------------------------------------------------------------
 resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
-  name: 'nsg-forge-compute-${environment}'
+  name: 'nsg-forge-compute${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -257,7 +263,7 @@ resource nsgCompute 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
 // No deny-all at the end; implicit 65500 + NRMS handle anything not matched.
 // ---------------------------------------------------------------------------
 resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
-  name: 'nsg-forge-orchestration-${environment}'
+  name: 'nsg-forge-orchestration${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -438,7 +444,7 @@ resource nsgOrchestration 'Microsoft.Network/networkSecurityGroups@2023-11-01' =
 // NSG — Private Endpoints Subnet
 // ---------------------------------------------------------------------------
 resource nsgPrivateEndpoints 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
-  name: 'nsg-forge-private-endpoints-${environment}'
+  name: 'nsg-forge-private-endpoints${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -532,7 +538,7 @@ resource nsgPrivateEndpoints 'Microsoft.Network/networkSecurityGroups@2023-11-01
 // Allows inbound 5432 from compute subnet only (HMS pods).
 // ---------------------------------------------------------------------------
 resource nsgPostgres 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
-  name: 'nsg-forge-postgres-${environment}'
+  name: 'nsg-forge-postgres${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -611,7 +617,7 @@ resource nsgPostgres 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
 //   4. Remove the AllowInternetOutbound NSG rules (no longer needed)
 // ---------------------------------------------------------------------------
 resource rtCompute 'Microsoft.Network/routeTables@2023-11-01' = {
-  name: 'rt-forge-compute-${environment}'
+  name: 'rt-forge-compute${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -620,7 +626,7 @@ resource rtCompute 'Microsoft.Network/routeTables@2023-11-01' = {
 }
 
 resource rtOrchestration 'Microsoft.Network/routeTables@2023-11-01' = {
-  name: 'rt-forge-orchestration-${environment}'
+  name: 'rt-forge-orchestration${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -632,7 +638,7 @@ resource rtOrchestration 'Microsoft.Network/routeTables@2023-11-01' = {
 // Virtual Network with all subnets
 // ---------------------------------------------------------------------------
 resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
-  name: 'vnet-forge-${environment}'
+  name: 'vnet-forge${aliasSuffix}-${environment}'
   location: location
   tags: tags
   properties: {
@@ -641,7 +647,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
     }
     subnets: [
       {
-        name: 'snet-forge-compute-${environment}'
+        name: 'snet-forge-compute${aliasSuffix}-${environment}'
         properties: {
           addressPrefix: addressPrefixes.compute
           networkSecurityGroup: {
@@ -654,7 +660,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
         }
       }
       {
-        name: 'snet-forge-orchestration-${environment}'
+        name: 'snet-forge-orchestration${aliasSuffix}-${environment}'
         properties: {
           addressPrefix: addressPrefixes.orchestration
           networkSecurityGroup: {
@@ -667,7 +673,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
         }
       }
       {
-        name: 'snet-forge-private-endpoints-${environment}'
+        name: 'snet-forge-private-endpoints${aliasSuffix}-${environment}'
         properties: {
           addressPrefix: addressPrefixes.privateEndpoints
           networkSecurityGroup: {
@@ -678,7 +684,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
         }
       }
       {
-        name: 'snet-forge-postgres-${environment}'
+        name: 'snet-forge-postgres${aliasSuffix}-${environment}'
         properties: {
           addressPrefix: addressPrefixes.postgres
           networkSecurityGroup: {
@@ -766,7 +772,7 @@ resource dnsZoneAgentsvc 'Microsoft.Network/privateDnsZones@2020-06-01' = {
 // ---------------------------------------------------------------------------
 resource vnetLinkDfs 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneDfs
-  name: 'link-dfs-${environment}'
+  name: 'link-dfs${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -778,7 +784,7 @@ resource vnetLinkDfs 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020
 
 resource vnetLinkBlob 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneBlob
-  name: 'link-blob-${environment}'
+  name: 'link-blob${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -790,7 +796,7 @@ resource vnetLinkBlob 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@202
 
 resource vnetLinkVault 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneVault
-  name: 'link-vault-${environment}'
+  name: 'link-vault${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -802,7 +808,7 @@ resource vnetLinkVault 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@20
 
 resource vnetLinkAcr 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneAcr
-  name: 'link-acr-${environment}'
+  name: 'link-acr${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -814,7 +820,7 @@ resource vnetLinkAcr 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020
 
 resource vnetLinkPostgres 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZonePostgres
-  name: 'link-postgres-${environment}'
+  name: 'link-postgres${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -826,7 +832,7 @@ resource vnetLinkPostgres 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
 
 resource vnetLinkMonitor 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneMonitor
-  name: 'link-monitor-${environment}'
+  name: 'link-monitor${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -838,7 +844,7 @@ resource vnetLinkMonitor 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@
 
 resource vnetLinkOms 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneOms
-  name: 'link-oms-${environment}'
+  name: 'link-oms${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -850,7 +856,7 @@ resource vnetLinkOms 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020
 
 resource vnetLinkOds 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneOds
-  name: 'link-ods-${environment}'
+  name: 'link-ods${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -862,7 +868,7 @@ resource vnetLinkOds 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020
 
 resource vnetLinkAgentsvc 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
   parent: dnsZoneAgentsvc
-  name: 'link-agentsvc-${environment}'
+  name: 'link-agentsvc${aliasSuffix}-${environment}'
   location: 'global'
   properties: {
     virtualNetwork: {
@@ -881,7 +887,7 @@ resource vnetLinkAgentsvc 'Microsoft.Network/privateDnsZones/virtualNetworkLinks
 //   az network watcher flow-log create --nsg <nsg-id> --storage-account <id>
 // ---------------------------------------------------------------------------
 resource nsgComputeDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-nsg-compute-${environment}'
+  name: 'diag-nsg-compute${aliasSuffix}-${environment}'
   scope: nsgCompute
   properties: {
     workspaceId: platformLaw.id
@@ -899,7 +905,7 @@ resource nsgComputeDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01
 }
 
 resource nsgOrchestrationDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-nsg-orchestration-${environment}'
+  name: 'diag-nsg-orchestration${aliasSuffix}-${environment}'
   scope: nsgOrchestration
   properties: {
     workspaceId: platformLaw.id
@@ -917,7 +923,7 @@ resource nsgOrchestrationDiagnostics 'Microsoft.Insights/diagnosticSettings@2021
 }
 
 resource nsgPrivateEndpointsDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-nsg-pe-${environment}'
+  name: 'diag-nsg-pe${aliasSuffix}-${environment}'
   scope: nsgPrivateEndpoints
   properties: {
     workspaceId: platformLaw.id
@@ -943,10 +949,10 @@ output vnetId string = vnet.id
 output vnetName string = vnet.name
 
 output subnetIds object = {
-  compute: '${vnet.id}/subnets/snet-forge-compute-${environment}'
-  orchestration: '${vnet.id}/subnets/snet-forge-orchestration-${environment}'
-  privateEndpoints: '${vnet.id}/subnets/snet-forge-private-endpoints-${environment}'
-  postgres: '${vnet.id}/subnets/snet-forge-postgres-${environment}'
+  compute: '${vnet.id}/subnets/snet-forge-compute${aliasSuffix}-${environment}'
+  orchestration: '${vnet.id}/subnets/snet-forge-orchestration${aliasSuffix}-${environment}'
+  privateEndpoints: '${vnet.id}/subnets/snet-forge-private-endpoints${aliasSuffix}-${environment}'
+  postgres: '${vnet.id}/subnets/snet-forge-postgres${aliasSuffix}-${environment}'
 }
 
 output privateDnsZoneIds object = {
@@ -964,7 +970,7 @@ output privateDnsZoneIds object = {
 output platformLogAnalyticsWorkspaceId string = platformLaw.id
 
 resource nsgPostgresDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-nsg-postgres-${environment}'
+  name: 'diag-nsg-postgres${aliasSuffix}-${environment}'
   scope: nsgPostgres
   properties: {
     workspaceId: platformLaw.id

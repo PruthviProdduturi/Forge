@@ -38,6 +38,11 @@ param namespaces object = {
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
+@description('Owner alias for resource naming (e.g. prproddu). Empty string for shared/unscoped environments.')
+param ownerAlias string = ''
+
+var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
+
 // ---------------------------------------------------------------------------
 // Role definition resource IDs (built-in)
 // ---------------------------------------------------------------------------
@@ -93,7 +98,7 @@ resource keyVaultRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (keyVa
 // Managed Identity — spark
 // ---------------------------------------------------------------------------
 resource idSpark 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-spark-${environment}'
+  name: 'id-forge-spark${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }
@@ -176,7 +181,7 @@ resource sparkGoldContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 // Managed Identity — trino
 // ---------------------------------------------------------------------------
 resource idTrino 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-trino-${environment}'
+  name: 'id-forge-trino${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }
@@ -218,7 +223,7 @@ resource trinoGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 // Managed Identity — airflow
 // ---------------------------------------------------------------------------
 resource idAirflow 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-airflow-${environment}'
+  name: 'id-forge-airflow${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }
@@ -260,7 +265,7 @@ resource airflowCodeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' 
 // Managed Identity — dq (Data Quality)
 // ---------------------------------------------------------------------------
 resource idDq 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-dq-${environment}'
+  name: 'id-forge-dq${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }
@@ -324,7 +329,7 @@ resource dqGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 // Managed Identity — portal
 // ---------------------------------------------------------------------------
 resource idPortal 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-portal-${environment}'
+  name: 'id-forge-portal${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }
@@ -370,7 +375,7 @@ resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' =
 // No storage RBAC: HMS does not read/write ADLS data directly.
 // ---------------------------------------------------------------------------
 resource idHms 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
-  name: 'id-forge-hms-${environment}'
+  name: 'id-forge-hms${aliasSuffix}-${environment}'
   location: location
   tags: tags
 }

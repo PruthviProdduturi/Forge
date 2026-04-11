@@ -24,12 +24,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ENVIRONMENT="dev"
 OWNER_ALIAS=""
 SUBSCRIPTION=""
+LOCATION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --env)   ENVIRONMENT="$2";  shift 2 ;;
-    --alias) OWNER_ALIAS="$2";  shift 2 ;;
-    --sub)   SUBSCRIPTION="$2"; shift 2 ;;
+    --env)      ENVIRONMENT="$2";  shift 2 ;;
+    --alias)    OWNER_ALIAS="$2";  shift 2 ;;
+    --sub)      SUBSCRIPTION="$2"; shift 2 ;;
+    --location) LOCATION="$2";     shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -47,11 +49,27 @@ echo "=== Forge provision-infra ========================================"
 echo "  subscription : $SUBSCRIPTION"
 echo "  environment  : $ENVIRONMENT"
 echo "  alias        : $OWNER_ALIAS"
+echo "  location     : $LOCATION"
 echo "  template     : $TEMPLATE"
 echo "  deployment   : $DEPLOYMENT_NAME"
 echo "========================================================="
 
 az account set --subscription "$SUBSCRIPTION"
+
+# ---------------------------------------------------------------------------
+# Resolve location — explicit arg > existing RG > default westcentralus
+# Prevents "InvalidResourceGroupLocation" when an RG already exists from a
+# prior (possibly partial) deploy in a different region.
+# ---------------------------------------------------------------------------
+if [[ -z "$LOCATION" ]]; then
+  _MAIN_RG="rg-forge-${OWNER_ALIAS:+${OWNER_ALIAS}-}${ENVIRONMENT}"
+  LOCATION=$(az group show --name "$_MAIN_RG" --query location -o tsv 2>/dev/null || echo "")
+  if [[ -z "$LOCATION" ]]; then
+    LOCATION="westcentralus"
+  else
+    echo "    Detected existing resource group '${_MAIN_RG}' in ${LOCATION} — using that location."
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # 0. Shared ACR — idempotent, runs before main Bicep
@@ -80,10 +98,11 @@ if [[ -n "$ACR_EXISTS" ]]; then
 else
   echo "    Creating ${ACR_RG} and ${ACR_NAME}..."
   az deployment sub create \
-    --location westcentralus \
+    --location "$LOCATION" \
     --template-file "$SHARED_TEMPLATE" \
     --parameters "@${SHARED_PARAMS}" \
     --parameters "ownerAlias=${OWNER_ALIAS}" \
+    --parameters "location=${LOCATION}" \
     --name "forge-shared-${OWNER_ALIAS:-shared}-$(date +%Y%m%d%H%M)"
   echo "    Done."
 fi
@@ -94,9 +113,11 @@ fi
 echo ""
 echo "--- [1/7 sub 1/2] Bicep (Azure resource provisioning)"
 az deployment sub create \
-  --location westcentralus \
+  --location "$LOCATION" \
   --template-file "$TEMPLATE" \
   --parameters "@${PARAMS}" \
+  --parameters "location=${LOCATION}" \
+  ${OWNER_ALIAS:+--parameters "ownerAlias=${OWNER_ALIAS}"} \
   --name "$DEPLOYMENT_NAME"
 
 echo ""

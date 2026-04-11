@@ -64,12 +64,16 @@ param tags object = {}
 // ---------------------------------------------------------------------------
 var aliasSuffix = ownerAlias != '' ? '-${ownerAlias}' : ''
 
-// Shared ACR resource ID — derived from ownerAlias to match shared/main.bicep naming
-var acrRegistryName = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr'
+// Shared ACR resource ID — must match shared/main.bicep naming exactly.
+// When alias is blank, subscription ID suffix ensures global uniqueness.
+var subSuffix       = substring(replace(subscription().subscriptionId, '-', ''), 0, 8)
+var acrRegistryName = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr${subSuffix}'
 var acrRgName       = ownerAlias != '' ? 'rg-forge-acr-${ownerAlias}' : 'rg-forge-acr'
 
-var storageAccountName = 'forgeadls${ownerAlias}${environment}'
-var keyVaultName       = 'kv-forge${aliasSuffix}-${environment}'
+// All globally unique names use sub suffix when alias is blank (ACR pattern)
+var storageAccountName = ownerAlias != '' ? 'forgeadls${ownerAlias}${environment}' : 'forgeadls${subSuffix}${environment}'
+var keyVaultName       = ownerAlias != '' ? 'kv-forge-${ownerAlias}-${environment}' : 'kv-forge-${subSuffix}-${environment}'
+var postgresServerName = ownerAlias != '' ? 'psql-forge-${ownerAlias}-${environment}' : 'psql-forge-${subSuffix}-${environment}'
 
 // Resource group names — 2 RGs per environment
 var rgPlatform = 'rg-forge-platform${aliasSuffix}-${environment}'
@@ -108,6 +112,7 @@ module networking '../../modules/networking.bicep' = {
     environment: environment
     location: location
     tags: mergedTags
+    ownerAlias: ownerAlias
   }
 }
 
@@ -267,6 +272,7 @@ module identity '../../modules/identity.bicep' = {
   params: {
     environment: environment
     location: location
+    ownerAlias: ownerAlias
     computeOidcIssuerUrl: computeCluster.outputs.oidcIssuerUrl
     orchestrationOidcIssuerUrl: orchCluster.outputs.oidcIssuerUrl
     storageAccountId: storage.outputs.storageAccountId

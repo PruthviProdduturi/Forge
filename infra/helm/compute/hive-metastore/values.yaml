@@ -23,7 +23,7 @@
 image:
   repository: forgeacr.azurecr.io/hive-metastore
   tag: "4.0.0"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # ----------------------------------------------------------------------------
 # PostgreSQL connection — host and user set at deploy time from Key Vault / CLI

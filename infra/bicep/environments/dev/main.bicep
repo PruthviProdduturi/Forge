@@ -156,6 +156,7 @@ module networking '../../modules/networking.bicep' = {
     environment: environment
     location: location
     tags: mergedTags
+    ownerAlias: ownerAlias
   }
 }
 
@@ -324,6 +325,7 @@ module identity '../../modules/identity.bicep' = {
   params: {
     environment: environment
     location: location
+    ownerAlias: ownerAlias
     computeOidcIssuerUrl: computeCluster.outputs.oidcIssuerUrl
     orchestrationOidcIssuerUrl: orchCluster.outputs.oidcIssuerUrl
     storageAccountId: storage.outputs.storageAccountId
