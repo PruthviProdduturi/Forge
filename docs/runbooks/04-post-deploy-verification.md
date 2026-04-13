@@ -32,9 +32,9 @@ Get the Airflow managed identity name:
 ```bash
 az identity show \
   --resource-group rg-forge-prproddu-dev \
-  --name id-forge-airflow-dev \
+  --name id-forge-airflow-prproddu-dev \
   --query name -o tsv
-# Expected: id-forge-airflow-dev
+# Expected: id-forge-airflow-prproddu-dev
 ```
 
 Spin up a Postgres client pod inside the orchestration cluster:
@@ -55,7 +55,7 @@ TOKEN=$(curl -s \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
 PG_HOST="psql-forge-prproddu-dev.postgres.database.azure.com"
-MI_NAME="id-forge-airflow-dev"
+MI_NAME="id-forge-airflow-prproddu-dev"
 
 # Grant database-level access
 PGPASSWORD="$TOKEN" psql \
@@ -160,25 +160,34 @@ If you see `403 Forbidden` → check RBAC role assignments on the storage accoun
 
 ## Step 4 — Trino Query
 
-Port-forward the Trino auth proxy and run a test query:
+Verify Trino is reachable via HTTPS and can execute queries.
 
 ```bash
-# Terminal 1 — leave running
-kubectl port-forward svc/trino-auth-proxy 8080:8080 \
-  -n trino --context aks-forge-compute-prproddu-dev
-```
+# Get a Bearer token (uses your existing az login session)
+TOKEN=$(az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv)
 
-```bash
-# Terminal 2
-curl -s http://localhost:8080/v1/statement \
-  -H "X-Trino-User: prproddu" \
+# Submit a query and poll for results
+QUERY_URL=$(curl -s -X POST \
+  https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com/v1/statement \
+  -H "Authorization: Bearer $TOKEN" \
   -H "X-Trino-Catalog: system" \
   -H "X-Trino-Schema: runtime" \
   -d "SELECT node_id, state FROM system.runtime.nodes" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('nextUri',''))")
+
+# Poll once for results
+curl -s "$QUERY_URL" -H "Authorization: Bearer $TOKEN" \
   | python3 -m json.tool | grep -E "nodeId|state"
 ```
 
-**Expected:** One coordinator node `state: active`.
+Or use the Trino CLI:
+```bash
+trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com \
+      --access-token="$TOKEN" \
+      --execute="SELECT node_id, state FROM system.runtime.nodes"
+```
+
+**Expected:** One coordinator node with `state: active`.
 
 ---
 

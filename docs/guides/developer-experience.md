@@ -11,6 +11,7 @@
 1. [Cluster Access Setup (AAD)](#1-cluster-access-setup-aad)
 2. [VS Code Setup](#2-vs-code-setup)
 3. [Spark Connect Development](#3-spark-connect-development)
+   - [3.5 Trino CLI](#35-trino-cli)
 4. [Airflow DAG Development](#4-airflow-dag-development)
 5. [DQ Rule Authoring](#5-dq-rule-authoring)
 6. [End-to-End Pipeline Workflow](#6-end-to-end-pipeline-workflow)
@@ -453,6 +454,71 @@ az storage blob upload \
 ```
 
 The Airflow DAG references this path directly in the `SparkApplication` CRD definition (see DAG Development section).
+
+---
+
+## 3.5 Trino CLI
+
+Trino is exposed over HTTPS via the Trino auth proxy. The proxy validates your Azure AD Bearer token, extracts your email, and injects `X-Trino-User` for all queries — no separate username needed.
+
+### Prerequisites
+
+- [Trino CLI](https://trino.io/docs/current/client/cli.html) (`trino` on PATH)
+- Azure CLI logged in (`az login`)
+
+### Connect
+
+```powershell
+# 1. Get a Bearer token (uses your existing az login session — no extra consent needed)
+$token = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
+
+# 2. Connect
+trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com `
+      --access-token="$token" `
+      --catalog=hive
+```
+
+```bash
+# bash / WSL
+TOKEN=$(az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv)
+trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com \
+      --access-token="$TOKEN" \
+      --catalog=hive
+```
+
+> **Why ARM token?** The auth proxy validates tenant + domain only (`verify_aud: False`). Any valid Azure AD token from your corporate account works. The `api://d0ce7c35-...` resource also works once admin consent is granted.
+
+### Query examples
+
+```sql
+-- List catalogs
+SHOW CATALOGS;
+
+-- List schemas in hive catalog
+SHOW SCHEMAS IN hive;
+
+-- Query a Delta table
+SELECT * FROM hive.gold.sales_orders LIMIT 10;
+
+-- Check cluster nodes
+SELECT node_id, state FROM system.runtime.nodes;
+
+-- Running queries
+SELECT query_id, state, query FROM system.runtime.queries WHERE state = 'RUNNING';
+```
+
+### Token refresh
+
+ARM tokens expire after ~1 hour. Re-run the `az account get-access-token` command and reconnect.
+
+### Trino UI
+
+The web UI is accessible at:
+```
+https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com/ui/
+```
+
+Sign in with your corporate account via the OAuth2 flow. The UI shows `trino-user` in the top-right (cosmetic only) — queries are attributed to your actual username via `X-Trino-User`.
 
 ---
 

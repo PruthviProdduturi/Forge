@@ -1271,15 +1271,22 @@ dags/
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder \\
-  .remote("sc://forge-compute-dev.westcentralus.cloudapp.azure.com:15002") \\
+  .remote("sc://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com:15002") \\
   .getOrCreate()
 
 df = spark.read.format("delta") \\
   .load("abfss://gold@<storage>/sales")
 df.show()
 
-# Trino (browser or CLI via HTTPS)
-# https://forge-compute-dev.westcentralus.cloudapp.azure.com/ui/`}
+# Trino CLI (PowerShell)
+$token = az account get-access-token \\
+  --resource https://management.azure.com/ \\
+  --query accessToken -o tsv
+trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com \\
+      --access-token="$token" --catalog=hive
+
+# Trino UI (browser)
+# https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com/ui/`}
             />
           </div>
         </div>
