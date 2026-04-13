@@ -516,24 +516,32 @@ if [[ -n "$APP_OBJ_ID" ]]; then
     # Upsert by name: if airflow-orch-federation exists (possibly with stale issuer/subject
     # from a prior cluster), PATCH it. Otherwise POST. Checking by subject alone misses the
     # stale-name case and causes a name-conflict error on POST.
-    EXISTING_FC_ID=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+    FC_LIST=$(MSYS_NO_PATHCONV=1 az rest --method GET \
       --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-      --query "value[?name=='airflow-orch-federation'].id" -o tsv 2>/dev/null || echo "")
+      -o json 2>&1)
+    EXISTING_FC_ID=$(echo "$FC_LIST" | python3 -c \
+      "import sys,json; fcs=json.load(sys.stdin).get('value',[]); match=[f['id'] for f in fcs if f.get('name')=='airflow-orch-federation']; print(match[0] if match else '')" 2>/dev/null || echo "")
     if [[ -n "$EXISTING_FC_ID" ]]; then
-      MSYS_NO_PATHCONV=1 az rest --method PATCH \
+      FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method PATCH \
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${EXISTING_FC_ID}" \
         --headers "Content-Type=application/json" \
         --body "{\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\"}" \
-        --output none 2>/dev/null \
-        && echo "    Updated airflow-orch-federation (issuer + subject → new cluster)" \
-        || { echo "    ERROR: Failed to update airflow federated credential."; exit 1; }
+        --output none 2>&1)
+      if [[ $? -eq 0 ]]; then
+        echo "    Updated airflow-orch-federation (issuer + subject → new cluster)"
+      else
+        echo "    ERROR: Failed to update airflow federated credential: ${FC_ERR}"; exit 1
+      fi
     else
-      MSYS_NO_PATHCONV=1 az rest --method POST \
+      FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method POST \
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
         --body "{\"name\":\"airflow-orch-federation\",\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-        --output none 2>/dev/null \
-        && echo "    Federated credential created: airflow → app reg" \
-        || { echo "    ERROR: Failed to create airflow federated credential."; exit 1; }
+        --output none 2>&1)
+      if [[ $? -eq 0 ]]; then
+        echo "    Federated credential created: airflow → app reg"
+      else
+        echo "    ERROR: Failed to create airflow federated credential: ${FC_ERR}"; exit 1
+      fi
     fi
   else
     echo "    ERROR: AKS OIDC issuer not available after 90s — cannot create airflow federated credential."
