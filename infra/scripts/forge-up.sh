@@ -513,18 +513,27 @@ if [[ -n "$APP_OBJ_ID" ]]; then
   done
   if [[ -n "$ORCH_OIDC_ISSUER" ]]; then
     FC_SUBJECT="system:serviceaccount:airflow:airflow"
-    EXISTING_FC=$(MSYS_NO_PATHCONV=1 az rest --method GET \
+    # Upsert by name: if airflow-orch-federation exists (possibly with stale issuer/subject
+    # from a prior cluster), PATCH it. Otherwise POST. Checking by subject alone misses the
+    # stale-name case and causes a name-conflict error on POST.
+    EXISTING_FC_ID=$(MSYS_NO_PATHCONV=1 az rest --method GET \
       --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-      --query "value[?subject=='${FC_SUBJECT}'].id" -o tsv 2>/dev/null || echo "")
-    if [[ -z "$EXISTING_FC" ]]; then
+      --query "value[?name=='airflow-orch-federation'].id" -o tsv 2>/dev/null || echo "")
+    if [[ -n "$EXISTING_FC_ID" ]]; then
+      MSYS_NO_PATHCONV=1 az rest --method PATCH \
+        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${EXISTING_FC_ID}" \
+        --headers "Content-Type=application/json" \
+        --body "{\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\"}" \
+        --output none 2>/dev/null \
+        && echo "    Updated airflow-orch-federation (issuer + subject → new cluster)" \
+        || { echo "    ERROR: Failed to update airflow federated credential."; exit 1; }
+    else
       MSYS_NO_PATHCONV=1 az rest --method POST \
         --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
         --body "{\"name\":\"airflow-orch-federation\",\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
         --output none 2>/dev/null \
         && echo "    Federated credential created: airflow → app reg" \
         || { echo "    ERROR: Failed to create airflow federated credential."; exit 1; }
-    else
-      echo "    Federated credential already exists: airflow → app reg"
     fi
   else
     echo "    ERROR: AKS OIDC issuer not available after 90s — cannot create airflow federated credential."
