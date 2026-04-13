@@ -491,7 +491,7 @@ if [[ -n "$APP_OBJ_ID" ]]; then
   # auth (Airflow OAuth, Portal proxy, Trino proxy) breaks at runtime.
   FC_TEST=$(MSYS_NO_PATHCONV=1 az rest --method GET \
     --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-    2>&1)
+    2>&1) || true   # || true: prevent set -e from exiting on 403/error before we can inspect FC_TEST
   if echo "$FC_TEST" | grep -qi "Authorization_RequestDenied\|Forbidden\|Insufficient privileges\|does not have permission"; then
     echo ""
     echo "ERROR: Cannot manage federated credentials on app registration ${FORGE_CLIENT_ID}."
@@ -518,27 +518,31 @@ if [[ -n "$APP_OBJ_ID" ]]; then
     # stale-name case and causes a name-conflict error on POST.
     FC_LIST=$(MSYS_NO_PATHCONV=1 az rest --method GET \
       --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-      -o json 2>&1)
+      -o json 2>&1) || true
     EXISTING_FC_ID=$(echo "$FC_LIST" | python3 -c \
       "import sys,json; fcs=json.load(sys.stdin).get('value',[]); match=[f['id'] for f in fcs if f.get('name')=='airflow-orch-federation']; print(match[0] if match else '')" 2>/dev/null || echo "")
     if [[ -n "$EXISTING_FC_ID" ]]; then
-      FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method PATCH \
-        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${EXISTING_FC_ID}" \
-        --headers "Content-Type=application/json" \
-        --body "{\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\"}" \
-        --output none 2>&1)
-      if [[ $? -eq 0 ]]; then
+      if FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method PATCH \
+          --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${EXISTING_FC_ID}" \
+          --headers "Content-Type=application/json" \
+          --body "{\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\"}" \
+          --output none 2>&1); then
         echo "    Updated airflow-orch-federation (issuer + subject → new cluster)"
+      elif echo "$FC_ERR" | grep -q "InvalidFederatedIdentityCredentialValue\|not allowed as per assigned policy"; then
+        echo "    WARN: Tenant policy blocks AKS OIDC issuer — airflow-orch-federation kept with prior issuer."
+        echo "          Airflow OAuth login may not work until policy is relaxed or cluster is stable."
       else
         echo "    ERROR: Failed to update airflow federated credential: ${FC_ERR}"; exit 1
       fi
     else
-      FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method POST \
-        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-        --body "{\"name\":\"airflow-orch-federation\",\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-        --output none 2>&1)
-      if [[ $? -eq 0 ]]; then
+      if FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method POST \
+          --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+          --body "{\"name\":\"airflow-orch-federation\",\"issuer\":\"${ORCH_OIDC_ISSUER}\",\"subject\":\"${FC_SUBJECT}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+          --output none 2>&1); then
         echo "    Federated credential created: airflow → app reg"
+      elif echo "$FC_ERR" | grep -q "InvalidFederatedIdentityCredentialValue\|not allowed as per assigned policy"; then
+        echo "    WARN: Tenant policy blocks AKS OIDC issuer — airflow-orch-federation not created."
+        echo "          Airflow OAuth login may not work until policy is relaxed."
       else
         echo "    ERROR: Failed to create airflow federated credential: ${FC_ERR}"; exit 1
       fi
@@ -572,21 +576,25 @@ if [[ -n "$APP_OBJ_ID" ]]; then
       --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
       --query "value[?name=='managed-identity-federation'].id" -o tsv 2>/dev/null || echo "")
     if [[ -n "$STALE_FC_ID" ]]; then
-      MSYS_NO_PATHCONV=1 az rest --method PATCH \
-        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FC_ID}" \
-        --headers "Content-Type=application/json" \
-        --body "{\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\"}" \
-        --output none 2>/dev/null \
-        && echo "    Updated managed-identity-federation subject → portal MI" \
-        || { echo "    ERROR: Failed to update managed-identity-federation."; exit 1; }
+      if FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method PATCH \
+          --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FC_ID}" \
+          --headers "Content-Type=application/json" \
+          --body "{\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\"}" \
+          --output none 2>&1); then
+        echo "    Updated managed-identity-federation subject → portal MI"
+      else
+        echo "    ERROR: Failed to update managed-identity-federation: ${FC_ERR}"; exit 1
+      fi
     else
-      MSYS_NO_PATHCONV=1 az rest --method POST \
-        --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-        --headers "Content-Type=application/json" \
-        --body "{\"name\":\"managed-identity-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-        --output none 2>/dev/null \
-        && echo "    Created managed-identity-federation: portal MI → app reg" \
-        || { echo "    ERROR: Failed to create managed-identity-federation."; exit 1; }
+      if FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method POST \
+          --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+          --headers "Content-Type=application/json" \
+          --body "{\"name\":\"managed-identity-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${PORTAL_MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+          --output none 2>&1); then
+        echo "    Created managed-identity-federation: portal MI → app reg"
+      else
+        echo "    ERROR: Failed to create managed-identity-federation: ${FC_ERR}"; exit 1
+      fi
     fi
   else
     echo "    Federated credential already correct: portal MI → app reg"
@@ -1043,20 +1051,24 @@ else
           --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
           --query "value[?name=='forge-trino-mi-federation'].id" -o tsv 2>/dev/null || echo "")
         if [[ -n "$STALE_FED_ID" ]]; then
-          MSYS_NO_PATHCONV=1 az rest --method PATCH \
-            --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FED_ID}" \
-            --headers "Content-Type=application/json" \
-            --body "{\"subject\":\"${MI_PRINCIPAL_ID}\"}" \
-            --output none 2>/dev/null \
-            && echo "    Updated forge-trino-mi-federation subject → trino MI" \
-            || { echo "    ERROR: Failed to update trino federated credential."; exit 1; }
+          if FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method PATCH \
+              --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials/${STALE_FED_ID}" \
+              --headers "Content-Type=application/json" \
+              --body "{\"subject\":\"${MI_PRINCIPAL_ID}\"}" \
+              --output none 2>&1); then
+            echo "    Updated forge-trino-mi-federation subject → trino MI"
+          else
+            echo "    ERROR: Failed to update trino federated credential: ${FC_ERR}"; exit 1
+          fi
         else
-          MSYS_NO_PATHCONV=1 az rest --method POST \
-            --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
-            --body "{\"name\":\"forge-trino-mi-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
-            --output none 2>/dev/null \
-            && echo "    Federated credential created: trino MI → app reg" \
-            || { echo "    ERROR: Failed to create trino federated credential."; exit 1; }
+          if FC_ERR=$(MSYS_NO_PATHCONV=1 az rest --method POST \
+              --url "https://graph.microsoft.com/v1.0/applications/${APP_OBJ_ID}/federatedIdentityCredentials" \
+              --body "{\"name\":\"forge-trino-mi-federation\",\"issuer\":\"${FC_ISSUER}\",\"subject\":\"${MI_PRINCIPAL_ID}\",\"audiences\":[\"api://AzureADTokenExchange\"]}" \
+              --output none 2>&1); then
+            echo "    Federated credential created: trino MI → app reg"
+          else
+            echo "    ERROR: Failed to create trino federated credential: ${FC_ERR}"; exit 1
+          fi
         fi
       fi
       NODE_RG_COMPUTE=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$COMPUTE_CLUSTER" \
@@ -1318,12 +1330,21 @@ spec:
                   if not pg_host or not airflow_mi or not portal_mi:
                       print(f'ERROR: missing config — pg_host={pg_host!r} airflow_mi={airflow_mi!r} portal_mi={portal_mi!r}', flush=True)
                       sys.exit(1)
+                  portal_mi_oid = '${PORTAL_MI_PRINCIPAL_ID}'
                   # Step 1: create portal database (connect as Airflow MI to postgres DB)
                   conn = psycopg2.connect(host=pg_host, dbname='postgres',
                       user=airflow_mi, password=token, sslmode='require',
                       connect_timeout=15)
                   conn.autocommit = True
                   cur = conn.cursor()
+                  # Register portal MI as a Postgres AAD principal (idempotent)
+                  cur.execute("SELECT 1 FROM pg_roles WHERE rolname=%s", (portal_mi,))
+                  if not cur.fetchone():
+                      cur.execute("SELECT pgaadauth_create_principal_with_oid(%s, %s, 'service', false, false)",
+                                  (portal_mi, portal_mi_oid))
+                      print(f'AAD principal created: {portal_mi}', flush=True)
+                  else:
+                      print(f'AAD principal already exists: {portal_mi}', flush=True)
                   cur.execute("SELECT 1 FROM pg_database WHERE datname='portal'")
                   if not cur.fetchone():
                       cur.execute('CREATE DATABASE portal')
@@ -2060,8 +2081,9 @@ _tag_ips_in_rg() {
   while IFS= read -r _IP; do
     [[ -z "$_IP" ]] && continue
     az network public-ip update --resource-group "$rg" --name "$_IP" \
-      --ip-tags "FirstPartyUsage=${_IP_TAG}" --output none
-    echo "  Tagged : $_IP ($rg)"
+      --ip-tags "FirstPartyUsage=${_IP_TAG}" --output none 2>/dev/null \
+      && echo "  Tagged : $_IP ($rg)" \
+      || echo "  WARN: could not tag $_IP ($rg) — in-use static IP, skipping"
   done <<< "$ips"
 }
 
