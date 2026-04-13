@@ -233,6 +233,22 @@ if [[ -z "$BUILD_ONLY" ]]; then
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_INFRA" == "false" ]]; then
   echo "━━━ [1/8] Provision infrastructure ━━━━━━━━━━━━━━━━━━━━"
+
+  # Pre-Bicep: recover any soft-deleted Key Vault secrets so Bicep can upsert them.
+  # Purge protection (enabled on KV) blocks purging, but recover restores the secret
+  # to active state so Bicep's PUT succeeds. Without this, re-deploys after RG deletion
+  # fail with ConflictError: "secret is in a soft deleted state".
+  DELETED_SECRETS=$(az keyvault secret list-deleted --vault-name "$KV_NAME" \
+    --query "[].name" -o tsv 2>/dev/null || echo "")
+  if [[ -n "$DELETED_SECRETS" ]]; then
+    echo "  Recovering soft-deleted KV secrets (purge protection blocks re-create)..."
+    while IFS= read -r secret; do
+      az keyvault secret recover --vault-name "$KV_NAME" --name "$secret" --output none 2>/dev/null \
+        && echo "    Recovered: $secret" \
+        || echo "    WARN: could not recover $secret — Bicep may fail if name conflicts"
+    done <<< "$DELETED_SECRETS"
+  fi
+
   bash "${SCRIPT_DIR}/provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID" --location "$LOCATION"
 else
   echo "━━━ [1/8] Provision infrastructure — skipped (--skip-infra) ━━━━━━━━━"
