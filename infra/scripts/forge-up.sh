@@ -172,10 +172,12 @@ RESOURCE_GROUP="rg-forge-${_A}${ENV}"
 COMPUTE_CLUSTER="aks-forge-compute-${_A}${ENV}"
 ORCH_CLUSTER="aks-forge-orchestration-${_A}${ENV}"
 # KV, Postgres, ADLS are globally unique — use sub suffix when alias is blank (same as ACR)
+# ADLS names must be lowercase — lowercase the alias portion
 if [[ -n "$ALIAS" ]]; then
-  KV_NAME="kv-forge-${ALIAS}-${ENV}"
-  PG_SERVER="psql-forge-${ALIAS}-${ENV}"
-  ADLS_ACCOUNT="forgeadls${ALIAS//-/}${ENV}"
+  _ALIAS_LC="${ALIAS,,}"
+  KV_NAME="kv-forge-${_ALIAS_LC}-${ENV}"
+  PG_SERVER="psql-forge-${_ALIAS_LC}-${ENV}"
+  ADLS_ACCOUNT="forgeadls${_ALIAS_LC//-/}${ENV}"
 else
   KV_NAME="kv-forge-${_SUB_SUFFIX}-${ENV}"
   PG_SERVER="psql-forge-${_SUB_SUFFIX}-${ENV}"

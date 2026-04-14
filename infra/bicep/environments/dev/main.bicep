@@ -115,9 +115,9 @@ var acrRegistryName = ownerAlias != '' ? 'forgeacr${ownerAlias}' : 'forgeacr${su
 var acrRgName       = ownerAlias != '' ? 'rg-forge-acr-${ownerAlias}' : 'rg-forge-acr'
 
 // All globally unique names use sub suffix when alias is blank (ACR pattern)
-var storageAccountName = ownerAlias != '' ? 'forgeadls${ownerAlias}${environment}' : 'forgeadls${subSuffix}${environment}'
-var keyVaultName       = ownerAlias != '' ? 'kv-forge-${ownerAlias}-${environment}' : 'kv-forge-${subSuffix}-${environment}'
-var postgresServerName = ownerAlias != '' ? 'psql-forge-${ownerAlias}-${environment}' : 'psql-forge-${subSuffix}-${environment}'
+var storageAccountName = ownerAlias != '' ? toLower('forgeadls${ownerAlias}${environment}') : toLower('forgeadls${subSuffix}${environment}')
+var keyVaultName       = ownerAlias != '' ? toLower('kv-forge-${ownerAlias}-${environment}') : toLower('kv-forge-${subSuffix}-${environment}')
+var postgresServerName = ownerAlias != '' ? toLower('psql-forge-${ownerAlias}-${environment}') : toLower('psql-forge-${subSuffix}-${environment}')
 
 // Resource group names — 2 RGs per environment
 var rgPlatform = 'rg-forge-platform${aliasSuffix}-${environment}'
