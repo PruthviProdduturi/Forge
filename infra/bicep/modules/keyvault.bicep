@@ -21,12 +21,6 @@ param privateEndpointSubnetId string
 @description('Resource ID of the Private DNS Zone for Key Vault.')
 param privateDnsZoneVaultId string
 
-@description('Object ID of the platform administrator AAD group.')
-param platformAdminGroupObjectId string
-
-@description('Principal IDs for each workload that needs secrets access.')
-param workloadPrincipalIds object
-
 @description('Resource ID of the Log Analytics Workspace for diagnostics.')
 param logAnalyticsWorkspaceId string
 
@@ -35,13 +29,6 @@ param allowPublicNetworkAccess bool = true
 
 @description('Resource tags to apply to all resources.')
 param tags object = {}
-
-// ---------------------------------------------------------------------------
-// Role definition resource IDs (built-in)
-// ---------------------------------------------------------------------------
-var kvSecretsOfficerRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
-var kvCryptoOfficerRoleId  = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '14b46e9e-c2b7-41b4-b07b-48a6ebf60603')
-var kvSecretsUserRoleId    = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 
 // ---------------------------------------------------------------------------
 // Key Vault
@@ -74,94 +61,6 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enabledForTemplateDeployment: false
   }
 }
-
-// ---------------------------------------------------------------------------
-// Platform admin — Secrets Officer
-// ---------------------------------------------------------------------------
-resource adminSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(platformAdminGroupObjectId, kvSecretsOfficerRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsOfficerRoleId
-    principalId: platformAdminGroupObjectId
-    principalType: 'Group'
-    description: 'Platform admin group — Key Vault Secrets Officer'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Platform admin — Crypto Officer
-// ---------------------------------------------------------------------------
-resource adminCryptoOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(platformAdminGroupObjectId, kvCryptoOfficerRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvCryptoOfficerRoleId
-    principalId: platformAdminGroupObjectId
-    principalType: 'Group'
-    description: 'Platform admin group — Key Vault Crypto Officer'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Workload role assignments — Key Vault Secrets User
-// ---------------------------------------------------------------------------
-resource sparkSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.spark, kvSecretsUserRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsUserRoleId
-    principalId: workloadPrincipalIds.spark
-    principalType: 'ServicePrincipal'
-    description: 'Spark workload identity — Key Vault Secrets User'
-  }
-}
-
-resource trinoSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.trino, kvSecretsUserRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsUserRoleId
-    principalId: workloadPrincipalIds.trino
-    principalType: 'ServicePrincipal'
-    description: 'Trino workload identity — Key Vault Secrets User'
-  }
-}
-
-resource airflowSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.airflow, kvSecretsUserRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsUserRoleId
-    principalId: workloadPrincipalIds.airflow
-    principalType: 'ServicePrincipal'
-    description: 'Airflow workload identity — Key Vault Secrets User'
-  }
-}
-
-resource dqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.dq, kvSecretsUserRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsUserRoleId
-    principalId: workloadPrincipalIds.dq
-    principalType: 'ServicePrincipal'
-    description: 'DQ workload identity — Key Vault Secrets User'
-  }
-}
-
-// Portal needs Secrets Officer so it can write auth-config secrets from the Settings UI.
-resource portalSecretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(workloadPrincipalIds.portal, kvSecretsOfficerRoleId, keyVault.id)
-  scope: keyVault
-  properties: {
-    roleDefinitionId: kvSecretsOfficerRoleId
-    principalId: workloadPrincipalIds.portal
-    principalType: 'ServicePrincipal'
-    description: 'Portal workload identity — Key Vault Secrets Officer (auth-config read/write)'
-  }
-}
-
 
 // ---------------------------------------------------------------------------
 // Private Endpoint

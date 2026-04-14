@@ -356,14 +356,6 @@ module keyvault '../../modules/keyvault.bicep' = {
     tenantId: tenantId
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
     privateDnsZoneVaultId: networking.outputs.privateDnsZoneIds.vault
-    platformAdminGroupObjectId: platformAdminGroupObjectId
-    workloadPrincipalIds: {
-      spark:   identity.outputs.identities.spark.principalId
-      trino:   identity.outputs.identities.trino.principalId
-      airflow: identity.outputs.identities.airflow.principalId
-      dq:      identity.outputs.identities.dq.principalId
-      portal:  identity.outputs.identities.portal.principalId
-    }
     logAnalyticsWorkspaceId: orchLaw.outputs.id
     allowPublicNetworkAccess: kvAllowPublicNetworkAccess
     tags: mergedTags

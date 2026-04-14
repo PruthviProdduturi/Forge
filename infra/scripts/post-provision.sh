@@ -103,7 +103,60 @@ tag_ips_in_rg "$MC_RG_COMPUTE"
 tag_ips_in_rg "$MC_RG_ORCH"
 
 # ---------------------------------------------------------------------------
-# 2. Grant portal MI Cost Management Reader on the managed node RGs
+# 2. Key Vault RBAC — idempotent role assignments
+#    These are kept out of keyvault.bicep to avoid RoleAssignmentExists HTTP 409
+#    on re-deploy (ARM does not support idempotent PUT for role assignments).
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Key Vault RBAC"
+
+if [[ -n "$OWNER_ALIAS" ]]; then
+  _KV_NAME="kv-forge-${OWNER_ALIAS,,}-${ENVIRONMENT}"
+else
+  _KV_SUFFIX="${SUBSCRIPTION//-/}"; _KV_NAME="kv-forge-${_KV_SUFFIX:0:8}-${ENVIRONMENT}"
+fi
+_KV_SCOPE="/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG_COMPUTE}/providers/Microsoft.KeyVault/vaults/${_KV_NAME}"
+
+# Role definition IDs (built-in, immutable)
+_KV_SECRETS_OFFICER="b86a8fe4-44ce-4948-aee5-eccb2c155cd7"
+_KV_CRYPTO_OFFICER="14b46e9e-c2b7-41b4-b07b-48a6ebf60603"
+_KV_SECRETS_USER="4633458b-17de-408a-b874-0445c86b69e6"
+
+_kv_assign() {
+  local principal="$1" role="$2" type="$3" desc="$4"
+  [[ -z "$principal" ]] && { echo "    SKIP (empty principal): $desc"; return; }
+  az role assignment create \
+    --role "$role" \
+    --assignee-object-id "$principal" \
+    --assignee-principal-type "$type" \
+    --scope "$_KV_SCOPE" \
+    --output none 2>/dev/null \
+    && echo "    Assigned : $desc" \
+    || echo "    Exists   : $desc"
+}
+
+# Fetch platform admin group from parameters file
+_PARAMS_FILE="${SCRIPT_DIR}/../bicep/environments/${ENVIRONMENT}/${ENVIRONMENT}.parameters.json"
+_ADMIN_GROUP=$(python3 -c "import json,sys; p=json.load(open('${_PARAMS_FILE}')); print(p.get('parameters',{}).get('platformAdminGroupObjectId',{}).get('value',''))" 2>/dev/null || echo "")
+
+_kv_assign "$_ADMIN_GROUP" "$_KV_SECRETS_OFFICER" "Group" "platform admin — Secrets Officer"
+_kv_assign "$_ADMIN_GROUP" "$_KV_CRYPTO_OFFICER"  "Group" "platform admin — Crypto Officer"
+
+# Workload identities
+for _WL in spark trino airflow dq; do
+  _MI_NAME="id-forge-${_WL}-${_A}${ENVIRONMENT}"
+  _PRINCIPAL=$(az identity show --resource-group "$RG_COMPUTE" --name "$_MI_NAME" \
+    --query principalId -o tsv 2>/dev/null || echo "")
+  _kv_assign "$_PRINCIPAL" "$_KV_SECRETS_USER" "ServicePrincipal" "${_WL} — Secrets User"
+done
+
+# Portal — Secrets Officer (needs write access for Settings UI)
+_PORTAL_KV_PRINCIPAL=$(az identity show --resource-group "$RG_COMPUTE" \
+  --name "id-forge-portal-${_A}${ENVIRONMENT}" --query principalId -o tsv 2>/dev/null || echo "")
+_kv_assign "$_PORTAL_KV_PRINCIPAL" "$_KV_SECRETS_OFFICER" "ServicePrincipal" "portal — Secrets Officer"
+
+# ---------------------------------------------------------------------------
+# 4. Grant portal MI Cost Management Reader on the managed node RGs
 #    so the Cost Explorer page can query Azure Cost Management per RG.
 # ---------------------------------------------------------------------------
 echo ""
@@ -136,7 +189,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Fetch kubeconfig for both clusters
+# 5. Fetch kubeconfig for both clusters
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Fetching kubeconfig"
@@ -156,7 +209,7 @@ az aks get-credentials \
 echo "    Orchestration cluster: $CLUSTER_ORCH"
 
 # ---------------------------------------------------------------------------
-# 4. Quick sanity check
+# 6. Quick sanity check
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- kubectl get nodes (compute)"
