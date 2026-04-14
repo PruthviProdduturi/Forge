@@ -111,20 +111,18 @@ fi
 # 1. Pre-Bicep: clear KV role assignments to prevent RoleAssignmentExists on
 #    re-deploy. Azure RBAC returns HTTP 409 even for identical re-creates, so
 #    we must delete first. Role assignments are recreated by Bicep moments later.
+#    We compute the KV resource ID directly (deterministic) rather than looking
+#    up the KV — az keyvault show misses soft-deleted vaults which Bicep recovers.
 # ---------------------------------------------------------------------------
-_KV_NAME="${OWNER_ALIAS:+kv-forge-}${OWNER_ALIAS:+${OWNER_ALIAS,,}-}${ENVIRONMENT}"
-if [[ -z "$OWNER_ALIAS" ]]; then
-  _KV_SUFFIX="${SUBSCRIPTION//-/}"; _KV_NAME="kv-forge-${_KV_SUFFIX:0:8}-${ENVIRONMENT}"
-else
+if [[ -n "$OWNER_ALIAS" ]]; then
   _KV_NAME="kv-forge-${OWNER_ALIAS,,}-${ENVIRONMENT}"
+else
+  _KV_SUFFIX="${SUBSCRIPTION//-/}"; _KV_NAME="kv-forge-${_KV_SUFFIX:0:8}-${ENVIRONMENT}"
 fi
 _MAIN_RG_FOR_KV="rg-forge-${OWNER_ALIAS:+${OWNER_ALIAS}-}${ENVIRONMENT}"
-_KV_ID=$(az keyvault show --name "$_KV_NAME" --resource-group "$_MAIN_RG_FOR_KV" \
-  --query id -o tsv 2>/dev/null || echo "")
-if [[ -n "$_KV_ID" ]]; then
-  echo "    KV exists — clearing role assignments to allow idempotent Bicep re-deploy..."
-  az role assignment delete --scope "$_KV_ID" --output none 2>/dev/null || true
-fi
+_KV_SCOPE="/subscriptions/${SUBSCRIPTION}/resourceGroups/${_MAIN_RG_FOR_KV}/providers/Microsoft.KeyVault/vaults/${_KV_NAME}"
+echo "    Clearing any existing KV role assignments (idempotent re-deploy)..."
+az role assignment delete --scope "$_KV_SCOPE" --output none 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # 1. Bicep deployment
