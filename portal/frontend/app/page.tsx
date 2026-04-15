@@ -261,7 +261,6 @@ export default function HomePage() {
             <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
               {pipelines.length === 0 ? (
                 <div style={{ padding: "32px 20px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
-                  <i className="fas fa-sitemap" style={{ fontSize: 20, display: "block", marginBottom: 8 }} />
                   No pipelines registered yet
                 </div>
               ) : (

@@ -128,7 +128,6 @@ export default function DataQualityPage() {
         <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
         {summary.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-            <i className="fas fa-shield-halved" style={{ fontSize: 32, marginBottom: 12, display: "block" }} />
             No DQ data available yet
           </div>
         ) : (<>
