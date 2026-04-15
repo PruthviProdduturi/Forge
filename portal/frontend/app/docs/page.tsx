@@ -183,7 +183,7 @@ export default function DocsPage() {
           padding: "56px 0 48px",
         }}
       >
-        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 1.5rem" }}>
+        <div style={{ maxWidth: 1400, margin: "0 auto", padding: "0 1.5rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
             <div
               style={{
@@ -240,7 +240,7 @@ export default function DocsPage() {
       </div>
 
       {/* Categories */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "48px 1.5rem 64px" }}>
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "48px 1.5rem 64px" }}>
         {CATEGORIES.map((cat) => (
           <section key={cat.id} id={cat.id} style={{ marginBottom: 56 }}>
             {/* Category header */}

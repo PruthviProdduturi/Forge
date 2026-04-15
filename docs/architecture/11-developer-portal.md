@@ -31,8 +31,13 @@ The Developer Portal is an **engineering observability tool** — not an analyti
 ### What the Portal Is
 
 - A real-time platform health dashboard showing the status of Airflow, Trino, Spark Connect, and ADLS
+- A pipeline monitor showing all Airflow DAGs with run history, status, and trigger capability
+- A dataset browser for ADLS Gen2 assets across bronze, silver, and gold zones
+- A data source registry for tracking external data sources and connection health
+- A lineage explorer backed by Microsoft Purview — search entities, view upstream/downstream graphs
+- A data quality monitor showing DQ rule results and pass rates across all datasets
 - A cost attribution view showing Azure spend across the compute and orchestration resource groups
-- An administrative interface for managing auth provider configuration (local vs Azure AD)
+- An administrative interface for managing auth provider configuration
 - A cluster status view showing pod and node pool state across both AKS clusters
 
 ### What the Portal Is Not
@@ -69,28 +74,34 @@ The auth proxy is the single point of authentication for the entire portal. No b
 - After successful AAD callback, a session cookie is set and the proxy forwards requests with injected headers
 - Subsequent requests: session cookie validated; `X-User-Email`, `X-User-Name`, `X-User-Roles` headers injected to upstream services
 
-### Frontend: `portal-web` (Next.js 14)
+### Frontend: `portal-web` (Next.js 15)
 
-The frontend uses Next.js 14 with the App Router. All pages are Client Components (`"use client"`). Data fetching uses plain `useEffect` + `fetch` — there is no React Query or global state library.
+The frontend uses Next.js 15 with the App Router. All pages are Client Components (`"use client"`). Data fetching uses plain `useEffect` + `fetch` — there is no React Query or global state library.
 
 Key client-side components:
 
-- **`useAuth` hook** — calls `GET /api/auth/me` to check session state; `login()` redirects to `/oauth2/sign_in` (no MSAL.js, no browser-side token handling)
+- **`useAuth` hook** — MSAL `loginPopup` for Azure AD SSO; token stored in `sessionStorage`. User ID is the AAD `oid` claim.
 - **`ForgeLoader`** — revolving crosshair SVG animation with a shimmer progress bar, used for all loading states throughout the portal
-- **`ThemeModal`** — per-user theme picker; theme preferences are stored in PostgreSQL (the only use of the database)
-- **`Layout`** — header navigation with environment badge dropdown; health-aware status section on the homepage
+- **`ThemeModal`** — per-user theme colour picker with HSV canvas; theme preferences are stored in PostgreSQL (the only use of the database)
+- **`PageLayout`** — shared page shell: hero gradient, icon/title, stat pills in `heroContent`, and a consistent content area
+- **`Layout`** — top navigation with environment badge dropdown
 
 Route structure:
 
 ```
 app/
-├── page.tsx           ← /   Home dashboard (health overview, env info)
-├── about/
-│   └── page.tsx       ← /about   Platform about page
-├── cost/
-│   └── page.tsx       ← /cost   Cost attribution view
-└── status/
-    └── page.tsx       ← /status   Cluster and workload status
+├── page.tsx                  ← /                Home dashboard (recent pipelines, health)
+├── about/page.tsx            ← /about           Platform overview and architecture
+├── pipelines/page.tsx        ← /pipelines       Airflow DAG monitor with run history
+├── datasets/page.tsx         ← /datasets        ADLS Gen2 dataset browser (bronze/silver/gold)
+├── datasources/page.tsx      ← /datasources     Data source registry (register, test, delete)
+├── lineage/page.tsx          ← /lineage         Microsoft Purview lineage explorer
+├── dq/page.tsx               ← /dq              Data quality rule monitor
+├── cost/page.tsx             ← /cost            Azure cost attribution (7/30/90d)
+├── observability/page.tsx    ← /observability   Grafana and Azure Monitor links
+├── status/page.tsx           ← /status          AKS cluster health and pod state
+├── settings/page.tsx         ← /settings        User preferences (theme)
+└── docs/[...slug]/page.tsx   ← /docs/*          Embedded platform documentation
 ```
 
 ### Backend: `portal-api` (FastAPI)
@@ -122,58 +133,44 @@ The FastAPI backend is a thin aggregation layer. It does not own platform data �
 
 ## 3. Authentication Flow
 
-The portal uses server-side OAuth2 proxy authentication. There is no browser-side MSAL, no JWT in localStorage, and no tokens in the browser at any point.
+The portal uses **browser-side MSAL `loginPopup`** for Azure AD SSO. No server-side redirect handling, no cookies for auth state — tokens are held in `sessionStorage` only.
 
 ### Identity Model
 
-- **Server-side proxy**: `portal-auth-proxy` (Flask + MSAL `ConfidentialClientApplication`) handles all AAD interaction
-- The browser holds a session cookie only — no OAuth tokens
-- User roles come from Azure AD App Roles injected as `X-User-Roles` headers
-- No database is used for users; user identity is passed through headers on every request
+- **MSAL `loginPopup`** — `loginAzure()` in `auth/useAuth.tsx` triggers the popup flow; the resulting token is written to `sessionStorage` via `writeCache()`
+- **Redirect URI type** — must be `SPA` (not `Web`) in the AAD app registration; `loginRedirect` is explicitly avoided due to Next.js App Router conflicts
+- **User ID** — AAD `oid` claim, used as the `user_id` primary key in the `user_preferences` Postgres table
+- **Authorization** — Azure AD App Roles only; no user/role tables in Postgres
 
 ### Auth Configuration
 
 | Item | Value |
 |------|-------|
 | AAD App Registration | `d0ce7c35-cc10-4ae7-b6be-60d002f43059` |
-| Portal MI | `id-forge-portal-dev` (assigned to orch VMSS nodes) |
-| Federated credential | `managed-identity-federation` (subject = portal MI principal ID `eba37f8f-5878-4f92-80dd-6bed1a4d0c3b`) |
-| Session secret | Stored in Kubernetes secret `proxy-session-secret` in the `portal` namespace |
+| Redirect URI type | SPA |
+| Token storage | `sessionStorage` via MSAL cache |
+| Portal MI | `id-forge-portal-dev` (assigned to orch VMSS nodes — used by `portal-auth-proxy` for backend API calls) |
 
-### Azure AD Auth Flow (server-side proxy)
+### Azure AD Auth Flow (browser MSAL)
 
 ```
-1. Browser → portal-auth-proxy (any path, unauthenticated)
-   Proxy: no valid session cookie → HTTP 302 redirect to /oauth2/sign_in
+1. Unauthenticated user visits any page
+   useAuth.initialize() → silent token from cached MSAL accounts
+   No accounts found → redirects to /login
 
-2. Browser → /oauth2/sign_in
-   Proxy: MSAL ConfidentialClientApplication initiates authorization code flow
-     - calls IMDS endpoint to get id-forge-portal-dev MI token
-     - presents MI token as client_assertion (no client secret)
-   Redirect → https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize
-   MFA enforced at tenant level
+2. User clicks "Sign in with Microsoft"
+   loginAzure() → msalInstance.loginPopup()
+   Popup: AAD login + MFA enforced at tenant level
 
-3. AAD → /oauth2/callback (proxy callback URL)
-   Proxy: MSAL exchanges code for tokens
-   Proxy: extracts email, name, app roles from ID token claims
-   Proxy: sets encrypted session cookie
-   Proxy: redirects browser to original destination
+3. loginPopup() resolves synchronously with AuthenticationResult
+   writeCache() persists tokens to sessionStorage
+   useAuth sets authenticated state; user is redirected to original destination
 
-4. Subsequent requests:
-   Browser presents session cookie
-   Proxy validates session → extracts user identity
-   Proxy injects upstream request headers:
-     X-User-Email: user@example.com
-     X-User-Name:  First Last
-     X-User-Roles: Admin (or Engineer, Viewer)
-   Proxy forwards to portal-api:8080 or portal-web:3001
-
-5. portal-api reads X-User-* headers (no JWT validation needed)
-   RBAC enforced per endpoint: Admin required for /api/platform/*
-
-6. portal-web useAuth hook calls GET /api/auth/me
-   portal-api returns user identity from X-User-* headers
-   Frontend renders authenticated UI
+4. Subsequent page loads / API calls:
+   MSAL acquireTokenSilent() from sessionStorage cache
+   Bearer token attached to every /api/* request
+   portal-api validates the Bearer token (RS256 AAD JWT)
+   RBAC enforced per endpoint: Admin role required for /api/platform/*
 ```
 
 ### Portal RBAC Roles
@@ -201,19 +198,69 @@ Unauthenticated requests return `401 Unauthorized`. Authenticated requests from 
 
 ### Verified Endpoint Reference
 
-#### Auth
-
-| Method | Path | Description | Auth Required |
-|--------|------|-------------|---------------|
-| GET | `/api/auth/provider` | Returns active auth provider config (hot-read from Key Vault) | No |
-| POST | `/api/auth/login` | Local login; returns HS256 JWT | No (local mode only) |
-| GET | `/api/auth/me` | Returns current user claims (name, email, role) | Yes |
-
-#### Health
+#### Auth & Health
 
 | Method | Path | Description | Auth Required |
 |--------|------|-------------|---------------|
 | GET | `/api/health` | Tri-state health check for all platform services | No |
+| GET | `/api/auth/provider` | Returns active auth provider config | No |
+| GET | `/api/auth/me` | Returns current user claims (name, email, role) | Yes |
+
+#### Pipelines
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/pipelines` | List all Airflow DAGs with last-run status | Yes |
+| GET | `/api/pipelines/{dag_id}` | Single DAG detail | Yes |
+| GET | `/api/pipelines/{dag_id}/runs` | Run history for a DAG | Yes |
+| POST | `/api/pipelines/{dag_id}/trigger` | Trigger a DAG run | Yes |
+
+#### Datasets
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/datasets` | List all datasets across all layers | Yes |
+| GET | `/api/datasets/{layer}` | Datasets filtered by layer (bronze/silver/gold) | Yes |
+
+#### Data Sources
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/v1/datasources` | List registered data sources | Yes |
+| POST | `/api/v1/datasources` | Register a new data source | Yes |
+| PUT | `/api/v1/datasources/{id}` | Update a data source | Yes |
+| DELETE | `/api/v1/datasources/{id}` | Remove a data source | Yes |
+| POST | `/api/v1/datasources/test` | Test a data source connection | Yes |
+
+#### Data Quality
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/dq/summary` | DQ summary across all datasets | Yes |
+| GET | `/api/dq/{dataset_name}` | DQ rules and results for a dataset | Yes |
+
+#### Lineage
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/lineage/search?q=` | Search Purview entities by name | Yes |
+| GET | `/api/lineage/{qualified_name}` | Lineage graph for an entity | Yes |
+
+#### Cost
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/cost/summary?days=N` | Subscription-level cost summary | Yes |
+| GET | `/api/cost/by-rg?days=N` | Cost per resource group, 15-min SWR cache | Yes |
+| GET | `/api/cost/by-pipeline` | Per-pipeline cost breakdown | Yes |
+
+#### Status & Theme
+
+| Method | Path | Description | Auth Required |
+|--------|------|-------------|---------------|
+| GET | `/api/status` | AKS cluster state and workload probes | Yes |
+| GET | `/api/v1/theme` | Current user's theme preference | Yes |
+| PUT | `/api/v1/theme` | Save user theme preference | Yes |
 
 #### Platform (Admin Only)
 
@@ -221,19 +268,6 @@ Unauthenticated requests return `401 Unauthorized`. Authenticated requests from 
 |--------|------|-------------|----------|
 | GET | `/api/platform/auth-config` | Read auth provider config from Key Vault | Admin |
 | POST | `/api/platform/auth-config` | Write auth provider config to Key Vault | Admin |
-
-#### Cost
-
-| Method | Path | Description | Auth Required |
-|--------|------|-------------|---------------|
-| GET | `/api/cost/by-rg?days=N` | Cost for compute + orchestration RGs, parallel queries, 15-min cache | Yes |
-| GET | `/api/cost/summary?days=N` | Subscription-level cost summary | Yes |
-
-#### Status
-
-| Method | Path | Description | Auth Required |
-|--------|------|-------------|---------------|
-| GET | `/api/status` | AKS cluster state and workload probes | Yes |
 
 ### Error Response Format
 

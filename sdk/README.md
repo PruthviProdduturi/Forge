@@ -76,3 +76,17 @@ Built by `sync-jobs.sh` whenever `sdk/python/` changes, then uploaded to
 - Grey decorations on locked (generated) regions in `.py` files
 - `Forge: Generate` command (Ctrl+Shift+P)
 - Status bar shows the active manifest layer and job name
+
+### Build and install the extension
+
+```bash
+cd sdk/vscode-extension
+npm install
+npm run build                    # compiles src/ → dist/extension.js
+npm run package                  # vsce package → forge-sdk-<version>.vsix
+```
+
+Install the `.vsix` in VS Code: **Extensions → ⋯ → Install from VSIX…**
+
+**Prerequisites:** Node.js 20+, `@vscode/vsce` (included as devDependency).
+No `node_modules` are bundled — the extension uses only VS Code built-ins.

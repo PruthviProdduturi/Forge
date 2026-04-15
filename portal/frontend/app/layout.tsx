@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   title: "Forge",
   description: "The Core Data Engineering Platform",
   icons: {
-    icon: "/favicon.ico",
+    icon: "/icon.svg",
   },
 };
 

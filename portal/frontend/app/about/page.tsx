@@ -4,7 +4,6 @@ import React from "react";
 import Link from "next/link";
 import { ForgeLogo } from "../../components/ForgeLogo";
 import { useTheme } from "../../contexts/ThemeContext";
-import { PageLayout } from "../../components/PageLayout";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,7 +44,7 @@ function Section({
         ...style,
       }}
     >
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 1.5rem" }}>
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "0 1.5rem" }}>
         {children}
       </div>
     </section>
@@ -367,14 +366,13 @@ export default function AboutPage() {
   const { primaryColor } = useTheme();
 
   return (
-    <PageLayout icon="fa-circle-info" title="About Forge">
-      <div style={{ margin: "0 -1.5rem" }}>
+    <div style={{ minHeight: "100%" }}>
       {/* ── Internal sticky nav ──────────────────────────────────────────────── */}
       <nav
         aria-label="Page sections"
         style={{
           position: "sticky",
-          top: 56,
+          top: 0,
           zIndex: 50,
           background: "var(--forge-light)",
           borderBottom: "1px solid rgba(30,58,95,0.08)",
@@ -1236,7 +1234,7 @@ export default function AboutPage() {
           padding: "80px 1.5rem",
         }}
       >
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1400, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 48 }}>
             <SectionLabel text="Get Started" color={primaryColor} light />
             <SectionHeading center light>
@@ -1293,7 +1291,6 @@ trino --server=https://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com \
           </div>
         </div>
       </section>
-      </div>
-    </PageLayout>
+    </div>
   );
 }

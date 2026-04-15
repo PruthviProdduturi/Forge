@@ -29,7 +29,7 @@ export function PageLayout({ icon, title, subtitle, heroContent, children }: Pag
         background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
         padding: "48px 1.5rem 48px",
       }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1400, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
             <div style={{
               width: 40, height: 40, borderRadius: 10,
@@ -61,7 +61,7 @@ export function PageLayout({ icon, title, subtitle, heroContent, children }: Pag
       </div>
 
       {/* ── Content ── */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
         {children}
       </div>
     </div>

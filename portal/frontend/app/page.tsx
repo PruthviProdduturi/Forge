@@ -135,7 +135,7 @@ export default function HomePage() {
         background: `linear-gradient(135deg, ${primaryColor} 0%, #0f1e2e 100%)`,
         padding: "48px 1.5rem 48px",
       }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ maxWidth: 1400, margin: "0 auto" }}>
           <div style={{ marginBottom: 8 }}>
             <h1 style={{ fontSize: "2rem", fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1.2, margin: "0 0 8px 0" }}>
               {salutation}
@@ -180,7 +180,7 @@ export default function HomePage() {
       </div>
 
       {/* ── Content ── */}
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
 
         {/* Platform stats row */}
         {pipelines.length > 0 && (

@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { PageLayout } from "../../components/PageLayout";
+import { ForgeLoader } from "../../components/ForgeLoader";
 
 interface SearchResult {
   id: string;
@@ -343,24 +344,17 @@ export default function LineagePage() {
             </div>
           </div>
 
-          {lineageLoading && (
-            <div style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>
-              <i className="fas fa-spinner fa-spin" style={{ fontSize: 24, marginBottom: 10, display: "block" }} />
-              Loading lineage from Purview…
-            </div>
-          )}
+          <div style={{ background: "#fff", border: `1px solid ${lineageError ? "#fca5a5" : "#e2e8f0"}`, borderTop: `3px solid ${lineageError ? "#ef4444" : "var(--forge-primary)"}`, borderRadius: 12, padding: lineageLoading || lineageError ? 0 : 24, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+            {lineageLoading && <ForgeLoader text="Loading lineage from Purview…" fullscreen={false} />}
 
-          {lineageError && (
-            <div style={{
-              background: "#fff", border: "1px solid #fca5a5", borderTop: "3px solid #ef4444",
-              borderRadius: 12, padding: "16px 20px", color: "#dc2626",
-            }}>
-              <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
-              {lineageError}
-            </div>
-          )}
+            {lineageError && (
+              <div style={{ padding: "16px 20px", color: "#dc2626" }}>
+                <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
+                {lineageError}
+              </div>
+            )}
 
-          {lineageData && !lineageLoading && (
+            {lineageData && !lineageLoading && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
               {/* Upstream */}
               <div>
@@ -410,7 +404,8 @@ export default function LineagePage() {
                 )}
               </div>
             </div>
-          )}
+            )}
+          </div>
         </div>
       )}
 

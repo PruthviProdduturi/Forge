@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { PageLayout } from "../../components/PageLayout";
+import { ForgeLoader } from "../../components/ForgeLoader";
 
 const ACCENT = "var(--forge-primary)";
 
@@ -168,23 +169,6 @@ export default function PipelinesPage() {
         </div>
       </div>
 
-      {loading && (
-        <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-          <i className="fas fa-spinner fa-spin" style={{ fontSize: 28, marginBottom: 12, display: "block" }} />
-          Loading pipelines…
-        </div>
-      )}
-
-      {error && (
-        <div style={{
-          background: "#fff", border: "1px solid #fca5a5", borderTop: `3px solid #ef4444`,
-          borderRadius: 12, padding: "20px 24px", color: "#dc2626",
-        }}>
-          <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
-          {error}
-        </div>
-      )}
-
       {triggerMsg && (
         <div style={{
           background: triggerMsg.ok ? "#f0fdf4" : "#fff1f2",
@@ -197,8 +181,17 @@ export default function PipelinesPage() {
         </div>
       )}
 
-      {!loading && !error && (
-        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+      <div style={{ background: "#fff", border: `1px solid ${error ? "#fca5a5" : "#e2e8f0"}`, borderTop: `3px solid ${error ? "#ef4444" : ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+        {loading && <ForgeLoader text="Loading pipelines…" fullscreen={false} />}
+
+        {error && (
+          <div style={{ padding: "20px 24px", color: "#dc2626" }}>
+            <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
+            {error}
+          </div>
+        )}
+
+        {!loading && !error && (<>
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
             No pipelines found
@@ -279,8 +272,8 @@ export default function PipelinesPage() {
             </tbody>
           </table>
         </>)}
-        </div>
-      )}
+      </>)}
+      </div>
     </PageLayout>
   );
 }
