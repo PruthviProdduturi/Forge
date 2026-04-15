@@ -429,21 +429,14 @@ if ! dry; then
       if [[ -d "${dag_dir}" ]]; then
         for dag in "${dag_dir}"/*.py; do
           [[ -f "${dag}" ]] || continue
-          # Convert Git Bash path to Windows path so kubectl (Windows binary) can read it
-          _dag_win="$(cd "$(dirname "${dag}")" && pwd -W)/$(basename "${dag}")"
-          kubectl cp "${_dag_win}" \
-            "${_AIRFLOW_NS}/${_SCHEDULER_POD}:/opt/airflow/dags/$(basename "${dag}")" \
+          # cd into the dag dir so kubectl cp sees a relative path (no drive letter colon)
+          _dag_name="$(basename "${dag}")"
+          (cd "$(dirname "${dag}")" && kubectl cp "${_dag_name}" \
+            "${_AIRFLOW_NS}/${_SCHEDULER_POD}:/opt/airflow/dags/${_dag_name}" \
             --context "${_KUBE_CTX}" \
-            -c scheduler \
-            2>&1 | grep -v "^$" | sed "s/^/    /" || true
-          # Check exit code separately since we piped stderr
-          if kubectl exec -n "${_AIRFLOW_NS}" "${_SCHEDULER_POD}" -c scheduler \
-              --context "${_KUBE_CTX}" \
-              -- test -f "/opt/airflow/dags/$(basename "${dag}")" 2>/dev/null; then
-            log "  ✓ $(basename "${dag}")"
-          else
-            warn "  failed to copy $(basename "${dag}")"
-          fi
+            -c scheduler 2>&1) \
+            && log "  ✓ ${_dag_name}" \
+            || warn "  failed to copy ${_dag_name}"
         done
       fi
     done
