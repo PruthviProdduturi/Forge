@@ -88,12 +88,15 @@ tag_ips_in_rg() {
   while IFS= read -r ip; do
     [[ -z "$ip" ]] && continue
     echo "    Tagging: $ip"
-    az network public-ip update \
-      --resource-group "$rg" \
-      --name "$ip" \
-      --ip-tags "FirstPartyUsage=$IP_TAG_VALUE" \
-      --output none
-    echo "    Tagged: $ip"
+    if az network public-ip update \
+        --resource-group "$rg" \
+        --name "$ip" \
+        --ip-tags "FirstPartyUsage=$IP_TAG_VALUE" \
+        --output none 2>&1; then
+      echo "    Tagged: $ip"
+    else
+      echo "    Skipped: $ip (static/in-use IP — Azure blocks IP tag changes on these)"
+    fi
   done <<< "$ips"
 
   echo "    Done."
