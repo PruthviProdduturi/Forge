@@ -180,73 +180,75 @@ export default function LineagePage() {
       subtitle="Trace upstream and downstream dependencies from Microsoft Purview"
       heroContent={heroContent}
     >
-      {/* Search bar */}
-      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, padding: "20px 24px", marginBottom: 24, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-        <div style={{ display: "flex", gap: 10 }}>
-          <div style={{ position: "relative", flex: 1 }}>
-            <i className="fas fa-magnifying-glass" style={{
-              position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
-              color: "#94a3b8", fontSize: 14,
-            }} />
-            <input
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleSearch()}
-              placeholder="Search for a dataset by name…"
-              style={{
-                width: "100%", padding: "10px 14px 10px 42px",
-                borderRadius: 9, border: "1px solid #e2e8f0",
-                fontSize: 14, outline: "none", background: "#f8fafc",
-                boxSizing: "border-box", color: "#0f172a",
-              }}
-            />
-          </div>
-          <button
-            onClick={handleSearch}
-            disabled={searching || !query.trim()}
-            style={{
-              padding: "10px 22px", borderRadius: 9,
-              border: "none", background: "var(--forge-primary)",
-              color: "#fff", fontSize: 14, fontWeight: 600,
-              cursor: searching || !query.trim() ? "not-allowed" : "pointer",
-              opacity: !query.trim() ? 0.5 : 1,
-              display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap",
-            }}
-          >
-            <i className={`fas ${searching ? "fa-spinner fa-spin" : "fa-search"}`} style={{ fontSize: 12 }} />
-            {searching ? "Searching…" : "Search"}
-          </button>
-        </div>
-      </div>
-
-      {searchError && (
-        <div style={{
-          background: "#fff", border: "1px solid #fca5a5", borderTop: "3px solid #ef4444",
-          borderRadius: 12, padding: "16px 20px", color: "#dc2626", marginBottom: 20,
-        }}>
-          <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
-          {searchError}
-        </div>
-      )}
-
-      {/* Search results */}
-      {searchResults !== null && !selectedEntity && (
-        <div style={{ marginBottom: 28 }}>
-          <div style={{
-            fontSize: 11, fontWeight: 700, letterSpacing: "0.09em",
-            textTransform: "uppercase", color: "#94a3b8", marginBottom: 12,
-          }}>
-            {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for &ldquo;{query}&rdquo;
-          </div>
-          {searchResults.length === 0 && (
-            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-              <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-                No datasets found matching your query.
+      {/* Main card — search + results/empty in one */}
+      {!selectedEntity && (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)", marginBottom: 24 }}>
+          {/* Search row */}
+          <div style={{ padding: "20px 24px", borderBottom: "1px solid #f1f5f9" }}>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ position: "relative", flex: 1 }}>
+                <i className="fas fa-magnifying-glass" style={{
+                  position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+                  color: "#94a3b8", fontSize: 14,
+                }} />
+                <input
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleSearch()}
+                  placeholder="Search for a dataset by name…"
+                  style={{
+                    width: "100%", padding: "10px 14px 10px 42px",
+                    borderRadius: 9, border: "1px solid #e2e8f0",
+                    fontSize: 14, outline: "none", background: "#f8fafc",
+                    boxSizing: "border-box", color: "#0f172a",
+                  }}
+                />
               </div>
+              <button
+                onClick={handleSearch}
+                disabled={searching || !query.trim()}
+                style={{
+                  padding: "10px 22px", borderRadius: 9,
+                  border: "none", background: "var(--forge-primary)",
+                  color: "#fff", fontSize: 14, fontWeight: 600,
+                  cursor: searching || !query.trim() ? "not-allowed" : "pointer",
+                  opacity: !query.trim() ? 0.5 : 1,
+                  display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap",
+                }}
+              >
+                <i className={`fas ${searching ? "fa-spinner fa-spin" : "fa-search"}`} style={{ fontSize: 12 }} />
+                {searching ? "Searching…" : "Search"}
+              </button>
+            </div>
+          </div>
+
+          {/* Content below search */}
+          {searchError && (
+            <div style={{ padding: "16px 24px", color: "#dc2626", fontSize: 13, borderBottom: "1px solid #fca5a5", background: "#fef2f2" }}>
+              <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />
+              {searchError}
             </div>
           )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {searchResults.map(r => (
+
+          {!searching && searchResults === null && !searchError && (
+            <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: 6 }}>No lineage selected</div>
+              <div style={{ fontSize: 13 }}>Enter a dataset name above to explore upstream sources and downstream consumers.</div>
+            </div>
+          )}
+
+          {searchResults !== null && (
+            <>
+              <div style={{ padding: "12px 24px 8px", fontSize: 11, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "#94a3b8" }}>
+                {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for &ldquo;{query}&rdquo;
+              </div>
+              {searchResults.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 0", color: "#94a3b8" }}>
+                  No datasets found matching your query.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "8px 24px 20px" }}>
+                  {searchResults.map(r => (
               <div
                 key={r.id}
                 onClick={() => handleSelect(r)}
@@ -285,9 +287,12 @@ export default function LineagePage() {
                   </span>
                   <i className="fas fa-arrow-right" style={{ color: "#cbd5e1", fontSize: 12 }} />
                 </div>
-              </div>
-            ))}
-          </div>
+                  </div>
+                ))}
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 
@@ -409,15 +414,6 @@ export default function LineagePage() {
         </div>
       )}
 
-      {/* Empty state */}
-      {!searching && searchResults === null && !selectedEntity && (
-        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-          <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: 6 }}>No lineage selected</div>
-            <div style={{ fontSize: 13 }}>Enter a dataset name above to explore upstream sources and downstream consumers.</div>
-          </div>
-        </div>
-      )}
     </PageLayout>
   );
 }
