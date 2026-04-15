@@ -175,8 +175,10 @@ export default function LineagePage() {
             {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for &ldquo;{query}&rdquo;
           </div>
           {searchResults.length === 0 && (
-            <div style={{ color: "#64748b", fontSize: 14, padding: "20px 0" }}>
-              No datasets found matching your query.
+            <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+              <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+                No datasets found matching your query.
+              </div>
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -345,15 +347,9 @@ export default function LineagePage() {
 
       {/* Empty state */}
       {!searching && searchResults === null && !selectedEntity && (
-        <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-          <div style={{ fontSize: 56, opacity: 0.15, marginBottom: 16 }}>
-            <i className="fas fa-share-nodes" />
-          </div>
-          <div style={{ fontSize: 16, fontWeight: 600, color: "#334155", marginBottom: 8 }}>
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+          <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
             Search for a dataset to view its lineage
-          </div>
-          <div style={{ fontSize: 13, color: "#94a3b8", maxWidth: 380, margin: "0 auto", lineHeight: 1.6 }}>
-            Enter a dataset name above to see its upstream sources and downstream consumers from Microsoft Purview.
           </div>
         </div>
       )}

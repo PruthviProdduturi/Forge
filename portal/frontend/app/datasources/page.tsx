@@ -738,9 +738,7 @@ export default function DataSourcesPage() {
           <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
           {filtered.length === 0 ? (
             <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-              <div style={{ fontSize: 14, color: "#94a3b8" }}>
-                {search || activeType !== "all" ? "No sources match your filters" : "No data sources registered yet"}
-              </div>
+              {search || activeType !== "all" ? "No sources match your filters" : "No data sources registered yet"}
             </div>
           ) : (<>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
