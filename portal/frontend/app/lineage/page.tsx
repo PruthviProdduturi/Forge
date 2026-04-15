@@ -349,7 +349,8 @@ export default function LineagePage() {
       {!searching && searchResults === null && !selectedEntity && (
         <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
           <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-            Search for a dataset to view its lineage
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#334155", marginBottom: 6 }}>No lineage selected</div>
+            <div style={{ fontSize: 13 }}>Enter a dataset name above to explore upstream sources and downstream consumers.</div>
           </div>
         </div>
       )}
