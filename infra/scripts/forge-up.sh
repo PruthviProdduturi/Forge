@@ -1862,60 +1862,35 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# Phase 8 — sync-jobs.sh: generate + upload DAGs, forge_lib.zip, Spark jobs
+# Phase 8 — Sync pipelines from DSEngCoreData
+#   Resolves the data repo in order:
+#     1. Sibling checkout  ../DSEngCoreData  (local dev — already cloned)
+#     2. Temp clone of GIT_REPO             (CI / fresh machine)
+#   Then runs sync-jobs.sh --full which:
+#     - Generates Spark jobs + DAGs from .forge.ts manifests
+#     - Uploads .py → ADLS code/spark/jobs/
+#     - Uploads .yaml → ADLS code/dq/rules/
+#     - kubectl cp DAGs directly into the Airflow scheduler pod
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_SYNC" == "false" ]]; then
-  echo "━━━ [8/8] Sync pipelines (DAGs + forge_lib.zip) ━━━━━━━━━━━━━━"
-  FORGE_ENV="$ENV" OWNER_ALIAS="$ALIAS" FORGE_STORAGE_ACCOUNT="$ADLS_ACCOUNT" \
-    bash "${SCRIPT_DIR}/sync-jobs.sh" --full
-  echo ""
+  echo "━━━ [8/8] Sync pipelines from DSEngCoreData ━━━━━━━━━━━━━━━━━━"
 
-  # ── DAG kubectl-cp fallback (when git-sync is disabled) ───────────────────
-  # git-sync is the primary DAG delivery mechanism. When it's disabled (e.g.
-  # ADO MI access not yet set up), copy DAG files directly into the scheduler
-  # and dag-processor pods. Idempotent — safe to run even when git-sync is on.
-  DAGS_SRC="${REPO_ROOT}/orchestration/airflow/dags"
-  if [[ -d "$DAGS_SRC" ]]; then
-    mapfile -t DAG_FILES < <(find "$DAGS_SRC" -name "*.py" 2>/dev/null)
-    if [[ ${#DAG_FILES[@]} -gt 0 ]]; then
-      echo "  [8.1] Copying ${#DAG_FILES[@]} DAG file(s) into Airflow pods..."
-
-      # Scheduler is always airflow-scheduler-0 (StatefulSet)
-      SCHED_POD="airflow-scheduler-0"
-      # dag-processor is a Deployment — look up by label
-      DAGPROC_POD=$(kubectl get pod -n airflow --context "$ORCH_CLUSTER" \
-        -l component=dag-processor \
-        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-
-      for dag_file in "${DAG_FILES[@]}"; do
-        dag_name="$(basename "$dag_file")"
-        # Only copy if the remote file differs — avoids unnecessary pod I/O on re-runs.
-        local_md5=$(md5sum "$dag_file" 2>/dev/null | awk '{print $1}' || echo "")
-        remote_md5=$(kubectl exec -n airflow "$SCHED_POD" -c scheduler \
-          --context "$ORCH_CLUSTER" \
-          -- md5sum "/opt/airflow/dags/${dag_name}" 2>/dev/null | awk '{print $1}' || echo "")
-        if [[ -n "$local_md5" && "$local_md5" == "$remote_md5" ]]; then
-          echo "    unchanged  : ${dag_name}"
-          continue
-        fi
-        kubectl cp "$dag_file" \
-          "airflow/${SCHED_POD}:/opt/airflow/dags/${dag_name}" \
-          -c scheduler \
-          --context "$ORCH_CLUSTER" 2>/dev/null \
-          && echo "    scheduler  ← ${dag_name}" \
-          || echo "    WARN: failed to copy ${dag_name} to scheduler"
-        if [[ -n "$DAGPROC_POD" ]]; then
-          kubectl cp "$dag_file" \
-            "airflow/${DAGPROC_POD}:/opt/airflow/dags/${dag_name}" \
-            -c dag-processor \
-            --context "$ORCH_CLUSTER" 2>/dev/null \
-            && echo "    dag-proc   ← ${dag_name}" \
-            || echo "    WARN: failed to copy ${dag_name} to dag-processor"
-        fi
-      done
-      echo "    DAGs will appear in Airflow UI within ~30s"
-    fi
+  # Resolve data repo path
+  _SIBLING_DATA_REPO="$(cd "${REPO_ROOT}/../DSEngCoreData" 2>/dev/null && pwd || true)"
+  if [[ -n "${_SIBLING_DATA_REPO}" && -d "${_SIBLING_DATA_REPO}" ]]; then
+    _DATA_REPO="${_SIBLING_DATA_REPO}"
+    echo "  Data repo    : ${_DATA_REPO} (local checkout)"
+  else
+    _DATA_REPO="/tmp/DSEngCoreData-deploy"
+    echo "  Data repo    : cloning ${GIT_REPO} → ${_DATA_REPO}"
+    rm -rf "${_DATA_REPO}"
+    git clone --depth 1 --branch "${GIT_BRANCH}" "${GIT_REPO}" "${_DATA_REPO}" 2>&1 \
+      | sed 's/^/    /'
   fi
+
+  FORGE_ENV="$ENV" OWNER_ALIAS="$ALIAS" FORGE_STORAGE_ACCOUNT="$ADLS_ACCOUNT" \
+    bash "${SCRIPT_DIR}/sync-jobs.sh" --full --data-repo "${_DATA_REPO}"
+  echo ""
 else
   echo "━━━ [8/8] Sync pipelines — skipped (--skip-sync) ━━━━━━━━━━━━━"
 fi
