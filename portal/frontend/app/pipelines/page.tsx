@@ -55,6 +55,7 @@ export default function PipelinesPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeStatus, setActiveStatus] = useState<"active" | "paused" | "failed" | null>(null);
   const [triggering, setTriggering] = useState<string | null>(null);
   const [triggerMsg, setTriggerMsg] = useState<{ dag_id: string; ok: boolean; msg: string } | null>(null);
 
@@ -75,6 +76,9 @@ export default function PipelinesPage() {
   const filtered = useMemo(() => {
     let list = pipelines;
     if (activeTag) list = list.filter(p => p.tags.includes(activeTag));
+    if (activeStatus === "active") list = list.filter(p => p.is_active && !p.is_paused);
+    if (activeStatus === "paused") list = list.filter(p => p.is_paused);
+    if (activeStatus === "failed") list = list.filter(p => p.last_run_state === "failed");
     if (!search.trim()) return list;
     const q = search.toLowerCase();
     return list.filter(
@@ -82,7 +86,7 @@ export default function PipelinesPage() {
         p.description.toLowerCase().includes(q) ||
         p.tags.some(t => t.toLowerCase().includes(q))
     );
-  }, [pipelines, search, activeTag]);
+  }, [pipelines, search, activeTag, activeStatus]);
 
 
   async function handleTrigger(dag_id: string) {
@@ -130,27 +134,27 @@ export default function PipelinesPage() {
     >
       {/* Tag filter + Search */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
+        {/* Tag filter */}
         <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
-          <button
-            onClick={() => setActiveTag(null)}
-            style={{
+          <button onClick={() => setActiveTag(null)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: activeTag === null ? "var(--forge-primary)" : "transparent", color: activeTag === null ? "#fff" : "#64748b" }}>All</button>
+          {allTags.map(tag => (
+            <button key={tag} onClick={() => setActiveTag(activeTag === tag ? null : tag)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, textTransform: "capitalize", background: activeTag === tag ? "var(--forge-primary)" : "transparent", color: activeTag === tag ? "#fff" : "#64748b" }}>{tag}</button>
+          ))}
+        </div>
+        {/* Status filter */}
+        <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+          {([
+            { val: null,     label: "All",    color: "var(--forge-primary)" },
+            { val: "active", label: "Active", color: "#16a34a" },
+            { val: "paused", label: "Paused", color: "#94a3b8" },
+            { val: "failed", label: "Failed", color: "#dc2626" },
+          ] as const).map(s => (
+            <button key={String(s.val)} onClick={() => setActiveStatus(s.val)} style={{
               padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
               fontSize: 13, fontWeight: 600,
-              background: activeTag === null ? "var(--forge-primary)" : "transparent",
-              color: activeTag === null ? "#fff" : "#64748b",
-            }}
-          >All</button>
-          {allTags.map(tag => (
-            <button
-              key={tag}
-              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-              style={{
-                padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-                fontSize: 13, fontWeight: 600, textTransform: "capitalize",
-                background: activeTag === tag ? "var(--forge-primary)" : "transparent",
-                color: activeTag === tag ? "#fff" : "#64748b",
-              }}
-            >{tag}</button>
+              background: activeStatus === s.val ? s.color : "transparent",
+              color: activeStatus === s.val ? "#fff" : "#64748b",
+            }}>{s.label}</button>
           ))}
         </div>
         <div style={{ position: "relative", maxWidth: 360, flex: 1 }}>
