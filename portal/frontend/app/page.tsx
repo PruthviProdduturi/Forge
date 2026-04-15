@@ -103,10 +103,10 @@ export default function HomePage() {
     : null;
 
   const statusItems = [
-    { label: "Airflow", ok: health?.checks.airflow ?? null, icon: "fa-calendar-check" },
-    { label: "Trino", ok: health?.checks.trino ?? null, icon: "fa-database" },
-    { label: "Spark", ok: health?.checks.spark_connect ?? null, icon: "fa-fire-flame-curved" },
     { label: "ADLS", ok: health?.checks.adls ?? null, icon: "fa-hard-drive" },
+    { label: "Airflow", ok: health?.checks.airflow ?? null, icon: "fa-calendar-check" },
+    { label: "Spark", ok: health?.checks.spark_connect ?? null, icon: "fa-fire-flame-curved" },
+    { label: "Trino", ok: health?.checks.trino ?? null, icon: "fa-database" },
   ];
 
   // Recent pipeline runs — sort by last_run_at descending, take top 8
