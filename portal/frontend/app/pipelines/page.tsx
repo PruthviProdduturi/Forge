@@ -144,12 +144,11 @@ export default function PipelinesPage() {
         {/* Status filter */}
         <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
           {([
-            { val: null,     label: "All",    color: "var(--forge-primary)" },
             { val: "active", label: "Active", color: "#16a34a" },
             { val: "paused", label: "Paused", color: "#94a3b8" },
             { val: "failed", label: "Failed", color: "#dc2626" },
           ] as const).map(s => (
-            <button key={String(s.val)} onClick={() => setActiveStatus(s.val)} style={{
+            <button key={s.val} onClick={() => setActiveStatus(activeStatus === s.val ? null : s.val)} style={{
               padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
               fontSize: 13, fontWeight: 600,
               background: activeStatus === s.val ? s.color : "transparent",

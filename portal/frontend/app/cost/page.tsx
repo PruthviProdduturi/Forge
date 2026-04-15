@@ -140,44 +140,75 @@ function RgCard({ rg, days }: { rg: RgCost; days: number }) {
   );
 }
 
+const PERIODS = [7, 30, 90] as const;
+type Period = typeof PERIODS[number];
+
 export default function CostPage() {
   const { getToken } = useAuth();
-  const [rgs, setRgs] = useState<RgCost[]>([]);
+  const [cache, setCache] = useState<Partial<Record<Period, RgCost[]>>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState<Period>(30);
 
+  // Fetch all periods in parallel on mount — period switching is instant
   useEffect(() => {
     setLoading(true);
     setError(null);
-    apiFetch<RgCost[]>(`/api/cost/by-rg?days=${days}`, getToken)
-      .then(setRgs)
+    Promise.all(
+      PERIODS.map(d =>
+        apiFetch<RgCost[]>(`/api/cost/by-rg?days=${d}`, getToken).then(data => [d, data] as const)
+      )
+    )
+      .then(results => {
+        const c: Partial<Record<Period, RgCost[]>> = {};
+        for (const [d, data] of results) c[d] = data;
+        setCache(c);
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [getToken, days]);
+  }, [getToken]);
 
+  const rgs = cache[days] ?? [];
   const totalAcrossRgs = rgs
     .filter((r) => r.total_cost !== null)
     .reduce((s, r) => s + (r.total_cost ?? 0), 0);
   const currency = rgs[0]?.currency ?? "GBP";
 
   const heroContent = (
-    <div style={{ display: "flex", gap: 6 }}>
-      {[7, 30, 90].map((d) => (
-        <button
-          key={d}
-          onClick={() => setDays(d)}
-          type="button"
-          style={{
-            padding: "5px 14px", borderRadius: 8,
-            border: "1px solid rgba(255,255,255,0.3)",
-            background: days === d ? "rgba(255,255,255,0.25)" : "transparent",
-            color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
-          }}
-        >
-          {d}d
-        </button>
-      ))}
+    <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+      {/* Total spend */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "rgba(255,255,255,0.5)" }}>
+          Total — last {days} days
+        </span>
+        <span style={{ fontSize: 28, fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+          {loading ? "—" : formatCurrency(totalAcrossRgs, currency)}
+        </span>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+          across {rgs.filter((r) => r.total_cost !== null).length || "—"} resource groups
+        </span>
+      </div>
+
+      <div style={{ width: 1, height: 48, background: "rgba(255,255,255,0.2)" }} />
+
+      {/* Period picker */}
+      <div style={{ display: "flex", gap: 6 }}>
+        {[7, 30, 90].map((d) => (
+          <button
+            key={d}
+            onClick={() => setDays(d)}
+            type="button"
+            style={{
+              padding: "5px 14px", borderRadius: 8,
+              border: "1px solid rgba(255,255,255,0.3)",
+              background: days === d ? "rgba(255,255,255,0.25)" : "transparent",
+              color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            {d}d
+          </button>
+        ))}
+      </div>
     </div>
   );
 
@@ -203,26 +234,6 @@ export default function CostPage() {
 
       {!loading && !error && (
         <>
-          {/* Combined total */}
-          {rgs.some((r) => r.total_cost !== null) && (
-            <div style={{
-              display: "inline-flex", flexDirection: "column", gap: 4,
-              padding: "16px 24px", background: "#fff", borderRadius: 14,
-              border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-              marginBottom: 28,
-            }}>
-              <span style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#94a3b8" }}>
-                Total — last {days} days
-              </span>
-              <span style={{ fontSize: 32, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-                {formatCurrency(totalAcrossRgs, currency)}
-              </span>
-              <span style={{ fontSize: 13, color: "#64748b" }}>
-                across {rgs.filter((r) => r.total_cost !== null).length} resource group{rgs.length !== 1 ? "s" : ""}
-              </span>
-            </div>
-          )}
-
           {/* RG cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(440px, 1fr))", gap: 24, marginBottom: 32 }}>
             {rgs.map((rg) => (
