@@ -77,12 +77,11 @@ export function resolveOutputPaths(
   manifest: ForgeJobManifest,
   outputDir: string
 ): GeneratedPaths {
-  const folder = dagFolder(manifest.layer);
   return {
-    pythonJob: path.join(outputDir, "src", "spark", "jobs", `${manifest.name}.py`),
-    dag: path.join(outputDir, "src", "airflow", "dags", folder, `${manifest.name}_dag.py`),
+    pythonJob: path.join(outputDir, "jobs", `${manifest.name}.py`),
+    dag: path.join(outputDir, "dags", `${manifest.name}_dag.py`),
     dqRules: manifest.dq
-      ? path.join(outputDir, "src", "dq", "rules", `${manifest.name}.yaml`)
+      ? path.join(outputDir, "dq", `${manifest.name}.yaml`)
       : null,
   };
 }

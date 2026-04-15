@@ -82,16 +82,16 @@ config:
     parsing_processes: "2"              # 2 parsers sufficient for ≤10 DAGs
 
 # ---------------------------------------------------------------------------
-# DAG delivery — git-sync from Azure DevOps repo
+# DAG delivery — git-sync from DSEngCoreData (user pipeline repo)
 # forge-up.sh creates the airflow-git-credentials secret with PAT token.
 # Syncs every 30s; subPath must point to the dags folder inside the repo.
 # ---------------------------------------------------------------------------
 dags:
   gitSync:
     enabled: false
-    repo: "https://dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra"  # configurable via --git-repo
-    branch: "user/PrProddu/StarRocks"  # configurable via --git-branch
-    subPath: "Forge/orchestration/airflow/dags"
+    repo: "https://dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEngCoreData"  # configurable via --git-repo
+    branch: "main"  # configurable via --git-branch
+    subPath: "sources/dev/CoreData/src"
     depth: 1
     credentialsSecret: airflow-git-credentials
     period: 30s

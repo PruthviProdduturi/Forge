@@ -41,26 +41,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLI_ENTRY="${REPO_ROOT}/sdk/cli/src/index.ts"
-EXAMPLES_DIR="${REPO_ROOT}/examples"
-MANIFESTS_DIR="${EXAMPLES_DIR}/src/spark/jobs"
-# DAGs live in examples/src — Airflow git-sync reads from the pipelines repo directly
-GENERATED_DAGS_DIR="${EXAMPLES_DIR}/src/airflow/dags"
-DQ_RULES_DIR="${EXAMPLES_DIR}/src/dq/rules"
 
 FORGE_ENV="${FORGE_ENV:-dev}"
 OWNER_ALIAS="${OWNER_ALIAS:-}"
 STORAGE_ACCOUNT="${FORGE_STORAGE_ACCOUNT:-}"
-
-if [[ -z "${STORAGE_ACCOUNT}" && -n "${OWNER_ALIAS}" ]]; then
-  STORAGE_ACCOUNT="forgeadls${OWNER_ALIAS}${FORGE_ENV}"
-fi
-
-CODE_CONTAINER="code"
-STATE_CONTAINER="state"
-JOBS_BLOB_PREFIX="spark/jobs"
-DQ_BLOB_PREFIX="dq/rules"
-STATE_LAST_DEPLOY="last_deploy_${FORGE_ENV}.json"
-STATE_DEPLOY_LOG="deployments_${FORGE_ENV}.jsonl"
+DATA_REPO=""
 
 # ---------------------------------------------------------------------------
 # Args
@@ -74,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --job)           JOB_FILTER="$2"; shift 2 ;;
     --dry-run)       DRY_RUN=true; shift ;;
     --full)          FULL_DEPLOY=true; shift ;;
+    --data-repo)     DATA_REPO="$2"; shift 2 ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# Req/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -81,6 +67,29 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
+
+# Resolve data repo — flag > env var > sibling DSEngCoreData folder
+if [[ -z "$DATA_REPO" ]]; then
+  DATA_REPO="${FORGE_DATA_REPO:-$(cd "${REPO_ROOT}/../DSEngCoreData" 2>/dev/null && pwd || true)}"
+fi
+if [[ -z "$DATA_REPO" || ! -d "$DATA_REPO" ]]; then
+  echo "ERROR: data repo not found — pass --data-repo <path> or set FORGE_DATA_REPO" >&2
+  exit 1
+fi
+
+# Manifests live under sources/dev/CoreData/src/ (recurse to find all manifests/ subfolders)
+DATA_SRC="${DATA_REPO}/sources/dev/CoreData/src"
+
+if [[ -z "${STORAGE_ACCOUNT}" && -n "${OWNER_ALIAS}" ]]; then
+  STORAGE_ACCOUNT="forgeadls$(echo "${OWNER_ALIAS}${FORGE_ENV}" | tr '[:upper:]' '[:lower:]')"
+fi
+
+CODE_CONTAINER="code"
+STATE_CONTAINER="state"
+JOBS_BLOB_PREFIX="spark/jobs"
+DQ_BLOB_PREFIX="dq/rules"
+STATE_LAST_DEPLOY="last_deploy_${FORGE_ENV}.json"
+STATE_DEPLOY_LOG="deployments_${FORGE_ENV}.jsonl"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -213,6 +222,17 @@ if ! dry; then
   fi
 fi
 
+# Ensure required containers exist (idempotent)
+if ! dry; then
+  for _c in "${CODE_CONTAINER}" "${STATE_CONTAINER}"; do
+    az storage container create \
+      --account-name "${STORAGE_ACCOUNT}" \
+      --name "${_c}" \
+      --auth-mode login \
+      --output none 2>/dev/null || true
+  done
+fi
+
 if ! command -v npx &>/dev/null; then
   echo "ERROR: npx not found — install Node.js ≥ 20" >&2
   exit 1
@@ -223,24 +243,25 @@ fi
 # ---------------------------------------------------------------------------
 section "Determine scope"
 
-CURRENT_COMMIT="$(git -C "${REPO_ROOT}" rev-parse HEAD)"
+CURRENT_COMMIT="$(git -C "${DATA_REPO}" rev-parse HEAD)"
 DEPLOY_ID="deploy-$(date -u +%Y%m%dT%H%M%SZ)-${CURRENT_COMMIT:0:8}"
 log "Current commit : ${CURRENT_COMMIT}"
 log "Deployment ID  : ${DEPLOY_ID}"
 log "Environment    : ${FORGE_ENV}"
+log "Data repo      : ${DATA_REPO}"
 
-# Discover all manifests first
-mapfile -t ALL_MANIFEST_FILES < <(find "${MANIFESTS_DIR}" -name "*.forge.ts" | sort)
+# Discover all manifests recursively under sources/dev/CoreData/src/
+# Structure: {project}/manifests/*.forge.ts
+mapfile -t ALL_MANIFEST_FILES < <(find "${DATA_SRC}" -path "*/manifests/*.forge.ts" | sort)
 
 if [[ ${#ALL_MANIFEST_FILES[@]} -eq 0 ]]; then
-  warn "No .forge.ts manifests found in ${MANIFESTS_DIR}"
+  warn "No .forge.ts manifests found under ${DATA_SRC}"
   exit 0
 fi
 
 MANIFEST_FILES=()
 
 if [[ -n "${JOB_FILTER}" ]]; then
-  # --job flag overrides everything — explicit single-job run
   for mf in "${ALL_MANIFEST_FILES[@]}"; do
     if [[ "$(basename "${mf}" .forge.ts)" == "${JOB_FILTER}" ]]; then
       MANIFEST_FILES+=("${mf}")
@@ -253,12 +274,10 @@ if [[ -n "${JOB_FILTER}" ]]; then
   log "Mode: single-job (--job ${JOB_FILTER})"
 
 elif [[ "${FULL_DEPLOY}" == "true" ]]; then
-  # --full flag: deploy everything regardless of what changed
   MANIFEST_FILES=("${ALL_MANIFEST_FILES[@]}")
   log "Mode: full deploy (--full)"
 
 else
-  # Incremental: only deploy manifests changed since last successful deployment
   LAST_COMMIT=""
   if ! dry; then
     LAST_STATE="$(download_blob_text "${STATE_LAST_DEPLOY}")"
@@ -272,10 +291,9 @@ else
     MANIFEST_FILES=("${ALL_MANIFEST_FILES[@]}")
   else
     log "Mode: incremental (last deployed commit: ${LAST_COMMIT:0:8})"
-    # Find .forge.ts files that changed between last deployed commit and HEAD
     mapfile -t CHANGED_FORGE < <(
-      git -C "${REPO_ROOT}" diff --name-only "${LAST_COMMIT}...${CURRENT_COMMIT}" \
-        -- "Forge/examples/src/spark/jobs/*.forge.ts" 2>/dev/null \
+      git -C "${DATA_REPO}" diff --name-only "${LAST_COMMIT}...${CURRENT_COMMIT}" \
+        -- "*/manifests/*.forge.ts" 2>/dev/null \
       | xargs -I{} basename {} .forge.ts 2>/dev/null \
       | sort -u
     )
@@ -287,9 +305,7 @@ else
     fi
 
     log "Changed manifests since ${LAST_COMMIT:0:8}:"
-    for name in "${CHANGED_FORGE[@]}"; do
-      log "  - ${name}"
-    done
+    for name in "${CHANGED_FORGE[@]}"; do log "  - ${name}"; done
 
     for mf in "${ALL_MANIFEST_FILES[@]}"; do
       job_name="$(basename "${mf}" .forge.ts)"
@@ -321,28 +337,29 @@ GENERATED_DQ=()
 
 for manifest in "${MANIFEST_FILES[@]}"; do
   job_name="$(basename "${manifest}" .forge.ts)"
-  log "→ ${job_name}"
+  # Project dir is two levels up from the manifest: {project}/manifests/{name}.forge.ts
+  project_dir="$(dirname "$(dirname "${manifest}")")"
+  log "→ ${job_name} ($(basename "${project_dir}"))"
 
   if dry; then
-    log "  [dry-run] would run: npx tsx ${CLI_ENTRY} generate --job ${job_name} --manifest-dir ${MANIFESTS_DIR} --dir ${EXAMPLES_DIR}"
-    GENERATED_PY+=("${MANIFESTS_DIR}/${job_name}.py")
-    GENERATED_DQ+=("${DQ_RULES_DIR}/${job_name}.yaml")
+    log "  [dry-run] would run: forge generate --job ${job_name} --manifest-dir ${project_dir}/manifests --dir ${project_dir}"
+    GENERATED_PY+=("${project_dir}/jobs/${job_name}.py")
+    GENERATED_DQ+=("${project_dir}/dq/${job_name}.yaml")
   else
     npx tsx "${CLI_ENTRY}" generate \
       --job "${job_name}" \
-      --manifest-dir "${MANIFESTS_DIR}" \
-      --dir "${EXAMPLES_DIR}" \
+      --manifest-dir "${project_dir}/manifests" \
+      --dir "${project_dir}" \
       2>&1 | sed "s/^/    /"
 
-    py_file="${MANIFESTS_DIR}/${job_name}.py"
-    dq_file="${DQ_RULES_DIR}/${job_name}.yaml"
+    py_file="${project_dir}/jobs/${job_name}.py"
+    dq_file="${project_dir}/dq/${job_name}.yaml"
     [[ -f "${py_file}" ]] && GENERATED_PY+=("${py_file}")
     [[ -f "${dq_file}" ]] && GENERATED_DQ+=("${dq_file}")
   fi
 done
 
-# DAGs live in examples/src/airflow/dags/ — Airflow git-sync reads from the
-# pipelines repo directly. No copy step needed.
+# DAGs live in {project}/dags/ — Airflow git-sync reads from DSEngCoreData directly.
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -378,8 +395,47 @@ else
   done
 fi
 
-# Step 6 — DAG push handled by pipelines repo CI (Airflow git-sync reads that repo directly)
+# ---------------------------------------------------------------------------
+# Step 6 — Push DAGs directly to Airflow scheduler pod (dev only)
+#   For prod, DAGs are delivered via git-sync from DSEngCoreData main branch.
+#   For dev, kubectl cp is immediate — no git commit required.
+# ---------------------------------------------------------------------------
+section "Push DAGs → Airflow scheduler pod"
 DAG_PUSH_DONE=false
+
+if ! dry; then
+  # Find the scheduler pod
+  _AIRFLOW_NS="airflow"
+  _SCHEDULER_POD=$(kubectl get pods -n "${_AIRFLOW_NS}" \
+    -l component=scheduler \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+  if [[ -z "${_SCHEDULER_POD}" ]]; then
+    warn "Airflow scheduler pod not found — skipping DAG push (is the cluster reachable?)"
+  else
+    log "Scheduler pod: ${_SCHEDULER_POD}"
+    # Collect all DAG files from processed manifests
+    for manifest in "${MANIFEST_FILES[@]}"; do
+      project_dir="$(dirname "$(dirname "${manifest}")")"
+      dag_dir="${project_dir}/dags"
+      if [[ -d "${dag_dir}" ]]; then
+        for dag in "${dag_dir}"/*.py; do
+          [[ -f "${dag}" ]] || continue
+          kubectl cp "${dag}" \
+            "${_AIRFLOW_NS}/${_SCHEDULER_POD}:/opt/airflow/dags/$(basename "${dag}")" \
+            2>/dev/null \
+            && log "  ✓ $(basename "${dag}")" \
+            || warn "  failed to copy $(basename "${dag}")"
+        done
+      fi
+    done
+    DAG_PUSH_DONE=true
+    log "  DAGs live in Airflow — no restart needed (scheduler rescans every 30s)"
+  fi
+else
+  log "  [dry-run] would kubectl cp DAGs to scheduler pod"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 7 — Write deployment state to ADLS
@@ -417,6 +473,7 @@ echo ""
 log "══════════════════════════════════════════════"
 log "  Deployment ID    : ${DEPLOY_ID}"
 log "  Commit           : ${CURRENT_COMMIT:0:12}"
+log "  Data repo        : ${DATA_REPO}"
 log "  Jobs regenerated : ${#GENERATED_PY[@]}"
 log "  ADLS uploads     : $((${#GENERATED_PY[@]} + ${#GENERATED_DQ[@]}))"
 log "  SDK in image     : forge-sdk + forge-dq (rebuilt via forge-up.sh when changed)"

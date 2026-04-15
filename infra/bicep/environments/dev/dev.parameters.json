@@ -9,8 +9,8 @@
     "clientId":      "d0ce7c35-cc10-4ae7-b6be-60d002f43059",
     "allowedDomain": "microsoft.com",
 
-    "gitRepo":       "https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEng%20Core%20Infra",
-    "gitBranch":     "user/PrProddu/StarRocks",
+    "gitRepo":       "https://L1R@dev.azure.com/L1R/Data%20Science%20Engineering/_git/DSEngCoreData",
+    "gitBranch":     "main",
 
     "sparkTag":      "1.0",
     "trinoTag":      "1.0",
@@ -23,7 +23,7 @@
   "parameters": {
 
     "environment":   { "value": "dev" },
-    "location":      { "value": "westcentralus" },
+    "location":      { "value": "northcentralus" },
     "ownerAlias":    { "value": "" },
 
     "tenantId":                   { "value": "72f988bf-86f1-41af-91ab-2d7cd011db47" },
