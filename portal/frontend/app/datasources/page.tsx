@@ -653,7 +653,7 @@ export default function DataSourcesPage() {
       {[
         { label: "Total", value: loading ? "—" : sources.length, icon: "fa-plug" },
         { label: "ADLS Gen2", value: loading ? "—" : adlsCount, icon: "fa-layer-group" },
-        { label: "ADX", value: loading ? "—" : adxCount, icon: "fa-chart-bar" },
+        { label: "Kusto", value: loading ? "—" : adxCount, icon: "fa-chart-bar" },
       ].map(s => (
         <div key={s.label} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -676,6 +676,16 @@ export default function DataSourcesPage() {
     >
         {/* Toolbar */}
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+            {([["all", "All"], ["adls_gen2", "ADLS Gen2"], ["adx", "Kusto"]] as const).map(([val, label]) => (
+              <button key={val} onClick={() => setActiveType(val)} style={{
+                padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
+                fontSize: 13, fontWeight: 600,
+                background: activeType === val ? "var(--forge-primary)" : "transparent",
+                color: activeType === val ? "#fff" : "#64748b",
+              }}>{label}</button>
+            ))}
+          </div>
           <div style={{ position: "relative", flex: "1 1 280px", maxWidth: 360 }}>
             <i className="fas fa-magnifying-glass" style={{
               position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
@@ -692,16 +702,6 @@ export default function DataSourcesPage() {
                 boxSizing: "border-box",
               }}
             />
-          </div>
-          <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
-            {([["all", "All"], ["adls_gen2", "ADLS Gen2"], ["adx", "ADX"]] as const).map(([val, label]) => (
-              <button key={val} onClick={() => setActiveType(val)} style={{
-                padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-                fontSize: 13, fontWeight: 600,
-                background: activeType === val ? "var(--forge-primary)" : "transparent",
-                color: activeType === val ? "#fff" : "#64748b",
-              }}>{label}</button>
-            ))}
           </div>
           <button
             onClick={() => { setEditing(null); setModalOpen(true); }}
@@ -736,31 +736,12 @@ export default function DataSourcesPage() {
 
         {!loading && !error && filtered.length === 0 && (
           <div style={{
-            textAlign: "center", padding: "80px 0", color: "#94a3b8",
-            background: "#fff", border: "1px solid #e2e8f0", borderRadius: 16,
+            textAlign: "center", padding: "60px 0", color: "#94a3b8",
           }}>
-            <i className="fas fa-plug" style={{ fontSize: 36, marginBottom: 16, display: "block", opacity: 0.4 }} />
-            <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6, color: "#64748b" }}>
-              {search ? "No sources match your search" : "No data sources registered yet"}
+            <i className="fas fa-plug" style={{ fontSize: 32, marginBottom: 12, display: "block", opacity: 0.4 }} />
+            <div style={{ fontSize: 14, color: "#94a3b8" }}>
+              {search || activeType !== "all" ? "No sources match your filters" : "No data sources registered yet"}
             </div>
-            {!search && (
-              <div style={{ fontSize: 14, color: "#94a3b8", marginBottom: 24 }}>
-                Register an ADLS Gen2 or Azure Data Explorer source to get started
-              </div>
-            )}
-            {!search && (
-              <button
-                onClick={() => { setEditing(null); setModalOpen(true); }}
-                style={{
-                  padding: "10px 22px", borderRadius: 10, border: "none",
-                  background: ACCENT, color: "#fff", fontWeight: 700,
-                  fontSize: 14, cursor: "pointer",
-                }}
-              >
-                <i className="fas fa-plus" style={{ marginRight: 8 }} />
-                Register Your First Source
-              </button>
-            )}
           </div>
         )}
 

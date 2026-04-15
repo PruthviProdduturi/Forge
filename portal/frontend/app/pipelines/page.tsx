@@ -127,25 +127,8 @@ export default function PipelinesPage() {
       subtitle="Browse, monitor and trigger your Forge data pipelines"
       heroContent={heroContent}
     >
-      {/* Search + Tag filter */}
+      {/* Tag filter + Search */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
-        <div style={{ position: "relative", maxWidth: 360, flex: 1 }}>
-          <i className="fas fa-magnifying-glass" style={{
-            position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
-            color: "#94a3b8", fontSize: 14,
-          }} />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search pipelines…"
-            style={{
-              width: "100%", padding: "9px 14px 9px 40px", borderRadius: 10,
-              border: "1px solid #e2e8f0", fontSize: 14, background: "#fff",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.04)", outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
-        </div>
         {allTags.length > 0 && (
           <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
             <button
@@ -171,6 +154,23 @@ export default function PipelinesPage() {
             ))}
           </div>
         )}
+        <div style={{ position: "relative", maxWidth: 360, flex: 1 }}>
+          <i className="fas fa-magnifying-glass" style={{
+            position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+            color: "#94a3b8", fontSize: 14,
+          }} />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search pipelines…"
+            style={{
+              width: "100%", padding: "9px 14px 9px 40px", borderRadius: 10,
+              border: "1px solid #e2e8f0", fontSize: 14, background: "#fff",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.04)", outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
       </div>
 
       {loading && (
