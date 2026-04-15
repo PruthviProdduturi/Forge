@@ -54,6 +54,7 @@ export default function PipelinesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [activeTag, setActiveTag] = useState<string | null>(null);
   const [triggering, setTriggering] = useState<string | null>(null);
   const [triggerMsg, setTriggerMsg] = useState<{ dag_id: string; ok: boolean; msg: string } | null>(null);
 
@@ -66,15 +67,21 @@ export default function PipelinesPage() {
 
   const canTrigger = role === "Admin" || role === "Editor";
 
+  const allTags = useMemo(() =>
+    [...new Set(pipelines.flatMap(p => p.tags))].sort()
+  , [pipelines]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return pipelines;
+    let list = pipelines;
+    if (activeTag) list = list.filter(p => p.tags.includes(activeTag));
+    if (!search.trim()) return list;
     const q = search.toLowerCase();
-    return pipelines.filter(
+    return list.filter(
       p => p.dag_id.toLowerCase().includes(q) ||
         p.description.toLowerCase().includes(q) ||
         p.tags.some(t => t.toLowerCase().includes(q))
     );
-  }, [pipelines, search]);
+  }, [pipelines, search, activeTag]);
 
   // Group by first tag
   const grouped = useMemo(() => {
@@ -130,9 +137,9 @@ export default function PipelinesPage() {
       subtitle="Browse, monitor and trigger your Forge data pipelines"
       heroContent={heroContent}
     >
-      {/* Search */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ position: "relative", maxWidth: 480 }}>
+      {/* Search + Tag filter */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", maxWidth: 360, flex: 1 }}>
           <i className="fas fa-magnifying-glass" style={{
             position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
             color: "#94a3b8", fontSize: 14,
@@ -140,15 +147,40 @@ export default function PipelinesPage() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search pipelines by name, tag…"
+            placeholder="Search pipelines…"
             style={{
-              width: "100%", padding: "10px 14px 10px 40px", borderRadius: 10,
+              width: "100%", padding: "9px 14px 9px 40px", borderRadius: 10,
               border: "1px solid #e2e8f0", fontSize: 14, background: "#fff",
               boxShadow: "0 1px 3px rgba(0,0,0,0.04)", outline: "none",
               boxSizing: "border-box",
             }}
           />
         </div>
+        {allTags.length > 0 && (
+          <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+            <button
+              onClick={() => setActiveTag(null)}
+              style={{
+                padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
+                fontSize: 13, fontWeight: 600,
+                background: activeTag === null ? "var(--forge-primary)" : "transparent",
+                color: activeTag === null ? "#fff" : "#64748b",
+              }}
+            >All</button>
+            {allTags.map(tag => (
+              <button
+                key={tag}
+                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                style={{
+                  padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
+                  fontSize: 13, fontWeight: 600, textTransform: "capitalize",
+                  background: activeTag === tag ? "var(--forge-primary)" : "transparent",
+                  color: activeTag === tag ? "#fff" : "#64748b",
+                }}
+              >{tag}</button>
+            ))}
+          </div>
+        )}
       </div>
 
       {loading && (
