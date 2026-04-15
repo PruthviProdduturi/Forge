@@ -81,7 +81,7 @@ export default function DatasetsPage() {
     gold: datasets.filter(d => d.layer === "gold").length,
   }), [datasets]);
 
-  const heroContent = !loading && !error ? (
+  const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
       {(["bronze", "silver", "gold"] as const).map(layer => (
         <div key={layer} style={{
@@ -92,12 +92,12 @@ export default function DatasetsPage() {
             width: 10, height: 10, borderRadius: "50%",
             background: LAYER_META[layer].color, flexShrink: 0,
           }} />
-          <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{counts[layer]}</span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{loading ? "—" : counts[layer]}</span>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600, textTransform: "capitalize" }}>{layer}</span>
         </div>
       ))}
     </div>
-  ) : undefined;
+  );
 
   return (
     <PageLayout

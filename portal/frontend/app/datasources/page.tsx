@@ -648,12 +648,12 @@ export default function DataSourcesPage() {
   const adlsCount = sources.filter(s => s.source_type === "adls_gen2").length;
   const adxCount = sources.filter(s => s.source_type === "adx").length;
 
-  const heroContent = !loading && !error ? (
+  const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
       {[
-        { label: "Total", value: sources.length, icon: "fa-plug" },
-        { label: "ADLS Gen2", value: adlsCount, icon: "fa-layer-group" },
-        { label: "ADX", value: adxCount, icon: "fa-chart-bar" },
+        { label: "Total", value: loading ? "—" : sources.length, icon: "fa-plug" },
+        { label: "ADLS Gen2", value: loading ? "—" : adlsCount, icon: "fa-layer-group" },
+        { label: "ADX", value: loading ? "—" : adxCount, icon: "fa-chart-bar" },
       ].map(s => (
         <div key={s.label} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -665,7 +665,7 @@ export default function DataSourcesPage() {
         </div>
       ))}
     </div>
-  ) : undefined;
+  );
 
   return (
     <PageLayout

@@ -105,7 +105,7 @@ export default function HomePage() {
   const statusItems = [
     { label: "Airflow", ok: health?.checks.airflow ?? null, icon: "fa-calendar-check" },
     { label: "Trino", ok: health?.checks.trino ?? null, icon: "fa-database" },
-    { label: "Compute", ok: computeOk, icon: "fa-bolt" },
+    { label: "Spark", ok: health?.checks.spark_connect ?? null, icon: "fa-fire-flame-curved" },
     { label: "ADLS", ok: health?.checks.adls ?? null, icon: "fa-hard-drive" },
   ];
 

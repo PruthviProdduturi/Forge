@@ -79,12 +79,12 @@ export default function DataQualityPage() {
     : 0;
   const criticalCount = summary.filter(d => d.critical_failures > 0).length;
 
-  const heroContent = !loading && !error && summary.length > 0 ? (
+  const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
       {[
-        { label: "Monitored", value: totalDatasets, icon: "fa-database" },
-        { label: "Pass Rate", value: `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle" },
-        { label: "Critical", value: criticalCount, icon: "fa-circle-xmark" },
+        { label: "Monitored", value: loading ? "—" : totalDatasets, icon: "fa-database" },
+        { label: "Pass Rate", value: loading ? "—" : `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle" },
+        { label: "Critical", value: loading ? "—" : criticalCount, icon: "fa-circle-xmark" },
       ].map(s => (
         <div key={s.label} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -96,7 +96,7 @@ export default function DataQualityPage() {
         </div>
       ))}
     </div>
-  ) : undefined;
+  );
 
   return (
     <PageLayout

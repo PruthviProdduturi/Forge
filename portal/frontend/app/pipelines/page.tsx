@@ -103,13 +103,13 @@ export default function PipelinesPage() {
     }
   }
 
-  const heroContent = !loading && !error ? (
+  const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
       {[
-        { label: "Total", value: pipelines.length, icon: "fa-layer-group" },
-        { label: "Active", value: pipelines.filter(p => p.is_active).length, icon: "fa-circle-play" },
-        { label: "Paused", value: pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle" },
-        { label: "Failed", value: pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark" },
+        { label: "Total", value: loading ? "—" : pipelines.length, icon: "fa-layer-group" },
+        { label: "Active", value: loading ? "—" : pipelines.filter(p => p.is_active).length, icon: "fa-circle-play" },
+        { label: "Paused", value: loading ? "—" : pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle" },
+        { label: "Failed", value: loading ? "—" : pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark" },
       ].map(s => (
         <div key={s.label} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -121,7 +121,7 @@ export default function PipelinesPage() {
         </div>
       ))}
     </div>
-  ) : undefined;
+  );
 
   return (
     <PageLayout
