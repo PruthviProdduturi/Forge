@@ -110,51 +110,51 @@ export default function LineagePage() {
     }
   }, [getToken]);
 
-  const heroContent = (
-    <div style={{ display: "flex", gap: 8, maxWidth: 560 }}>
-      <div style={{ position: "relative", flex: 1 }}>
-        <i className="fas fa-magnifying-glass" style={{
-          position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
-          color: "rgba(255,255,255,0.5)", fontSize: 14,
-        }} />
-        <input
-          value={query}
-          onChange={e => setQuery(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleSearch()}
-          placeholder="Search for a dataset…"
-          style={{
-            width: "100%", padding: "12px 14px 12px 42px",
-            borderRadius: 10, border: "1px solid rgba(255,255,255,0.25)",
-            background: "rgba(255,255,255,0.12)", color: "#fff",
-            fontSize: 14, outline: "none", boxSizing: "border-box",
-          }}
-        />
-      </div>
-      <button
-        onClick={handleSearch}
-        disabled={searching || !query.trim()}
-        style={{
-          padding: "12px 20px", borderRadius: 10, border: "none",
-          background: searching ? "rgba(255,255,255,0.2)" : "#fff",
-          color: searching ? "rgba(255,255,255,0.6)" : "var(--forge-primary)",
-          fontSize: 14, fontWeight: 700, cursor: "pointer",
-          display: "flex", alignItems: "center", gap: 8,
-          whiteSpace: "nowrap",
-        }}
-      >
-        <i className={`fas ${searching ? "fa-spinner fa-spin" : "fa-search"}`} style={{ fontSize: 12 }} />
-        {searching ? "Searching…" : "Search"}
-      </button>
-    </div>
-  );
-
   return (
     <PageLayout
       icon="fa-share-nodes"
       title="Lineage Explorer"
       subtitle="Trace upstream and downstream dependencies from Microsoft Purview"
-      heroContent={heroContent}
     >
+      {/* Search bar */}
+      <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, padding: "20px 24px", marginBottom: 24, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ position: "relative", flex: 1 }}>
+            <i className="fas fa-magnifying-glass" style={{
+              position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
+              color: "#94a3b8", fontSize: 14,
+            }} />
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && handleSearch()}
+              placeholder="Search for a dataset by name…"
+              style={{
+                width: "100%", padding: "10px 14px 10px 42px",
+                borderRadius: 9, border: "1px solid #e2e8f0",
+                fontSize: 14, outline: "none", background: "#f8fafc",
+                boxSizing: "border-box", color: "#0f172a",
+              }}
+            />
+          </div>
+          <button
+            onClick={handleSearch}
+            disabled={searching || !query.trim()}
+            style={{
+              padding: "10px 22px", borderRadius: 9,
+              border: "none", background: "var(--forge-primary)",
+              color: "#fff", fontSize: 14, fontWeight: 600,
+              cursor: searching || !query.trim() ? "not-allowed" : "pointer",
+              opacity: !query.trim() ? 0.5 : 1,
+              display: "flex", alignItems: "center", gap: 8, whiteSpace: "nowrap",
+            }}
+          >
+            <i className={`fas ${searching ? "fa-spinner fa-spin" : "fa-search"}`} style={{ fontSize: 12 }} />
+            {searching ? "Searching…" : "Search"}
+          </button>
+        </div>
+      </div>
+
       {searchError && (
         <div style={{
           background: "#fff", border: "1px solid #fca5a5", borderTop: "3px solid #ef4444",
@@ -307,7 +307,7 @@ export default function LineagePage() {
                   <span style={{ fontSize: 12, color: "#94a3b8" }}>({lineageData.upstream.length})</span>
                 </div>
                 {lineageData.upstream.length === 0 ? (
-                  <div style={{ color: "#94a3b8", fontSize: 13, padding: "12px 0" }}>
+                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "24px 16px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
                     No upstream sources found
                   </div>
                 ) : (
@@ -331,7 +331,7 @@ export default function LineagePage() {
                   <span style={{ fontSize: 12, color: "#94a3b8" }}>({lineageData.downstream.length})</span>
                 </div>
                 {lineageData.downstream.length === 0 ? (
-                  <div style={{ color: "#94a3b8", fontSize: 13, padding: "12px 0" }}>
+                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "24px 16px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
                     No downstream consumers found
                   </div>
                 ) : (
