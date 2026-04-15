@@ -253,6 +253,10 @@ if [[ "$SKIP_INFRA" == "false" ]]; then
   fi
 
   bash "${SCRIPT_DIR}/provision-infra.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID" --location "$LOCATION"
+
+  echo ""
+  echo "━━━ [1b/8] Post-provision RBAC ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  bash "${SCRIPT_DIR}/post-provision.sh" --env "$ENV" --alias "$ALIAS" --sub "$SUBSCRIPTION_ID"
 else
   echo "━━━ [1/8] Provision infrastructure — skipped (--skip-infra) ━━━━━━━━━"
   echo "         Refreshing kubeconfigs..."
