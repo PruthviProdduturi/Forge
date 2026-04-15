@@ -134,26 +134,19 @@ export default function PipelinesPage() {
     >
       {/* Tag filter + Search */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
-        {/* Tag filter */}
-        <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
-          <button onClick={() => setActiveTag(null)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: activeTag === null ? "var(--forge-primary)" : "transparent", color: activeTag === null ? "#fff" : "#64748b" }}>All</button>
+        {/* Unified filter bar */}
+        <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4, alignItems: "center" }}>
+          <button onClick={() => { setActiveTag(null); setActiveStatus(null); }} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: activeTag === null && activeStatus === null ? "var(--forge-primary)" : "transparent", color: activeTag === null && activeStatus === null ? "#fff" : "#64748b" }}>All</button>
           {allTags.map(tag => (
             <button key={tag} onClick={() => setActiveTag(activeTag === tag ? null : tag)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, textTransform: "capitalize", background: activeTag === tag ? "var(--forge-primary)" : "transparent", color: activeTag === tag ? "#fff" : "#64748b" }}>{tag}</button>
           ))}
-        </div>
-        {/* Status filter */}
-        <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+          <div style={{ width: 1, height: 20, background: "#e2e8f0", margin: "0 2px" }} />
           {([
             { val: "active", label: "Active", color: "#16a34a" },
             { val: "paused", label: "Paused", color: "#94a3b8" },
             { val: "failed", label: "Failed", color: "#dc2626" },
           ] as const).map(s => (
-            <button key={s.val} onClick={() => setActiveStatus(activeStatus === s.val ? null : s.val)} style={{
-              padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-              fontSize: 13, fontWeight: 600,
-              background: activeStatus === s.val ? s.color : "transparent",
-              color: activeStatus === s.val ? "#fff" : "#64748b",
-            }}>{s.label}</button>
+            <button key={s.val} onClick={() => setActiveStatus(activeStatus === s.val ? null : s.val)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: activeStatus === s.val ? s.color : "transparent", color: activeStatus === s.val ? "#fff" : "#64748b" }}>{s.label}</button>
           ))}
         </div>
         <div style={{ position: "relative", maxWidth: 360, flex: 1 }}>
