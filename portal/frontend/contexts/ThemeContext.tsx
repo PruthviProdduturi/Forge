@@ -10,7 +10,7 @@ import React, {
 import { API_BASE } from "../config";
 import { generateGradients, hexToRGB } from "../utils/colorUtils";
 
-const DEFAULT_THEME_COLOR = "#1e3a5f";
+const DEFAULT_THEME_COLOR = "#0078d4";
 const STORAGE_KEY = "forge-theme-color";
 
 interface ThemeContextValue {

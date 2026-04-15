@@ -30,7 +30,7 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["theme"])
 settings = get_settings()
 
-_DEFAULT_COLOR = "#1e3a5f"
+_DEFAULT_COLOR = "#0078d4"
 
 # ---------------------------------------------------------------------------
 # Local dev fallback (no Postgres configured)
