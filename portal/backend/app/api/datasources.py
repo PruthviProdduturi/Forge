@@ -191,8 +191,7 @@ async def _test_adls(body: DataSourceTestRequest) -> DataSourceTestResponse:
             url = f"https://{account}.blob.core.windows.net/{container}"
             client = ContainerClient.from_container_url(url)
         else:
-            cred = await asyncio.to_thread(WorkloadIdentityCredential)
-            url = f"https://{account}.dfs.core.windows.net"
+            cred = WorkloadIdentityCredential()
             client = ContainerClient(
                 account_url=f"https://{account}.blob.core.windows.net",
                 container_name=container,
@@ -223,7 +222,7 @@ async def _test_adx(body: DataSourceTestRequest) -> DataSourceTestResponse:
         from azure.kusto.data import KustoClient, KustoConnectionStringBuilder  # type: ignore
         from azure.identity import WorkloadIdentityCredential  # type: ignore
 
-        cred = await asyncio.to_thread(WorkloadIdentityCredential)
+        cred = WorkloadIdentityCredential()
         kcsb = KustoConnectionStringBuilder.with_azure_token_credential(cluster_uri, cred)
         client = KustoClient(kcsb)
 
