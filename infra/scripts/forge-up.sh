@@ -1595,6 +1595,8 @@ MIGJOB
   echo "    Done"
 
   echo "  [7.2] cert-manager + Let's Encrypt issuer..."
+  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
+    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
   helm upgrade --install cert-manager \
     "oci://${ACR}.azurecr.io/helm/cert-manager" \
     --version "v1.17.1" \

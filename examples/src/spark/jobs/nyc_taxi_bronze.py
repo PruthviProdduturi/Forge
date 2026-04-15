@@ -6,7 +6,7 @@
 # ==============================================================
 # ── FORGE:LOCKED:START:HEADER ──
 """
-Daily ingestion of NYC TLC trip data from Azure Open Datasets, partitioned by pickup date
+Daily ingestion of NYC TLC Yellow Taxi trip data from Azure Open Datasets
 
 Layer:     bronze
 Table:     lakehouse.bronze.nyctaxi
@@ -14,9 +14,14 @@ Partition: __year/__month/__day/__hour from pickup_datetime (hour=PARTITION_HOUR
 Schedule:  0 2 * * *
 Params:
   TAXI_TYPE: string (default: yellow) — yellow | green | fhv | hvfhv
+  DATA_SOURCE_NAME: string (default: nyc-taxi-yellow) — name registered in portal data_sources
   PARTITION_DATE: string (default: ) — Partition date (yyyy-MM-dd) — set by Airflow data_interval_start
   PARTITION_HOUR: int (default: 0) — Partition hour (0–23) — 0 when date column has no time component
   RESTATE: bool (default: false) — Set true to restate partition even if tracker already exists
+
+Source: wasbs://nyctlc@azureopendatastorage.blob.core.windows.net/yellow/
+        Azure Open Datasets — public parquet, partitioned by puYear/puMonth.
+        Anonymous access configured via sparkConf in the DAG SparkApplication spec.
 """
 from __future__ import annotations
 
@@ -31,24 +36,20 @@ from forge_sdk import ForgeJob
 # ── FORGE:LOCKED:END:HEADER ──
 
 # ── FORGE:LOCKED:START:HEADER ──
-# ---------------------------------------------------------------------------
-# Parameters — auto-injected: PARTITION_DATE, PARTITION_HOUR, RESTATE
-# ---------------------------------------------------------------------------
 FORGE_ENV = os.environ.get("FORGE_ENV", "dev")
-
-TAXI_TYPE = os.environ.get("TAXI_TYPE", "yellow")  # yellow | green | fhv | hvfhv
-PARTITION_DATE = os.environ.get("PARTITION_DATE", "")  # Partition date (yyyy-MM-dd) — set by Airflow data_interval_start
-PARTITION_HOUR = int(os.environ.get("PARTITION_HOUR", "0"))  # Partition hour (0–23) — 0 when date column has no time component
-RESTATE = os.environ.get("RESTATE", "false").lower() in ("1", "true", "yes")  # Set true to restate partition even if tracker already exists
+TAXI_TYPE = os.environ.get("TAXI_TYPE", "yellow")
+DATA_SOURCE_NAME = os.environ.get("DATA_SOURCE_NAME", "nyc-taxi-yellow")
+PARTITION_DATE = os.environ.get("PARTITION_DATE", "")
+PARTITION_HOUR = int(os.environ.get("PARTITION_HOUR", "0"))
+RESTATE = os.environ.get("RESTATE", "false").lower() in ("1", "true", "yes")
 # ── FORGE:LOCKED:END:HEADER ──
 
 
 class NycTaxiBronze(ForgeJob):
-    """Daily ingestion of NYC TLC trip data from Azure Open Datasets, partitioned by pickup date"""
+    """Daily ingestion of NYC TLC Yellow Taxi trip data from Azure Open Datasets"""
 
     # ── FORGE:LOCKED:START:HELPERS ──
     def _tracker_path(self) -> str:
-        """ADLS path for this partition's tracker file."""
         _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
         return (
             f"abfss://bronze@{self.storage}/Transport/Trip/Internal/Rideshare/NycTaxi/1/NycTaxiBronze/_tracker"
@@ -56,7 +57,6 @@ class NycTaxiBronze(ForgeJob):
         )
 
     def _tracker_exists(self) -> bool:
-        """Return True if this partition's tracker already exists in ADLS."""
         try:
             _path = self._tracker_path()
             _jvm  = self.spark.sparkContext._jvm
@@ -79,20 +79,43 @@ class NycTaxiBronze(ForgeJob):
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
-        src_path = f"abfss://raw@{self.storage}/Transport/Trip/Public/Rideshare/NycTlc/1/TlcYellowTrip"
+        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
+
+        # Azure Open Datasets — public blob storage, partitioned by puYear/puMonth.
+        # Anonymous access is pre-configured via sparkConf in the DAG spec:
+        #   fs.azure.account.auth.type.azureopendatastorage.blob.core.windows.net = Anonymous
+        src_path = (
+            f"wasbs://nyctlc@azureopendatastorage.blob.core.windows.net"
+            f"/{TAXI_TYPE}/puYear={_year}/puMonth={_month}/"
+        )
         raw = (
             self.spark.read
             .option("mergeSchema", "true")
             .parquet(src_path)
         )
-        self.log.info("source_read path=%s", src_path)
+        self.log.info("source_read path=%s datasource=%s", src_path, DATA_SOURCE_NAME)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
         # ║  EDIT THIS BLOCK — business logic only   ║
         # ╚══════════════════════════════════════════╝
         # ── FORGE:BUSINESS_LOGIC:START ──
-        df = raw  # TODO: transform raw → df
+
+        # Filter to just this partition day (Open Datasets files are month-level)
+        partition_dt = PARTITION_DATE  # yyyy-MM-dd
+        df = raw.filter(
+            F.to_date(F.col("tpepPickupDatetime")) == F.lit(partition_dt)
+        )
+
+        # Add audit columns
+        df = (
+            df
+            .withColumn("taxi_type", F.lit(TAXI_TYPE))
+            .withColumn("data_source", F.lit(DATA_SOURCE_NAME))
+            .withColumn("_source", F.lit(f"azure-open-datasets/nyctlc/{TAXI_TYPE}"))
+            .withColumn("_ingested_at", F.current_timestamp())
+        )
+
         # ── FORGE:BUSINESS_LOGIC:END ──
         # ════════════════════════════════════════════
 
@@ -100,11 +123,9 @@ class NycTaxiBronze(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.bronze.nyctaxi")
+            self.log.warning("empty_partition_skipping table=lakehouse.bronze.nyctaxi date=%s", PARTITION_DATE)
             return
 
-        # Stamp partition columns
-        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
         df = (
             df
             .withColumn("__year",  F.lit(_year))
@@ -125,12 +146,13 @@ class NycTaxiBronze(ForgeJob):
 
         self.log.info("write_complete table=lakehouse.bronze.nyctaxi rows=%d", _row_count)
 
-        # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
             "table":        "lakehouse.bronze.nyctaxi",
             "partition":    {"year": _year, "month": _month, "day": _day, "hour": PARTITION_HOUR},
+            "source":       DATA_SOURCE_NAME,
+            "taxi_type":    TAXI_TYPE,
             "status":       "success",
             "rows_written": _row_count,
             "completed_at": datetime.now(timezone.utc).isoformat(),

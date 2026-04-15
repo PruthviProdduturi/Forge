@@ -1,0 +1,80 @@
+# =============================================================================
+# DQ Rules — lakehouse.silver.nyctaxi
+# Applied by @track(dataset=..., rules=...) in nyc_taxi_silver.py
+# =============================================================================
+
+dataset: lakehouse.silver.nyctaxi
+
+rules:
+  - name: no_null_pickup_datetime
+    type: not_null
+    column: pickup_datetime
+    severity: error
+
+  - name: no_null_dropoff_datetime
+    type: not_null
+    column: dropoff_datetime
+    severity: error
+
+  - name: no_null_pickup_location
+    type: not_null
+    column: pickup_location_id
+    severity: error
+
+  - name: no_null_dropoff_location
+    type: not_null
+    column: dropoff_location_id
+    severity: error
+
+  - name: positive_fare
+    type: min
+    column: fare_amount
+    value: 0
+    exclusive: true
+    severity: error
+
+  - name: positive_distance
+    type: min
+    column: trip_distance_miles
+    value: 0
+    exclusive: true
+    severity: error
+
+  - name: positive_passengers
+    type: min
+    column: passenger_count
+    value: 0
+    exclusive: true
+    severity: error
+
+  - name: pickup_before_dropoff
+    type: expression
+    expr: "pickup_datetime < dropoff_datetime"
+    severity: error
+
+  - name: reasonable_duration
+    type: max
+    column: trip_duration_minutes
+    value: 300
+    severity: warning
+    description: Trips longer than 5 hours are flagged as suspect
+
+  - name: reasonable_fare
+    type: max
+    column: fare_amount
+    value: 500
+    severity: warning
+    description: Fares over $500 are flagged for review
+
+  - name: valid_payment_type
+    type: allowed_values
+    column: payment_type
+    values: [1, 2, 3, 4, 5, 6]
+    severity: warning
+    description: 1=Credit, 2=Cash, 3=No charge, 4=Dispute, 5=Unknown, 6=Voided
+
+  - name: completeness
+    type: row_count_min
+    value: 1000
+    severity: warning
+    description: Expect at least 1000 trips per day partition

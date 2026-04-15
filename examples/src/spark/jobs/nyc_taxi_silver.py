@@ -6,18 +6,24 @@
 # ==============================================================
 # ── FORGE:LOCKED:START:HEADER ──
 """
-Clean, deduplicate and union all NYC taxi types into a unified silver trips table
+Clean, type-cast and enrich NYC Yellow Taxi bronze data into a unified silver trips table
 
 Layer:     silver
 Table:     lakehouse.silver.nyctaxi
-Partition: __date = DD_MM_YYYY_HH derived from PARTITION_MONTH
+Partition: __date = yyyy-MM-dd derived from PARTITION_DATE
 Schedule:  triggered (no schedule)
 Params:
-  PARTITION_YEAR: int (default: 2023)
-  PARTITION_MONTH: int (default: 1)
   PARTITION_DATE: string (default: ) — Partition date (yyyy-MM-dd) — set by Airflow data_interval_start
-  PARTITION_HOUR: int (default: 0) — Partition hour (0–23) — 0 when date column has no time component
+  PARTITION_HOUR: int (default: 0) — Partition hour (0–23)
   RESTATE: bool (default: false) — Set true to restate partition even if tracker already exists
+
+Transforms:
+  - Filter bronze to the exact partition date
+  - Standardise column names (tpepPickupDatetime → pickup_datetime etc.)
+  - Drop rows with NULL pickup/dropoff timestamps or location IDs
+  - Filter out non-positive fares, distances and passenger counts
+  - Derive: trip_duration_minutes, fare_per_mile, speed_mph
+  - DQ gate via @track decorator (forge_dq)
 """
 from __future__ import annotations
 
@@ -26,6 +32,7 @@ import os
 from datetime import datetime, timezone
 
 from pyspark.sql import functions as F
+from pyspark.sql.types import DoubleType, IntegerType
 
 from forge_sdk import ForgeJob
 
@@ -35,7 +42,6 @@ except ImportError:
     import functools
 
     def track(**kwargs):  # type: ignore[misc]
-        """No-op fallback when forge_dq is not installed."""
         def decorator(fn):
             @functools.wraps(fn)
             def wrapper(*args, **kw):
@@ -46,34 +52,24 @@ except ImportError:
 # ── FORGE:LOCKED:END:HEADER ──
 
 # ── FORGE:LOCKED:START:HEADER ──
-# ---------------------------------------------------------------------------
-# Parameters — auto-injected: PARTITION_DATE, PARTITION_HOUR, RESTATE
-# ---------------------------------------------------------------------------
 FORGE_ENV = os.environ.get("FORGE_ENV", "dev")
-
-PARTITION_YEAR = int(os.environ.get("PARTITION_YEAR", "2023"))
-PARTITION_MONTH = int(os.environ.get("PARTITION_MONTH", "1"))
-PARTITION_DATE = os.environ.get("PARTITION_DATE", "")  # Partition date (yyyy-MM-dd) — set by Airflow data_interval_start
-PARTITION_HOUR = int(os.environ.get("PARTITION_HOUR", "0"))  # Partition hour (0–23) — 0 when date column has no time component
-RESTATE = os.environ.get("RESTATE", "false").lower() in ("1", "true", "yes")  # Set true to restate partition even if tracker already exists
+PARTITION_DATE = os.environ.get("PARTITION_DATE", "")
+PARTITION_HOUR = int(os.environ.get("PARTITION_HOUR", "0"))
+RESTATE = os.environ.get("RESTATE", "false").lower() in ("1", "true", "yes")
 # ── FORGE:LOCKED:END:HEADER ──
 
 
 class NycTaxiSilver(ForgeJob):
-    """Clean, deduplicate and union all NYC taxi types into a unified silver trips table"""
+    """Clean, type-cast and enrich NYC Yellow Taxi bronze data into silver"""
 
     # ── FORGE:LOCKED:START:HELPERS ──
     def _tracker_path(self) -> str:
-        """ADLS path for this partition's tracker file."""
-        _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")
-        _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"
         return (
             f"abfss://silver@{self.storage}/Transport/Trip/Analytics/Rideshare/NycTaxi/1/NycTaxiTrips/_tracker"
-            f"/{_date_key}/tracker.json"
+            f"/{PARTITION_DATE}/{PARTITION_HOUR}/tracker.json"
         )
 
     def _tracker_exists(self) -> bool:
-        """Return True if this partition's tracker already exists in ADLS."""
         try:
             _path = self._tracker_path()
             _jvm  = self.spark.sparkContext._jvm
@@ -96,21 +92,98 @@ class NycTaxiSilver(ForgeJob):
 
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
+        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
+
         src_path = f"abfss://bronze@{self.storage}/Transport/Trip/Internal/Rideshare/NycTaxi/1/NycTaxiBronze"
         raw = (
             self.spark.read
             .format("delta")
             .load(src_path)
-            .filter(f"__year = {_year} AND __month = {_month} AND __day = {_day}")
+            .filter(
+                (F.col("__year") == _year) &
+                (F.col("__month") == _month) &
+                (F.col("__day") == _day)
+            )
         )
-        self.log.info("source_read path=%s", src_path)
+        self.log.info("source_read path=%s partition=%s", src_path, PARTITION_DATE)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
         # ║  EDIT THIS BLOCK — business logic only   ║
         # ╚══════════════════════════════════════════╝
         # ── FORGE:BUSINESS_LOGIC:START ──
-        df = raw  # TODO: transform raw → df
+
+        df = (
+            raw
+            # Rename columns to snake_case standard names
+            .withColumnRenamed("tpepPickupDatetime",  "pickup_datetime")
+            .withColumnRenamed("tpepDropoffDatetime", "dropoff_datetime")
+            .withColumnRenamed("passengerCount",      "passenger_count")
+            .withColumnRenamed("tripDistance",        "trip_distance_miles")
+            .withColumnRenamed("puLocationId",        "pickup_location_id")
+            .withColumnRenamed("doLocationId",        "dropoff_location_id")
+            .withColumnRenamed("rateCodeId",          "rate_code_id")
+            .withColumnRenamed("storeAndFwdFlag",     "store_and_fwd_flag")
+            .withColumnRenamed("paymentType",         "payment_type")
+            .withColumnRenamed("fareAmount",          "fare_amount")
+            .withColumnRenamed("extra",               "extra_charge")
+            .withColumnRenamed("mtaTax",              "mta_tax")
+            .withColumnRenamed("tipAmount",           "tip_amount")
+            .withColumnRenamed("tollsAmount",         "tolls_amount")
+            .withColumnRenamed("improvementSurcharge","improvement_surcharge")
+            .withColumnRenamed("totalAmount",         "total_amount")
+            .withColumnRenamed("congestionSurcharge", "congestion_surcharge")
+            .withColumnRenamed("airportFee",          "airport_fee")
+        )
+
+        # Drop rows missing critical fields
+        df = df.dropna(subset=["pickup_datetime", "dropoff_datetime", "pickup_location_id", "dropoff_location_id"])
+
+        # Cast to correct types
+        df = (
+            df
+            .withColumn("passenger_count",       F.col("passenger_count").cast(IntegerType()))
+            .withColumn("trip_distance_miles",   F.col("trip_distance_miles").cast(DoubleType()))
+            .withColumn("fare_amount",            F.col("fare_amount").cast(DoubleType()))
+            .withColumn("tip_amount",             F.col("tip_amount").cast(DoubleType()))
+            .withColumn("total_amount",           F.col("total_amount").cast(DoubleType()))
+            .withColumn("pickup_location_id",     F.col("pickup_location_id").cast(IntegerType()))
+            .withColumn("dropoff_location_id",    F.col("dropoff_location_id").cast(IntegerType()))
+        )
+
+        # Quality filters — remove clearly invalid records
+        df = df.filter(
+            (F.col("fare_amount") > 0) &
+            (F.col("trip_distance_miles") > 0) &
+            (F.col("passenger_count") > 0) &
+            (F.col("total_amount") > 0) &
+            (F.col("pickup_datetime") < F.col("dropoff_datetime"))
+        )
+
+        # Derive trip duration and speed
+        df = (
+            df
+            .withColumn(
+                "trip_duration_minutes",
+                (F.unix_timestamp("dropoff_datetime") - F.unix_timestamp("pickup_datetime")) / 60.0
+            )
+            .withColumn(
+                "fare_per_mile",
+                F.when(F.col("trip_distance_miles") > 0,
+                       F.round(F.col("fare_amount") / F.col("trip_distance_miles"), 2)
+                ).otherwise(F.lit(None))
+            )
+            .withColumn(
+                "speed_mph",
+                F.when(F.col("trip_duration_minutes") > 0,
+                       F.round(F.col("trip_distance_miles") / (F.col("trip_duration_minutes") / 60.0), 2)
+                ).otherwise(F.lit(None))
+            )
+            .withColumn("pickup_date",  F.to_date("pickup_datetime"))
+            .withColumn("pickup_hour",  F.hour("pickup_datetime"))
+            .withColumn("_processed_at", F.current_timestamp())
+        )
+
         # ── FORGE:BUSINESS_LOGIC:END ──
         # ════════════════════════════════════════════
 
@@ -118,13 +191,10 @@ class NycTaxiSilver(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.silver.nyctaxi")
+            self.log.warning("empty_partition_skipping table=lakehouse.silver.nyctaxi date=%s", PARTITION_DATE)
             return
 
-        # Build __date partition key: DD_MM_YYYY_HH
-        _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")
-        _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"
-        df = df.withColumn("__date", F.lit(_date_key))
+        df = df.withColumn("__date", F.lit(PARTITION_DATE))
 
         @track(
             dataset="lakehouse.silver.nyctaxi",
@@ -137,7 +207,7 @@ class NycTaxiSilver(ForgeJob):
                 .format("delta")
                 .mode("overwrite")
                 .option("overwriteSchema", "true")
-                .option("replaceWhere", f"__date = '{_date_key}'")
+                .option("replaceWhere", f"__date = '{PARTITION_DATE}'")
                 .partitionBy("__date")
                 .saveAsTable("lakehouse.silver.nyctaxi")
             )
@@ -146,12 +216,11 @@ class NycTaxiSilver(ForgeJob):
 
         self.log.info("write_complete table=lakehouse.silver.nyctaxi rows=%d", _row_count)
 
-        # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
             "table":        "lakehouse.silver.nyctaxi",
-            "partition":    {"date": _date_key},
+            "partition":    {"date": PARTITION_DATE},
             "status":       "success",
             "rows_written": _row_count,
             "completed_at": datetime.now(timezone.utc).isoformat(),

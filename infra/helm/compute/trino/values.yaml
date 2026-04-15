@@ -46,7 +46,7 @@ coordinator:
 # Dev sizing: D4s_v5 (4 vCPU / 16 GiB per node)
 # ----------------------------------------------------------------------------
 worker:
-  replicas: 3
+  replicas: 5
   jvm:
     maxHeapSize: "7G"
   resources:
@@ -69,8 +69,8 @@ worker:
 # ----------------------------------------------------------------------------
 autoscaling:
   enabled: true
-  minReplicas: 1
-  maxReplicas: 8
+  minReplicas: 2
+  maxReplicas: 10
   targetCPUUtilizationPercentage: 60
 
 # ----------------------------------------------------------------------------

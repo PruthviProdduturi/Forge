@@ -40,9 +40,9 @@
     "computeSystemVmSize":  { "value": "Standard_D4s_v5" },
     "computeSystemNodeCount": { "value": 1 },
     "sparkVmSize":          { "value": "Standard_E8s_v5" },
-    "sparkMaxNodes":        { "value": 10 },
+    "sparkMaxNodes":        { "value": 15 },
     "trinoVmSize":          { "value": "Standard_D4s_v5" },
-    "trinoMaxNodes":        { "value": 5 },
+    "trinoMaxNodes":        { "value": 10 },
 
     "orchSystemVmSize":     { "value": "Standard_D4s_v5" },
     "orchSystemNodeCount":  { "value": 1 },
