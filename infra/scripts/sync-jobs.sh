@@ -39,7 +39,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 CLI_ENTRY="${REPO_ROOT}/sdk/cli/src/index.ts"
 EXAMPLES_DIR="${REPO_ROOT}/examples"
 MANIFESTS_DIR="${EXAMPLES_DIR}/src/spark/jobs"
