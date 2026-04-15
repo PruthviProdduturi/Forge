@@ -429,10 +429,13 @@ if ! dry; then
       if [[ -d "${dag_dir}" ]]; then
         for dag in "${dag_dir}"/*.py; do
           [[ -f "${dag}" ]] || continue
-          # cd into the dag dir so kubectl cp sees a relative path (no drive letter colon)
+          # MSYS_NO_PATHCONV=1 — stops Git Bash converting /opt/... to a Windows path
+          # cd into dag dir — relative filename avoids Windows drive-letter colon ambiguity
+          # -n namespace flag instead of namespace/pod:path — avoids Windows slash mangling
           _dag_name="$(basename "${dag}")"
-          (cd "$(dirname "${dag}")" && kubectl cp "${_dag_name}" \
-            "${_AIRFLOW_NS}/${_SCHEDULER_POD}:/opt/airflow/dags/${_dag_name}" \
+          (cd "$(dirname "${dag}")" && MSYS_NO_PATHCONV=1 kubectl cp "${_dag_name}" \
+            "${_SCHEDULER_POD}:/opt/airflow/dags/${_dag_name}" \
+            -n "${_AIRFLOW_NS}" \
             --context "${_KUBE_CTX}" \
             -c scheduler 2>&1) \
             && log "  ✓ ${_dag_name}" \
