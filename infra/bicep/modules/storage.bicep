@@ -28,6 +28,9 @@ param privateDnsZoneBlobId string
 @description('Resource ID of the Log Analytics Workspace for diagnostics.')
 param logAnalyticsWorkspaceId string
 
+@description('IP ranges allowed through the storage firewall (e.g. corpnet, VPN).')
+param allowedIpRanges array = []
+
 @description('Resource tags to apply to all resources.')
 param tags object = {}
 
@@ -47,13 +50,13 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-04-01' = {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
     allowSharedKeyAccess: false
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: empty(allowedIpRanges) ? 'Disabled' : 'Enabled'
     defaultToOAuthAuthentication: true
     supportsHttpsTrafficOnly: true
     networkAcls: {
       defaultAction: 'Deny'
       bypass: 'AzureServices'
-      ipRules: []
+      ipRules: [for cidr in allowedIpRanges: { value: cidr, action: 'Allow' }]
       virtualNetworkRules: []
     }
     encryption: {

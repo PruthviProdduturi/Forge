@@ -99,6 +99,9 @@ param storageReplicationType string = 'LRS'
 @description('Allow public network access to Key Vault. Set true for dev (enables CLI access without VPN). Prod defaults to false.')
 param kvAllowPublicNetworkAccess bool = false
 
+@description('IP ranges allowed through the storage firewall (corpnet/VPN). Empty = public access fully disabled.')
+param storageAllowedIpRanges array = []
+
 @description('Resource tags applied to all resources.')
 param tags object = {}
 
@@ -307,6 +310,7 @@ module storage '../../modules/storage.bicep' = {
     storageAccountName: storageAccountName
     location: location
     replicationType: storageReplicationType
+    allowedIpRanges: storageAllowedIpRanges
     privateEndpointSubnetId: networking.outputs.subnetIds.privateEndpoints
     privateDnsZoneDfsId: networking.outputs.privateDnsZoneIds.dfs
     privateDnsZoneBlobId: networking.outputs.privateDnsZoneIds.blob

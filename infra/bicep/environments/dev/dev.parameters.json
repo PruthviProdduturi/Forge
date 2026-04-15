@@ -34,6 +34,7 @@
     "storageReplicationType":     { "value": "LRS" },
     "logRetentionDays":           { "value": 90 },
     "kvAllowPublicNetworkAccess": { "value": true },
+    "storageAllowedIpRanges":    { "value": ["131.107.0.0/16", "167.220.0.0/16"] },
 
     "tags": { "value": { "owner": "platform-team", "environment": "dev" } },
 
