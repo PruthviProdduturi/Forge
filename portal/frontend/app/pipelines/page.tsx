@@ -67,8 +67,9 @@ export default function PipelinesPage() {
 
   const canTrigger = role === "Admin" || role === "Editor";
 
+  // Use only the primary (first) tag per pipeline to keep the filter bar concise
   const allTags = useMemo(() =>
-    [...new Set(pipelines.flatMap(p => p.tags))].sort()
+    [...new Set(pipelines.map(p => p.tags[0]).filter(Boolean))].sort()
   , [pipelines]);
 
   const filtered = useMemo(() => {
