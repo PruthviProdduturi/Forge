@@ -186,6 +186,7 @@ fi
 PG_HOST="${PG_SERVER}.postgres.database.azure.com"
 # Azure DNS labels must be lowercase — lowercase the entire label
 DNS_LABEL="forge-portal-${_A}${ENV}"; DNS_LABEL="${DNS_LABEL,,}"
+AIRFLOW_DNS_LABEL="forge-airflow-${_A}${ENV}"; AIRFLOW_DNS_LABEL="${AIRFLOW_DNS_LABEL,,}"
 
 # Resolve location: explicit arg > existing RG > existing cluster > westcentralus
 # Checking RG (not cluster) means this works correctly on first deploy too.
@@ -202,6 +203,7 @@ NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUS
   --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 
 PUBLIC_HOST="${DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
+AIRFLOW_PUBLIC_HOST="${AIRFLOW_DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 COMPUTE_DNS_LABEL="forge-compute-${_A}${ENV}"; COMPUTE_DNS_LABEL="${COMPUTE_DNS_LABEL,,}"
 COMPUTE_PUBLIC_HOST="${COMPUTE_DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 FORGE_REDIRECT_URI="https://${COMPUTE_PUBLIC_HOST}/oauth2/callback"
@@ -1644,6 +1646,7 @@ MIGJOB
     --set "dags.gitSync.branch=${GIT_BRANCH}" \
     --set "images.gitSync.repository=${ACR}.azurecr.io/git-sync" \
     --set "images.gitSync.tag=v4.4.2" \
+    --set "ingress.web.host=${AIRFLOW_PUBLIC_HOST}" \
     ${AIRFLOW_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${AIRFLOW_WI_CLIENT_ID}"} \
     --wait --timeout 10m
 

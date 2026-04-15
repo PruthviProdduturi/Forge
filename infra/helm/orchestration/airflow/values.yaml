@@ -70,6 +70,10 @@ config:
   database:
     sql_alchemy_pool_recycle: "3000"
     sql_alchemy_pool_pre_ping: "True"
+  api:
+    # Allow basic_password auth for REST API so portal backend can connect.
+    # Web UI still uses AAD OAuth (AUTH_TYPE = AUTH_OAUTH in webserverConfig).
+    auth_backends: "airflow.api.auth.backend.basic_password"
   core:
     # Dev guardrails — keep dev cheap and predictable.
     # 10 DAGs max; no historical backfill; DAGs auto-expire after 5 days.
@@ -97,6 +101,24 @@ dags:
     period: 30s
 
 # ---------------------------------------------------------------------------
+# Ingress — public HTTPS access to Airflow UI
+# Host is overridden at deploy time: --set ingress.web.host=forge-airflow-{alias}{env}.{loc}.cloudapp.azure.com
+# ---------------------------------------------------------------------------
+ingress:
+  web:
+    enabled: true
+    ingressClassName: nginx
+    host: forge-airflow-dev.westcentralus.cloudapp.azure.com  # overridden by forge-up.sh
+    tls:
+      enabled: true
+      secretName: forge-airflow-tls
+    annotations:
+      cert-manager.io/cluster-issuer: "letsencrypt"
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+
+# ---------------------------------------------------------------------------
 # Webserver
 # ---------------------------------------------------------------------------
 # Webserver secret key — moved to root level in chart 1.14+ (removed from webserver block)
@@ -109,9 +131,15 @@ webserver:
     type: ClusterIP
   waitForMigrations:
     enabled: false
-  # No local admin user — AAD OAuth only (AUTH_TYPE = AUTH_OAUTH in webserverConfig)
+  # Local admin for portal backend API calls (web UI login still uses AAD OAuth)
   defaultUser:
-    enabled: false
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@forge.local
+    firstName: Forge
+    lastName: Admin
+    password: admin
 
 # ---------------------------------------------------------------------------
 # Scheduler — single replica for dev (HA: 2 replicas in prod)
