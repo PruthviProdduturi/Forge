@@ -250,7 +250,7 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
             onClick={handleSave}
             disabled={saving || resetting}
             type="button"
-            style={{ flex: 1 }}
+            style={{ flex: 1, width: "auto" }}
           >
             {saving ? (
               <>

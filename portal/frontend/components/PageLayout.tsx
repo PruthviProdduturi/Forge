@@ -54,7 +54,7 @@ export function PageLayout({ icon, title, subtitle, heroContent, children }: Pag
             {subtitle ?? ""}
           </p>
           {/* Always reserve heroContent height so all pages share identical hero height */}
-          <div style={{ marginTop: 20, minHeight: 36 }}>
+          <div style={{ marginTop: 20, minHeight: 36, marginLeft: 54 }}>
             {heroContent}
           </div>
         </div>
