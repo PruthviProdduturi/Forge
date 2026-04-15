@@ -93,11 +93,11 @@ function RgCard({ rg, days }: { rg: RgCost; days: number }) {
             {rg.error}
           </div>
         ) : (
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "#94a3b8", marginBottom: 4 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#94a3b8" }}>
               Last {days} days
             </div>
-            <div style={{ fontSize: 38, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em", lineHeight: 1 }}>
+            <div style={{ fontSize: 32, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
               {rg.total_cost !== null ? formatCurrency(rg.total_cost, rg.currency) : "—"}
             </div>
           </div>
@@ -205,22 +205,21 @@ export default function CostPage() {
         <>
           {/* Combined total */}
           {rgs.some((r) => r.total_cost !== null) && (
-            <div style={{ marginBottom: 28 }}>
-              <div style={{
-                display: "inline-flex", alignItems: "baseline", gap: 12,
-                padding: "16px 24px", background: "#fff", borderRadius: 14,
-                border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-              }}>
-                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "#94a3b8" }}>
-                  Total — last {days} days
-                </span>
-                <span style={{ fontSize: 36, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>
-                  {formatCurrency(totalAcrossRgs, currency)}
-                </span>
-                <span style={{ fontSize: 12, color: "#94a3b8" }}>
-                  across {rgs.filter((r) => r.total_cost !== null).length} resource group{rgs.length !== 1 ? "s" : ""}
-                </span>
-              </div>
+            <div style={{
+              display: "inline-flex", flexDirection: "column", gap: 4,
+              padding: "16px 24px", background: "#fff", borderRadius: 14,
+              border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+              marginBottom: 28,
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#94a3b8" }}>
+                Total — last {days} days
+              </span>
+              <span style={{ fontSize: 32, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+                {formatCurrency(totalAcrossRgs, currency)}
+              </span>
+              <span style={{ fontSize: 13, color: "#64748b" }}>
+                across {rgs.filter((r) => r.total_cost !== null).length} resource group{rgs.length !== 1 ? "s" : ""}
+              </span>
             </div>
           )}
 
