@@ -83,6 +83,14 @@ export default function DatasetsPage() {
 
   const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+      <div style={{
+        background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
+        borderRadius: 10, padding: "8px 18px", display: "flex", alignItems: "center", gap: 8,
+      }}>
+        <i className="fas fa-database" style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }} />
+        <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{loading ? "—" : counts.all}</span>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>Total</span>
+      </div>
       {(["bronze", "silver", "gold"] as const).map(layer => (
         <div key={layer} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
