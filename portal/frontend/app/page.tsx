@@ -127,21 +127,20 @@ export default function HomePage() {
       {/* ── Hero ── */}
       <div style={{
         background: `linear-gradient(135deg, ${primaryColor} 0%, #0f1e2e 100%)`,
-        padding: "56px 1.5rem 52px",
+        padding: "48px 1.5rem 48px",
       }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.5)", marginBottom: 10 }}>
-            {today}
+          <div style={{ marginBottom: 8 }}>
+            <h1 style={{ fontSize: "2rem", fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1.2, margin: "0 0 8px 0" }}>
+              {salutation}
+            </h1>
+            <p style={{ fontSize: 14, color: "rgba(255,255,255,0.7)", maxWidth: 560, lineHeight: 1.6, margin: 0 }}>
+              {sub} &mdash; <span style={{ opacity: 0.6 }}>{today}</span>
+            </p>
           </div>
-          <h1 style={{ fontSize: "clamp(1.8rem, 4vw, 2.8rem)", fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1.15, marginBottom: 8, margin: "0 0 8px 0" }}>
-            {salutation}
-          </h1>
-          <p style={{ fontSize: 15, color: "rgba(255,255,255,0.7)", maxWidth: 520, lineHeight: 1.6, margin: "0 0 20px 0" }}>
-            {sub}
-          </p>
 
           {/* Status pills */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 20, minHeight: 36 }}>
             {role && (
               <div style={{
                 display: "inline-flex", alignItems: "center", gap: 5,

@@ -27,39 +27,36 @@ export function PageLayout({ icon, title, subtitle, heroContent, children }: Pag
       {/* ── Hero ── */}
       <div style={{
         background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
-        padding: "56px 1.5rem 52px",
+        padding: "48px 1.5rem 48px",
       }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
             <div style={{
-              width: 42, height: 42, borderRadius: 11,
+              width: 40, height: 40, borderRadius: 10,
               background: "rgba(255,255,255,0.15)",
               display: "flex", alignItems: "center", justifyContent: "center",
               flexShrink: 0,
             }}>
-              <i className={`fas ${icon}`} style={{ color: "#fff", fontSize: 18 }} />
+              <i className={`fas ${icon}`} style={{ color: "#fff", fontSize: 17 }} />
             </div>
             <h1 style={{
-              fontSize: "clamp(1.8rem, 4vw, 2.8rem)",
+              fontSize: "2rem",
               fontWeight: 800,
               color: "#fff",
               margin: 0,
               letterSpacing: "-0.02em",
-              lineHeight: 1.15,
+              lineHeight: 1.2,
             }}>
               {title}
             </h1>
           </div>
-          {subtitle && (
-            <p style={{ color: "rgba(255,255,255,0.7)", margin: 0, fontSize: 15, maxWidth: 600, lineHeight: 1.6 }}>
-              {subtitle}
-            </p>
-          )}
-          {heroContent && (
-            <div style={{ marginTop: 20 }}>
-              {heroContent}
-            </div>
-          )}
+          <p style={{ color: "rgba(255,255,255,0.7)", margin: "0 0 0 54px", fontSize: 14, maxWidth: 560, lineHeight: 1.6 }}>
+            {subtitle ?? ""}
+          </p>
+          {/* Always reserve heroContent height so all pages share identical hero height */}
+          <div style={{ marginTop: 20, minHeight: 36 }}>
+            {heroContent}
+          </div>
         </div>
       </div>
 
