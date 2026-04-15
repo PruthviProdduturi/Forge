@@ -244,13 +244,13 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "stretch", marginTop: "1.25rem" }}>
           <button
             className="modal-save-btn"
             onClick={handleSave}
             disabled={saving || resetting}
             type="button"
-            style={{ flex: 1, width: "auto" }}
+            style={{ flex: 1, width: "auto", marginTop: 0 }}
           >
             {saving ? (
               <>
