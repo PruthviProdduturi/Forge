@@ -132,6 +132,31 @@ export default function PipelinesPage() {
       subtitle="Browse, monitor and trigger your Forge data pipelines"
       heroContent={heroContent}
     >
+      {/* Stat cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "Total", value: loading ? "—" : pipelines.length, icon: "fa-sitemap", color: "var(--forge-primary)" },
+          { label: "Active", value: loading ? "—" : pipelines.filter(p => p.is_active && !p.is_paused).length, icon: "fa-circle-play", color: "#16a34a" },
+          { label: "Paused", value: loading ? "—" : pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle", color: "#94a3b8" },
+          { label: "Failed", value: loading ? "—" : pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark", color: "#dc2626" },
+        ].map(s => (
+          <div key={s.label} style={{
+            background: "#fff", border: "1px solid #e2e8f0",
+            borderTop: `3px solid ${s.color}`, borderRadius: 12,
+            padding: "14px 18px", display: "flex", alignItems: "center", gap: 12,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+          }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${s.color} 10%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 13 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Tag filter + Search */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
         {/* Unified filter bar */}

@@ -244,7 +244,7 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
           />
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
           <button
             className="modal-save-btn"
             onClick={handleSave}
@@ -276,7 +276,7 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
             type="button"
             title="Reset to default colour"
             style={{
-              padding: "0 14px", height: 40, borderRadius: 8,
+              padding: "0 14px", borderRadius: 8,
               border: "1px solid #e2e8f0", background: "#f8fafc",
               color: "#64748b", fontSize: 12, fontWeight: 600,
               cursor: "pointer", display: "flex", alignItems: "center", gap: 6,

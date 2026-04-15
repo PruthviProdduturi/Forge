@@ -674,6 +674,30 @@ export default function DataSourcesPage() {
       subtitle="Manage registered data sources for bronze ingestion"
       heroContent={heroContent}
     >
+        {/* Stat cards */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+          {[
+            { label: "Total Sources", value: loading ? "—" : sources.length, icon: "fa-plug", color: "var(--forge-primary)" },
+            { label: "ADLS Gen2", value: loading ? "—" : sources.filter(s => s.source_type === "adls_gen2").length, icon: "fa-hard-drive", color: "#0078d4" },
+            { label: "Kusto", value: loading ? "—" : sources.filter(s => s.source_type === "adx").length, icon: "fa-database", color: "#8b5cf6" },
+          ].map(s => (
+            <div key={s.label} style={{
+              background: "#fff", border: "1px solid #e2e8f0",
+              borderTop: `3px solid ${s.color}`, borderRadius: 12,
+              padding: "14px 18px", display: "flex", alignItems: "center", gap: 12,
+              boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+            }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${s.color} 10%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 13 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
+                <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.label}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
         {/* Toolbar */}
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>

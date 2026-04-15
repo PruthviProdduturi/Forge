@@ -114,6 +114,31 @@ export default function DatasetsPage() {
       subtitle="Explore datasets across Bronze, Silver, and Gold layers"
       heroContent={heroContent}
     >
+      {/* Stat cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+        {[
+          { label: "Total", value: loading ? "—" : counts.all, icon: "fa-database", color: "var(--forge-primary)" },
+          { label: "Bronze", value: loading ? "—" : counts.bronze, icon: "fa-layer-group", color: "#cd7f32" },
+          { label: "Silver", value: loading ? "—" : counts.silver, icon: "fa-database", color: "#94a3b8" },
+          { label: "Gold", value: loading ? "—" : counts.gold, icon: "fa-star", color: "#d4af37" },
+        ].map(s => (
+          <div key={s.label} style={{
+            background: "#fff", border: "1px solid #e2e8f0",
+            borderTop: `3px solid ${s.color}`, borderRadius: 12,
+            padding: "14px 18px", display: "flex", alignItems: "center", gap: 12,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+          }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${s.color} 10%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 13 }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Tabs + Search */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
