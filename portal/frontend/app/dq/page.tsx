@@ -79,44 +79,32 @@ export default function DataQualityPage() {
     : 0;
   const criticalCount = summary.filter(d => d.critical_failures > 0).length;
 
+  const heroContent = !loading && !error && summary.length > 0 ? (
+    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+      {[
+        { label: "Monitored", value: totalDatasets, icon: "fa-database" },
+        { label: "Pass Rate", value: `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle" },
+        { label: "Critical", value: criticalCount, icon: "fa-circle-xmark" },
+      ].map(s => (
+        <div key={s.label} style={{
+          background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: 10, padding: "8px 18px", display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <i className={`fas ${s.icon}`} style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }} />
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{s.value}</span>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>{s.label}</span>
+        </div>
+      ))}
+    </div>
+  ) : undefined;
+
   return (
     <PageLayout
       icon="fa-shield-halved"
       title="Data Quality"
       subtitle="Monitor DQ rules, pass rates, and critical gate failures"
+      heroContent={heroContent}
     >
-      {/* Summary bar */}
-      {!loading && !error && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-          gap: 16, marginBottom: 32,
-        }}>
-          {[
-            { label: "Datasets Monitored", value: totalDatasets, icon: "fa-database", color: ACCENT },
-            { label: "Overall Pass Rate", value: `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle", color: overallPassRate >= 0.95 ? "#22c55e" : overallPassRate >= 0.8 ? "#f59e0b" : "#ef4444" },
-            { label: "With Critical Failures", value: criticalCount, icon: "fa-circle-xmark", color: criticalCount > 0 ? "#ef4444" : "#22c55e" },
-          ].map(s => (
-            <div key={s.label} style={{
-              background: "#fff", border: "1px solid #e2e8f0",
-              borderTop: `3px solid ${s.color}`, borderRadius: 12,
-              padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: 8,
-                  background: `${s.color}15`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 14 }} />
-                </div>
-                <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>{s.label}</span>
-              </div>
-              <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a" }}>{s.value}</div>
-            </div>
-          ))}
-        </div>
-      )}
 
       {loading && (
         <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>

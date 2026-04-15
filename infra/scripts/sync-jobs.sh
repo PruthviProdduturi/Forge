@@ -182,6 +182,37 @@ if [[ -z "${STORAGE_ACCOUNT}" ]]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Temporarily open ADLS firewall for uploads, close on exit
+# ---------------------------------------------------------------------------
+_ADLS_OPENED=false
+_close_adls() {
+  if [[ "${_ADLS_OPENED}" == "true" && -n "${MY_IP:-}" ]]; then
+    log "Removing ADLS firewall rule for ${MY_IP}..."
+    az storage account network-rule remove \
+      --account-name "${STORAGE_ACCOUNT}" \
+      --ip-address "${MY_IP}" \
+      --output none 2>/dev/null || true
+    log "ADLS firewall restored."
+  fi
+}
+trap _close_adls EXIT
+
+if ! dry; then
+  MY_IP="$(curl -sf https://api.ipify.org || curl -sf https://ifconfig.me || echo "")"
+  if [[ -n "${MY_IP}" ]]; then
+    log "Opening ADLS firewall for ${MY_IP}..."
+    az storage account network-rule add \
+      --account-name "${STORAGE_ACCOUNT}" \
+      --ip-address "${MY_IP}" \
+      --output none 2>/dev/null || true
+    _ADLS_OPENED=true
+    sleep 5  # allow rule to propagate
+  else
+    log "WARN: could not detect public IP — uploads may fail if storage firewall is active"
+  fi
+fi
+
 if ! command -v npx &>/dev/null; then
   echo "ERROR: npx not found — install Node.js ≥ 20" >&2
   exit 1

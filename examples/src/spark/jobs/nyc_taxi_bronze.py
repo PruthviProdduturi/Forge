@@ -6,7 +6,7 @@
 # ==============================================================
 # ── FORGE:LOCKED:START:HEADER ──
 """
-Daily ingestion of NYC TLC Yellow Taxi trip data from Azure Open Datasets
+Daily ingestion of NYC TLC trip data from Azure Open Datasets, partitioned by pickup date
 
 Layer:     bronze
 Table:     lakehouse.bronze.nyctaxi
@@ -14,14 +14,9 @@ Partition: __year/__month/__day/__hour from pickup_datetime (hour=PARTITION_HOUR
 Schedule:  0 2 * * *
 Params:
   TAXI_TYPE: string (default: yellow) — yellow | green | fhv | hvfhv
-  DATA_SOURCE_NAME: string (default: nyc-taxi-yellow) — name registered in portal data_sources
   PARTITION_DATE: string (default: ) — Partition date (yyyy-MM-dd) — set by Airflow data_interval_start
   PARTITION_HOUR: int (default: 0) — Partition hour (0–23) — 0 when date column has no time component
   RESTATE: bool (default: false) — Set true to restate partition even if tracker already exists
-
-Source: wasbs://nyctlc@azureopendatastorage.blob.core.windows.net/yellow/
-        Azure Open Datasets — public parquet, partitioned by puYear/puMonth.
-        Anonymous access configured via sparkConf in the DAG SparkApplication spec.
 """
 from __future__ import annotations
 
@@ -36,20 +31,24 @@ from forge_sdk import ForgeJob
 # ── FORGE:LOCKED:END:HEADER ──
 
 # ── FORGE:LOCKED:START:HEADER ──
+# ---------------------------------------------------------------------------
+# Parameters — auto-injected: PARTITION_DATE, PARTITION_HOUR, RESTATE
+# ---------------------------------------------------------------------------
 FORGE_ENV = os.environ.get("FORGE_ENV", "dev")
-TAXI_TYPE = os.environ.get("TAXI_TYPE", "yellow")
-DATA_SOURCE_NAME = os.environ.get("DATA_SOURCE_NAME", "nyc-taxi-yellow")
-PARTITION_DATE = os.environ.get("PARTITION_DATE", "")
-PARTITION_HOUR = int(os.environ.get("PARTITION_HOUR", "0"))
-RESTATE = os.environ.get("RESTATE", "false").lower() in ("1", "true", "yes")
+
+TAXI_TYPE = os.environ.get("TAXI_TYPE", "yellow")  # yellow | green | fhv | hvfhv
+PARTITION_DATE = os.environ.get("PARTITION_DATE", "")  # Partition date (yyyy-MM-dd) — set by Airflow data_interval_start
+PARTITION_HOUR = int(os.environ.get("PARTITION_HOUR", "0"))  # Partition hour (0–23) — 0 when date column has no time component
+RESTATE = os.environ.get("RESTATE", "false").lower() in ("1", "true", "yes")  # Set true to restate partition even if tracker already exists
 # ── FORGE:LOCKED:END:HEADER ──
 
 
 class NycTaxiBronze(ForgeJob):
-    """Daily ingestion of NYC TLC Yellow Taxi trip data from Azure Open Datasets"""
+    """Daily ingestion of NYC TLC trip data from Azure Open Datasets, partitioned by pickup date"""
 
     # ── FORGE:LOCKED:START:HELPERS ──
     def _tracker_path(self) -> str:
+        """ADLS path for this partition's tracker file."""
         _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
         return (
             f"abfss://bronze@{self.storage}/Transport/Trip/Internal/Rideshare/NycTaxi/1/NycTaxiBronze/_tracker"
@@ -57,6 +56,7 @@ class NycTaxiBronze(ForgeJob):
         )
 
     def _tracker_exists(self) -> bool:
+        """Return True if this partition's tracker already exists in ADLS."""
         try:
             _path = self._tracker_path()
             _jvm  = self.spark.sparkContext._jvm
@@ -77,66 +77,15 @@ class NycTaxiBronze(ForgeJob):
             self.log.info("restatement_mode table=lakehouse.bronze.nyctaxi tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
-    def _lookup_source(self) -> dict:
-        """Fetch source config from portal data_sources registry via Postgres."""
-        import ssl
-        try:
-            import asyncio
-            import asyncpg  # type: ignore
-            from azure.identity import WorkloadIdentityCredential  # type: ignore
-
-            pg_host = os.environ.get("PG_HOST", "")
-            pg_user = os.environ.get("PG_USER", "")
-            if not pg_host or not pg_user:
-                self.log.info("source_lookup_skipped pg_host not set — using defaults")
-                return {}
-
-            cred = WorkloadIdentityCredential()
-            token = cred.get_token("https://ossrdbms-aad.database.windows.net/.default").token
-            ssl_ctx = ssl.create_default_context()
-
-            async def _fetch():
-                conn = await asyncpg.connect(
-                    host=pg_host, port=5432, database="portal",
-                    user=pg_user, password=token, ssl=ssl_ctx,
-                )
-                try:
-                    row = await conn.fetchrow(
-                        "SELECT config FROM data_sources WHERE name = $1", DATA_SOURCE_NAME
-                    )
-                    return dict(row["config"]) if row else {}
-                finally:
-                    await conn.close()
-
-            return asyncio.get_event_loop().run_until_complete(_fetch())
-        except Exception as exc:
-            self.log.warning("source_lookup_failed error=%s — using defaults", str(exc))
-            return {}
-
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
-        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
-
-        # Resolve connection details from the registered data source in portal.
-        # Falls back to defaults (Azure Open Datasets) if Postgres is unavailable.
-        _src_config = self._lookup_source()
-        _account   = _src_config.get("account", "azureopendatastorage")
-        _container = _src_config.get("container", "nyctlc")
-        _base_path = _src_config.get("base_path", f"/{TAXI_TYPE}").rstrip("/")
-
-        # Azure Open Datasets — public blob storage, partitioned by puYear/puMonth.
-        # Anonymous access pre-configured via sparkConf in DAG spec:
-        #   fs.azure.account.auth.type.azureopendatastorage.blob.core.windows.net = Anonymous
-        src_path = (
-            f"wasbs://{_container}@{_account}.blob.core.windows.net"
-            f"{_base_path}/puYear={_year}/puMonth={_month}/"
-        )
+        src_path = f"abfss://raw@{self.storage}/Transport/Trip/Public/Rideshare/NycTlc/1/TlcYellowTrip"
         raw = (
             self.spark.read
             .option("mergeSchema", "true")
             .parquet(src_path)
         )
-        self.log.info("source_read path=%s datasource=%s account=%s", src_path, DATA_SOURCE_NAME, _account)
+        self.log.info("source_read path=%s", src_path)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
@@ -166,9 +115,11 @@ class NycTaxiBronze(ForgeJob):
         _row_count = df.count()
         self.log.info("rows_to_write count=%d", _row_count)
         if _row_count == 0:
-            self.log.warning("empty_partition_skipping table=lakehouse.bronze.nyctaxi date=%s", PARTITION_DATE)
+            self.log.warning("empty_partition_skipping table=lakehouse.bronze.nyctaxi")
             return
 
+        # Stamp partition columns
+        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
         df = (
             df
             .withColumn("__year",  F.lit(_year))
@@ -189,13 +140,12 @@ class NycTaxiBronze(ForgeJob):
 
         self.log.info("write_complete table=lakehouse.bronze.nyctaxi rows=%d", _row_count)
 
+        # Write tracker — source of truth for run history and downstream dependencies
         _tracker = {
             "version":      "v1",
             "job":          self.__class__.__name__,
             "table":        "lakehouse.bronze.nyctaxi",
             "partition":    {"year": _year, "month": _month, "day": _day, "hour": PARTITION_HOUR},
-            "source":       DATA_SOURCE_NAME,
-            "taxi_type":    TAXI_TYPE,
             "status":       "success",
             "rows_written": _row_count,
             "completed_at": datetime.now(timezone.utc).isoformat(),

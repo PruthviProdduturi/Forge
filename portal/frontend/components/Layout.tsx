@@ -105,54 +105,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Right side */}
         <div className="header-right">
-          {/* Env dropdown */}
+          {/* Env badge */}
           {platformInfo?.env && (
-            <div className="header-dropdown header-dropdown-right">
-              <button
-                className="header-env-btn"
-                type="button"
-                title={`Environment: ${platformInfo.env}`}
-              >
-                <span style={{
-                  padding: "1px 8px", borderRadius: 5, fontSize: 10, fontWeight: 800,
-                  letterSpacing: "0.08em", textTransform: "uppercase",
-                  background: platformInfo.env === "prod" ? "#fee2e2" : "#dcfce7",
-                  color: platformInfo.env === "prod" ? "#dc2626" : "#16a34a",
-                  border: `1px solid ${platformInfo.env === "prod" ? "#fca5a5" : "#86efac"}`,
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                }}>
-                  {platformInfo.env ?? "dev"}
-                  <i className="fas fa-chevron-down" style={{ fontSize: 8, opacity: 0.6 }} aria-hidden="true" />
-                </span>
-              </button>
-              <div className="header-dropdown-menu" role="menu" style={{ minWidth: 280 }}>
-                <div style={{ padding: "10px 16px 6px", borderBottom: "1px solid #f1f5f9" }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: "#94a3b8", marginBottom: 8 }}>
-                    Connected Platform
-                  </div>
-                  {[
-                    ["Environment", (platformInfo.env ?? "unknown").toUpperCase()],
-                    ["Auth", "Azure AD"],
-                    ["Airflow", platformInfo.platform?.airflow_host ?? "—"],
-                    ["Trino", platformInfo.platform?.trino_host ?? "—"],
-                    ["ADLS", platformInfo.platform?.adls_account ?? "—"],
-                  ].map(([label, value]) => (
-                    <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 5 }}>
-                      <span style={{ fontSize: 11, color: "#64748b" }}>{label}</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: "#0f172a", fontFamily: "monospace" }}>{value}</span>
-                    </div>
-                  ))}
-                </div>
-                <Link
-                  href="/settings"
-                  role="menuitem"
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}
-                >
-                  <i className="fas fa-server" aria-hidden="true" />
-                  Platform
-                </Link>
-              </div>
-            </div>
+            <Link href="/settings" style={{ textDecoration: "none" }} title="Platform settings">
+              <span style={{
+                padding: "1px 8px", borderRadius: 5, fontSize: 10, fontWeight: 800,
+                letterSpacing: "0.08em", textTransform: "uppercase",
+                background: platformInfo.env === "prod" ? "#fee2e2" : "#dcfce7",
+                color: platformInfo.env === "prod" ? "#dc2626" : "#16a34a",
+                border: `1px solid ${platformInfo.env === "prod" ? "#fca5a5" : "#86efac"}`,
+                cursor: "pointer",
+              }}>
+                {platformInfo.env}
+              </span>
+            </Link>
           )}
 
           <button
