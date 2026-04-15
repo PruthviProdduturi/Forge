@@ -165,19 +165,19 @@ export default function DatasetsPage() {
         </div>
       )}
 
-      {!loading && !error && filtered.length === 0 && (
-        <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-          <i className="fas fa-inbox" style={{ fontSize: 32, marginBottom: 12, display: "block" }} />
-          No datasets found
-        </div>
-      )}
-
-      {!loading && !error && filtered.length > 0 && (
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-          gap: 16,
-        }}>
+      {!loading && !error && (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
+              <i className="fas fa-inbox" style={{ fontSize: 32, marginBottom: 12, display: "block" }} />
+              No datasets found
+            </div>
+          ) : (
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+              gap: 16, padding: 20,
+            }}>
           {filtered.map(d => {
             const layerInfo = LAYER_META[d.layer] ?? LAYER_META.bronze;
             return (
@@ -245,6 +245,8 @@ export default function DatasetsPage() {
               </div>
             );
           })}
+            </div>
+          )}
         </div>
       )}
     </PageLayout>
