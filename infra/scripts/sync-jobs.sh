@@ -43,10 +43,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CLI_ENTRY="${REPO_ROOT}/sdk/cli/src/index.ts"
 EXAMPLES_DIR="${REPO_ROOT}/examples"
 MANIFESTS_DIR="${EXAMPLES_DIR}/src/spark/jobs"
-# forge generate writes DAGs here (pipelines-repo path, two-repo model)
+# DAGs live in examples/src — Airflow git-sync reads from the pipelines repo directly
 GENERATED_DAGS_DIR="${EXAMPLES_DIR}/src/airflow/dags"
-# git-sync reads from here — sync-jobs.sh copies from GENERATED_DAGS_DIR to here
-DAGS_DIR="${REPO_ROOT}/orchestration/airflow/dags"
 DQ_RULES_DIR="${EXAMPLES_DIR}/src/dq/rules"
 
 FORGE_ENV="${FORGE_ENV:-dev}"
@@ -69,14 +67,12 @@ STATE_DEPLOY_LOG="deployments_${FORGE_ENV}.jsonl"
 # ---------------------------------------------------------------------------
 JOB_FILTER=""
 DRY_RUN=false
-NO_GIT_PUSH=false
 FULL_DEPLOY=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --job)           JOB_FILTER="$2"; shift 2 ;;
     --dry-run)       DRY_RUN=true; shift ;;
-    --no-git-push)   NO_GIT_PUSH=true; shift ;;
     --full)          FULL_DEPLOY=true; shift ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# Req/p' "$0" | sed 's/^# \?//'
@@ -290,7 +286,6 @@ log "Preserved:       business logic block in .py (only user-editable region)"
 log ""
 
 GENERATED_PY=()
-GENERATED_DAGS=()
 GENERATED_DQ=()
 
 for manifest in "${MANIFEST_FILES[@]}"; do
@@ -315,36 +310,8 @@ for manifest in "${MANIFEST_FILES[@]}"; do
   fi
 done
 
-# ---------------------------------------------------------------------------
-# Step 2b — Copy generated DAGs → orchestration/airflow/dags/ (git-sync target)
-# ---------------------------------------------------------------------------
-# forge generate writes DAGs to examples/src/airflow/dags/ (pipelines-repo path).
-# Airflow git-sync reads from orchestration/airflow/dags/ (platform-repo path).
-# In a two-repo setup git-sync would point directly to src/airflow/dags/; in
-# the current single-repo dev setup we copy across before pushing.
-# ---------------------------------------------------------------------------
-if ! dry; then
-  for manifest in "${MANIFEST_FILES[@]}"; do
-    job_name="$(basename "${manifest}" .forge.ts)"
-    # DAG lives in either ingestion/ or transformation/ — check both
-    for _subdir in ingestion transformation; do
-      _src="${GENERATED_DAGS_DIR}/${_subdir}/${job_name}_dag.py"
-      if [[ -f "${_src}" ]]; then
-        mkdir -p "${DAGS_DIR}/${_subdir}"
-        cp "${_src}" "${DAGS_DIR}/${_subdir}/${job_name}_dag.py"
-        log "  synced → orchestration/airflow/dags/${_subdir}/${job_name}_dag.py"
-      fi
-    done
-  done
-fi
-
-# Collect generated DAG files (from the git-sync target dir)
-if ! dry; then
-  mapfile -t GENERATED_DAGS < <(
-    git -C "${REPO_ROOT}" diff --name-only HEAD -- "${DAGS_DIR}" 2>/dev/null
-    git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${DAGS_DIR}" 2>/dev/null
-  )
-fi
+# DAGs live in examples/src/airflow/dags/ — Airflow git-sync reads from the
+# pipelines repo directly. No copy step needed.
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -380,51 +347,8 @@ else
   done
 fi
 
-# ---------------------------------------------------------------------------
-# Step 6 — Commit + push DAG files so Airflow git-sync picks them up
-# ---------------------------------------------------------------------------
-section "Push DAG files → git (Airflow git-sync polls every 30s — ${DAGS_DIR})"
-
+# Step 6 — DAG push handled by pipelines repo CI (Airflow git-sync reads that repo directly)
 DAG_PUSH_DONE=false
-
-if [[ "${NO_GIT_PUSH}" == "true" ]]; then
-  log "  --no-git-push set — skipping (CI pipeline handles git push)"
-elif dry; then
-  log "  [dry-run] would git add + commit + push DAG changes"
-else
-  CHANGED_DAGS=()
-  while IFS= read -r -d '' dagfile; do
-    if git -C "${REPO_ROOT}" diff --quiet HEAD -- "${dagfile}" 2>/dev/null && \
-       ! git -C "${REPO_ROOT}" ls-files --others --exclude-standard -- "${dagfile}" | grep -q .; then
-      : # unchanged
-    else
-      CHANGED_DAGS+=("${dagfile}")
-    fi
-  done < <(find "${DAGS_DIR}" -name "*.py" -print0)
-
-  if [[ ${#CHANGED_DAGS[@]} -eq 0 ]]; then
-    log "  DAG files unchanged — nothing to push"
-  else
-    log "  Staging ${#CHANGED_DAGS[@]} changed DAG file(s):"
-    for f in "${CHANGED_DAGS[@]}"; do
-      log "    + $(basename "${f}")"
-      git -C "${REPO_ROOT}" add "${f}"
-    done
-
-    BRANCH="$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD)"
-
-    if [[ -n "${JOB_FILTER}" ]]; then
-      COMMIT_MSG="chore(dags): regenerate ${JOB_FILTER} from manifest [${DEPLOY_ID}]"
-    else
-      COMMIT_MSG="chore(dags): regenerate from .forge.ts manifests [${DEPLOY_ID}]"
-    fi
-
-    git -C "${REPO_ROOT}" commit -m "${COMMIT_MSG}"
-    git -C "${REPO_ROOT}" push origin "${BRANCH}"
-    log "  ✓ Pushed to ${BRANCH} — Airflow will pick up changes within 30s"
-    DAG_PUSH_DONE=true
-  fi
-fi
 
 # ---------------------------------------------------------------------------
 # Step 7 — Write deployment state to ADLS
