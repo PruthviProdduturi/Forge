@@ -10,13 +10,14 @@ import React, {
 import { API_BASE } from "../config";
 import { generateGradients, hexToRGB } from "../utils/colorUtils";
 
-const DEFAULT_THEME_COLOR = "#0078d4";
+export const DEFAULT_THEME_COLOR = "#0078d4";
 const STORAGE_KEY = "forge-theme-color";
 
 interface ThemeContextValue {
   primaryColor: string;
   setPrimaryColor: (color: string) => void;
   saveTheme: (color: string) => Promise<void>;
+  resetTheme: () => Promise<void>;
   isLoading: boolean;
 }
 
@@ -105,6 +106,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     [setPrimaryColor]
   );
 
+  const resetTheme = useCallback(async (): Promise<void> => {
+    try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+    await saveTheme(DEFAULT_THEME_COLOR);
+  }, [saveTheme]);
+
   // Load theme on mount
   useEffect(() => {
     const loadTheme = async () => {
@@ -150,7 +156,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [setPrimaryColor]);
 
   return (
-    <ThemeContext.Provider value={{ primaryColor, setPrimaryColor, saveTheme, isLoading }}>
+    <ThemeContext.Provider value={{ primaryColor, setPrimaryColor, saveTheme, resetTheme, isLoading }}>
       {children}
     </ThemeContext.Provider>
   );

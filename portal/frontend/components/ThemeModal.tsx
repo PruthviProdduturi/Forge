@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTheme } from "../contexts/ThemeContext";
+import { useTheme, DEFAULT_THEME_COLOR } from "../contexts/ThemeContext";
 
 // ── Color math ────────────────────────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ function isValidHex(v: string) { return /^#[0-9a-fA-F]{6}$/.test(v); }
 interface ThemeModalProps { onClose: () => void; }
 
 export function ThemeModal({ onClose }: ThemeModalProps) {
-  const { primaryColor, saveTheme } = useTheme();
+  const { primaryColor, saveTheme, resetTheme } = useTheme();
 
   const initHsv = isValidHex(primaryColor) ? hexToHsv(primaryColor) : [210, 1, 0.83];
   const [hue, setHue] = useState(initHsv[0]);
@@ -48,6 +48,7 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
   const [val, setVal] = useState(initHsv[2]);
   const [hexInput, setHexInput] = useState(primaryColor);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const hueRef   = useRef<HTMLDivElement>(null);
@@ -121,6 +122,19 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
     try { await saveTheme(currentHex); }
     finally { setSaving(false); onClose(); }
   }, [currentHex, saveTheme, onClose]);
+
+  // ── Reset to default ──────────────────────────────────────────────────────
+  const handleReset = useCallback(async () => {
+    setResetting(true);
+    try {
+      await resetTheme();
+      const [h, s, v] = hexToHsv(DEFAULT_THEME_COLOR);
+      setHue(h); setSat(s); setVal(v);
+    } finally {
+      setResetting(false);
+      onClose();
+    }
+  }, [resetTheme, onClose]);
 
   // ── Close ─────────────────────────────────────────────────────────────────
   const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -230,30 +244,58 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
           />
         </div>
 
-        <button
-          className="modal-save-btn"
-          onClick={handleSave}
-          disabled={saving}
-          type="button"
-        >
-          {saving ? (
-            <>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            className="modal-save-btn"
+            onClick={handleSave}
+            disabled={saving || resetting}
+            type="button"
+            style={{ flex: 1 }}
+          >
+            {saving ? (
+              <>
+                <span style={{
+                  width: 14, height: 14,
+                  border: "2px solid rgba(255,255,255,0.4)",
+                  borderTopColor: "#fff", borderRadius: "50%",
+                  animation: "spin 0.7s linear infinite",
+                  display: "inline-block",
+                }} />
+                Saving…
+              </>
+            ) : (
+              <>
+                <i className="fas fa-check" />
+                Apply Theme
+              </>
+            )}
+          </button>
+          <button
+            onClick={handleReset}
+            disabled={saving || resetting}
+            type="button"
+            title="Reset to default colour"
+            style={{
+              padding: "0 14px", height: 40, borderRadius: 8,
+              border: "1px solid #e2e8f0", background: "#f8fafc",
+              color: "#64748b", fontSize: 12, fontWeight: 600,
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {resetting ? (
               <span style={{
-                width: 14, height: 14,
-                border: "2px solid rgba(255,255,255,0.4)",
-                borderTopColor: "#fff", borderRadius: "50%",
-                animation: "spin 0.7s linear infinite",
+                width: 12, height: 12,
+                border: "2px solid #cbd5e1", borderTopColor: "#64748b",
+                borderRadius: "50%", animation: "spin 0.7s linear infinite",
                 display: "inline-block",
               }} />
-              Saving…
-            </>
-          ) : (
-            <>
-              <i className="fas fa-check" />
-              Apply Theme
-            </>
-          )}
-        </button>
+            ) : (
+              <i className="fas fa-rotate-left" style={{ fontSize: 11 }} />
+            )}
+            Reset
+          </button>
+        </div>
 
       </div>
     </div>
