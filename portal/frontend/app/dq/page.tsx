@@ -85,6 +85,7 @@ export default function DataQualityPage() {
         { label: "Monitored", value: loading ? "—" : totalDatasets, icon: "fa-database" },
         { label: "Pass Rate", value: loading ? "—" : `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle" },
         { label: "Critical", value: loading ? "—" : criticalCount, icon: "fa-circle-xmark" },
+        { label: "Warnings", value: loading ? "—" : summary.filter(d => d.warnings > 0).length, icon: "fa-triangle-exclamation" },
       ].map(s => (
         <div key={s.label} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -105,31 +106,6 @@ export default function DataQualityPage() {
       subtitle="Monitor DQ rules, pass rates, and critical gate failures"
       heroContent={heroContent}
     >
-
-      {/* Stat cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
-        {[
-          { label: "Monitored", value: loading ? "—" : summary.length, icon: "fa-database", color: "var(--forge-primary)" },
-          { label: "Pass Rate", value: loading ? "—" : `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle", color: "#16a34a" },
-          { label: "Critical", value: loading ? "—" : criticalCount, icon: "fa-circle-xmark", color: "#dc2626" },
-          { label: "Warnings", value: loading ? "—" : summary.filter(d => d.warnings > 0).length, icon: "fa-triangle-exclamation", color: "#f59e0b" },
-        ].map(s => (
-          <div key={s.label} style={{
-            background: "#fff", border: "1px solid #e2e8f0",
-            borderTop: `3px solid ${s.color}`, borderRadius: 12,
-            padding: "14px 18px", display: "flex", alignItems: "center", gap: 12,
-            boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-          }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: `color-mix(in srgb, ${s.color} 10%, transparent)`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 13 }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
-              <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.label}</div>
-            </div>
-          </div>
-        ))}
-      </div>
 
       {loading && (
         <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
