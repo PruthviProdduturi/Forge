@@ -16,7 +16,7 @@ from forge_dq.tracker import track, ForgeTracker
 from forge_dq.runner import DQRunner, DQRunReport, DQCriticalFailureError
 from forge_dq.rules.base import Severity, RuleResult
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 __all__ = [
     "track",
     "ForgeTracker",
