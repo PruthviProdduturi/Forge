@@ -29,8 +29,8 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/datasources", label: "Sources",       icon: "fa-plug" },
-  { href: "/pipelines",   label: "Pipelines",     icon: "fa-sitemap" },
+  { href: "/datasources", label: "Sources",        icon: "fa-plug" },
+  { href: "/pipelines",   label: "Pipelines",      icon: "fa-sitemap" },
   { href: "/datasets",    label: "Datasets",       icon: "fa-database" },
   { href: "/lineage",     label: "Lineage",        icon: "fa-share-nodes" },
   { href: "/dq",          label: "Quality",        icon: "fa-shield-halved" },

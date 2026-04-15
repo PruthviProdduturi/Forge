@@ -136,7 +136,7 @@ export default function HomePage() {
           <h1 style={{ fontSize: "clamp(1.8rem, 4vw, 2.8rem)", fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1.15, marginBottom: 8, margin: "0 0 8px 0" }}>
             {salutation}
           </h1>
-          <p style={{ fontSize: "1rem", color: "rgba(255,255,255,0.7)", maxWidth: 520, lineHeight: 1.6, margin: "0 0 20px 0" }}>
+          <p style={{ fontSize: 15, color: "rgba(255,255,255,0.7)", maxWidth: 520, lineHeight: 1.6, margin: "0 0 20px 0" }}>
             {sub}
           </p>
 
