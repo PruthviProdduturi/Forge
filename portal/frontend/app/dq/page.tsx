@@ -169,11 +169,9 @@ export default function DataQualityPage() {
                   <td style={{ padding: "14px 16px", textAlign: "center" }}>
                     {d.critical_failures > 0 ? (
                       <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 4,
                         padding: "2px 10px", borderRadius: 12, fontSize: 13, fontWeight: 700,
                         background: "#fee2e2", color: "#dc2626",
                       }}>
-                        <i className="fas fa-circle-exclamation" style={{ fontSize: 10 }} />
                         {d.critical_failures}
                       </span>
                     ) : (
