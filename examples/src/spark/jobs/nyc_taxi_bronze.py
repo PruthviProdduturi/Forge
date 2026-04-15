@@ -77,23 +77,66 @@ class NycTaxiBronze(ForgeJob):
             self.log.info("restatement_mode table=lakehouse.bronze.nyctaxi tracker=%s", self._tracker_path())
     # ── FORGE:LOCKED:END:HELPERS ──
 
+    def _lookup_source(self) -> dict:
+        """Fetch source config from portal data_sources registry via Postgres."""
+        import ssl
+        try:
+            import asyncio
+            import asyncpg  # type: ignore
+            from azure.identity import WorkloadIdentityCredential  # type: ignore
+
+            pg_host = os.environ.get("PG_HOST", "")
+            pg_user = os.environ.get("PG_USER", "")
+            if not pg_host or not pg_user:
+                self.log.info("source_lookup_skipped pg_host not set — using defaults")
+                return {}
+
+            cred = WorkloadIdentityCredential()
+            token = cred.get_token("https://ossrdbms-aad.database.windows.net/.default").token
+            ssl_ctx = ssl.create_default_context()
+
+            async def _fetch():
+                conn = await asyncpg.connect(
+                    host=pg_host, port=5432, database="portal",
+                    user=pg_user, password=token, ssl=ssl_ctx,
+                )
+                try:
+                    row = await conn.fetchrow(
+                        "SELECT config FROM data_sources WHERE name = $1", DATA_SOURCE_NAME
+                    )
+                    return dict(row["config"]) if row else {}
+                finally:
+                    await conn.close()
+
+            return asyncio.get_event_loop().run_until_complete(_fetch())
+        except Exception as exc:
+            self.log.warning("source_lookup_failed error=%s — using defaults", str(exc))
+            return {}
+
     def run(self) -> None:
         # ── FORGE:LOCKED:START:SOURCE ──
         _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))
 
+        # Resolve connection details from the registered data source in portal.
+        # Falls back to defaults (Azure Open Datasets) if Postgres is unavailable.
+        _src_config = self._lookup_source()
+        _account   = _src_config.get("account", "azureopendatastorage")
+        _container = _src_config.get("container", "nyctlc")
+        _base_path = _src_config.get("base_path", f"/{TAXI_TYPE}").rstrip("/")
+
         # Azure Open Datasets — public blob storage, partitioned by puYear/puMonth.
-        # Anonymous access is pre-configured via sparkConf in the DAG spec:
+        # Anonymous access pre-configured via sparkConf in DAG spec:
         #   fs.azure.account.auth.type.azureopendatastorage.blob.core.windows.net = Anonymous
         src_path = (
-            f"wasbs://nyctlc@azureopendatastorage.blob.core.windows.net"
-            f"/{TAXI_TYPE}/puYear={_year}/puMonth={_month}/"
+            f"wasbs://{_container}@{_account}.blob.core.windows.net"
+            f"{_base_path}/puYear={_year}/puMonth={_month}/"
         )
         raw = (
             self.spark.read
             .option("mergeSchema", "true")
             .parquet(src_path)
         )
-        self.log.info("source_read path=%s datasource=%s", src_path, DATA_SOURCE_NAME)
+        self.log.info("source_read path=%s datasource=%s account=%s", src_path, DATA_SOURCE_NAME, _account)
         # ── FORGE:LOCKED:END:SOURCE ──
 
         # ╔══════════════════════════════════════════╗
