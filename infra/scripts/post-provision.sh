@@ -202,11 +202,18 @@ fi
 echo ""
 echo "--- Granting Storage Blob Data Contributor on ADLS"
 
-STORAGE_ACCOUNT="forgeadls${OWNER_ALIAS}${ENVIRONMENT}"
+# Storage account names must be lowercase
+STORAGE_ACCOUNT="forgeadls$(echo "${OWNER_ALIAS}${ENVIRONMENT}" | tr '[:upper:]' '[:lower:]')"
 STORAGE_ID=$(az storage account show \
   --resource-group "$RG_COMPUTE" \
   --name "$STORAGE_ACCOUNT" \
   --query id -o tsv 2>/dev/null || echo "")
+
+if [[ -z "$STORAGE_ID" ]]; then
+  echo "    Storage account '$STORAGE_ACCOUNT' not found — skipping"
+else
+  echo "    Storage account : $STORAGE_ACCOUNT"
+fi
 
 # Storage Blob Data Contributor built-in role ID (immutable)
 BLOB_CONTRIBUTOR_ROLE="ba92f5b4-2d11-453d-a403-e96b0029c9fe"
@@ -225,7 +232,13 @@ _storage_assign() {
 }
 
 # Platform admin group — developers running sync-jobs.sh
-_storage_assign "$_ADMIN_GROUP" "Group" "platform admin group"
+# Falls back to the signed-in user if the group is not configured
+if [[ -n "$_ADMIN_GROUP" ]]; then
+  _storage_assign "$_ADMIN_GROUP" "Group" "platform admin group"
+else
+  _CURRENT_USER=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || echo "")
+  _storage_assign "$_CURRENT_USER" "User" "signed-in user (no admin group configured)"
+fi
 
 # Workload identity MIs — Spark, Airflow, DQ
 for _WL in spark airflow dq; do
