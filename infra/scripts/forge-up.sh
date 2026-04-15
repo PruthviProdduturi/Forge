@@ -1718,7 +1718,6 @@ MIGJOB
     --set "api.env.trinoHost=${COMPUTE_PUBLIC_HOST}" \
     --set "api.env.trinoPort=443" \
     --set "api.env.airflowUsername=portal-api-svc" \
-    --set "api.env.airflowPassword=${_AIRFLOW_SVC_PWD}" \
     --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
     --set "ingress.host=${PUBLIC_HOST}" \
     --set "api.env.pgHost=${PG_HOST}" \
