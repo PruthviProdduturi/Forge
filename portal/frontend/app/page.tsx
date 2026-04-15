@@ -19,6 +19,7 @@ interface HealthData {
 interface Pipeline {
   dag_id: string;
   description: string;
+  is_active: boolean;
   last_run_state: string | null;
   last_run_at: string | null;
   is_paused: boolean;
@@ -109,11 +110,16 @@ export default function HomePage() {
     { label: "Trino", ok: health?.checks.trino ?? null, icon: "fa-database" },
   ];
 
-  // Recent pipeline runs — sort by last_run_at descending, take top 8
+  // All pipelines: those with runs sorted desc first, then unrun ones alphabetically
   const recentPipelines = [...pipelines]
-    .filter(p => p.last_run_at)
-    .sort((a, b) => new Date(b.last_run_at!).getTime() - new Date(a.last_run_at!).getTime())
-    .slice(0, 8);
+    .sort((a, b) => {
+      if (a.last_run_at && b.last_run_at)
+        return new Date(b.last_run_at).getTime() - new Date(a.last_run_at).getTime();
+      if (a.last_run_at) return -1;
+      if (b.last_run_at) return 1;
+      return a.dag_id.localeCompare(b.dag_id);
+    })
+    .slice(0, 10);
 
   // DQ issues — FAIL or WARN status or has critical failures
   const dqIssues = dq.filter(d => d.last_status !== "PASS" || d.critical_failures > 0);
@@ -176,6 +182,32 @@ export default function HomePage() {
       {/* ── Content ── */}
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
 
+        {/* Platform stats row */}
+        {pipelines.length > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 24 }}>
+            {[
+              { label: "Total Pipelines", value: pipelines.length, icon: "fa-sitemap", color: "var(--forge-primary)" },
+              { label: "Active", value: pipelines.filter(p => p.is_active && !p.is_paused).length, icon: "fa-circle-play", color: "#16a34a" },
+              { label: "Paused", value: pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle", color: "#94a3b8" },
+              { label: "Failed", value: pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark", color: "#dc2626" },
+            ].map(s => (
+              <div key={s.label} style={{
+                background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12,
+                padding: "14px 18px", display: "flex", alignItems: "center", gap: 12,
+                boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+              }}>
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: `${s.color}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 13 }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Alert bar — only when there are problems */}
         {(failedPipelines > 0 || dqIssues.length > 0) && (
           <div style={{
@@ -220,21 +252,22 @@ export default function HomePage() {
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "#94a3b8" }}>
-                Recent Pipeline Runs
+                Pipelines {pipelines.length > 0 && <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0, color: "#cbd5e1" }}>({pipelines.length})</span>}
               </div>
               <Link href="/pipelines" style={{ fontSize: 12, color: "var(--forge-primary)", textDecoration: "none", fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
                 View all <i className="fas fa-arrow-right" style={{ fontSize: 10 }} />
               </Link>
             </div>
             <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-              {recentPipelines.length === 0 ? (
+              {pipelines.length === 0 ? (
                 <div style={{ padding: "32px 20px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
-                  <i className="fas fa-inbox" style={{ fontSize: 20, display: "block", marginBottom: 8 }} />
-                  No recent runs
+                  <i className="fas fa-sitemap" style={{ fontSize: 20, display: "block", marginBottom: 8 }} />
+                  No pipelines registered yet
                 </div>
               ) : (
                 recentPipelines.map((p, idx) => {
                   const s = p.last_run_state ? STATE_STYLE[p.last_run_state] ?? { bg: "#f1f5f9", color: "#64748b", label: p.last_run_state } : null;
+                  const neverRun = !p.last_run_at;
                   return (
                     <div key={p.dag_id} style={{
                       display: "flex", alignItems: "center", gap: 12,
@@ -244,21 +277,25 @@ export default function HomePage() {
                     }}>
                       <span style={{
                         width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-                        background: p.is_paused ? "#94a3b8" : s?.color ?? "#94a3b8",
+                        background: p.is_paused ? "#94a3b8" : neverRun ? "#d1d5db" : (s?.color ?? "#94a3b8"),
                       }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: neverRun ? "#64748b" : "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                           {p.dag_id}
                         </div>
                         {p.tags[0] && (
                           <div style={{ fontSize: 11, color: "#94a3b8" }}>{p.tags[0]}</div>
                         )}
                       </div>
-                      {s && (
+                      {neverRun ? (
+                        <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: "#f1f5f9", color: "#94a3b8", whiteSpace: "nowrap" }}>
+                          Never run
+                        </span>
+                      ) : s ? (
                         <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color, whiteSpace: "nowrap" }}>
                           {s.label}
                         </span>
-                      )}
+                      ) : null}
                       <span style={{ fontSize: 12, color: "#94a3b8", whiteSpace: "nowrap", minWidth: 52, textAlign: "right" }}>
                         {timeAgo(p.last_run_at)}
                       </span>
@@ -284,9 +321,14 @@ export default function HomePage() {
               </div>
               <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
                 {dq.length === 0 ? (
-                  <div style={{ padding: "24px 16px", textAlign: "center", color: "#94a3b8", fontSize: 13 }}>
-                    <i className="fas fa-shield-halved" style={{ fontSize: 18, display: "block", marginBottom: 6 }} />
-                    No DQ data
+                  <div style={{ padding: "20px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <i className="fas fa-shield-halved" style={{ color: "#cbd5e1", fontSize: 15 }} />
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>No DQ rules yet</span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>
+                      Configure quality rules in the <Link href="/dq" style={{ color: "var(--forge-primary)", fontWeight: 600, textDecoration: "none" }}>Quality</Link> page to monitor datasets.
+                    </p>
                   </div>
                 ) : dqHealthy ? (
                   <div style={{ padding: "20px 16px", display: "flex", alignItems: "center", gap: 10 }}>
