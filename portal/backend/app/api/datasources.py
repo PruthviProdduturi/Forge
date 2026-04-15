@@ -4,6 +4,7 @@ GET    /api/v1/datasources           → list all registered sources
 POST   /api/v1/datasources           → register a new source
 PUT    /api/v1/datasources/{id}      → update a source
 DELETE /api/v1/datasources/{id}      → delete a source
+POST   /api/v1/datasources/test      → test connectivity (no save)
 
 Storage: asyncpg → PostgreSQL `portal` DB, `data_sources` table.
 Auth via AKS workload identity OIDC token (same as theme.py).
@@ -105,6 +106,19 @@ class DataSourceCreate(DataSourceBase):
     pass
 
 
+class DataSourceTestRequest(BaseModel):
+    source_type: str = Field(..., pattern=r'^(adls_gen2|adx)$')
+    config: dict = Field(default_factory=dict)
+    auth_type: str = "managed_identity"
+    credential_kv_secret: str | None = None
+
+
+class DataSourceTestResponse(BaseModel):
+    ok: bool
+    message: str
+    detail: str | None = None
+
+
 class DataSourceUpdate(BaseModel):
     display_name: str | None = None
     description: str | None = None
@@ -147,6 +161,95 @@ def _user(request: Request) -> str:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+@router.post("/datasources/test", response_model=DataSourceTestResponse)
+async def test_datasource(body: DataSourceTestRequest) -> DataSourceTestResponse:
+    """Test connectivity to a data source without saving it."""
+    try:
+        if body.source_type == "adls_gen2":
+            return await _test_adls(body)
+        elif body.source_type == "adx":
+            return await _test_adx(body)
+        else:
+            return DataSourceTestResponse(ok=False, message="Unknown source type")
+    except Exception as exc:
+        log.warning("ds_test_error", error=str(exc))
+        return DataSourceTestResponse(ok=False, message="Test failed", detail=str(exc))
+
+
+async def _test_adls(body: DataSourceTestRequest) -> DataSourceTestResponse:
+    account   = body.config.get("account", "")
+    container = body.config.get("container", "")
+    if not account or not container:
+        return DataSourceTestResponse(ok=False, message="Storage account and container are required")
+    try:
+        from azure.identity import WorkloadIdentityCredential, ManagedIdentityCredential  # type: ignore
+        from azure.storage.blob import ContainerClient  # type: ignore
+
+        # Public anonymous storage (e.g. Azure Open Datasets)
+        if account == "azureopendatastorage":
+            url = f"https://{account}.blob.core.windows.net/{container}"
+            client = ContainerClient.from_container_url(url)
+        else:
+            cred = await asyncio.to_thread(WorkloadIdentityCredential)
+            url = f"https://{account}.dfs.core.windows.net"
+            client = ContainerClient(
+                account_url=f"https://{account}.blob.core.windows.net",
+                container_name=container,
+                credential=cred,
+            )
+
+        props = await asyncio.to_thread(client.get_container_properties)
+        return DataSourceTestResponse(
+            ok=True,
+            message=f"Connected — container '{container}' exists",
+            detail=f"Last modified: {props.get('last_modified', 'unknown')}",
+        )
+    except Exception as exc:
+        err = str(exc)
+        if "ResourceNotFound" in err or "does not exist" in err.lower():
+            return DataSourceTestResponse(ok=False, message=f"Container '{container}' not found in account '{account}'")
+        if "AuthenticationFailed" in err or "403" in err:
+            return DataSourceTestResponse(ok=False, message="Authentication failed — check managed identity permissions")
+        return DataSourceTestResponse(ok=False, message="Connection failed", detail=err)
+
+
+async def _test_adx(body: DataSourceTestRequest) -> DataSourceTestResponse:
+    cluster_uri = body.config.get("cluster_uri", "")
+    database    = body.config.get("database", "")
+    if not cluster_uri:
+        return DataSourceTestResponse(ok=False, message="Cluster URI is required")
+    try:
+        from azure.kusto.data import KustoClient, KustoConnectionStringBuilder  # type: ignore
+        from azure.identity import WorkloadIdentityCredential  # type: ignore
+
+        cred = await asyncio.to_thread(WorkloadIdentityCredential)
+        kcsb = KustoConnectionStringBuilder.with_azure_token_credential(cluster_uri, cred)
+        client = KustoClient(kcsb)
+
+        # Simple connectivity check — list databases
+        result = await asyncio.to_thread(client.execute_mgmt, database or "NetDefaultDB", ".show databases")
+        db_names = [row[0] for row in result.primary_results[0]]
+
+        if database and database not in db_names:
+            return DataSourceTestResponse(
+                ok=False,
+                message=f"Database '{database}' not found",
+                detail=f"Available: {', '.join(db_names[:10])}",
+            )
+        return DataSourceTestResponse(
+            ok=True,
+            message=f"Connected to cluster — {len(db_names)} database(s) found",
+            detail=f"Databases: {', '.join(db_names[:5])}{'...' if len(db_names) > 5 else ''}",
+        )
+    except Exception as exc:
+        err = str(exc)
+        if "Unauthorized" in err or "403" in err:
+            return DataSourceTestResponse(ok=False, message="Authentication failed — check managed identity permissions on the ADX cluster")
+        if "Name or service not known" in err or "ConnectionError" in err:
+            return DataSourceTestResponse(ok=False, message=f"Cannot reach cluster '{cluster_uri}' — check the URI")
+        return DataSourceTestResponse(ok=False, message="Connection failed", detail=err)
+
 
 @router.get("/datasources", response_model=list[DataSourceResponse])
 async def list_datasources() -> list[DataSourceResponse]:

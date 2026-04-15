@@ -162,12 +162,45 @@ interface ModalProps {
   getToken: () => Promise<string | null>;
 }
 
+interface TestResult {
+  ok: boolean;
+  message: string;
+  detail?: string;
+}
+
 function DataSourceModal({ editing, onClose, onSaved, getToken }: ModalProps) {
   const [form, setForm] = useState<FormState>(editing ? sourceToForm(editing) : EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const set = (patch: Partial<FormState>) => setForm(f => ({ ...f, ...patch }));
+  const set = (patch: Partial<FormState>) => {
+    setTestResult(null); // clear test result when form changes
+    setForm(f => ({ ...f, ...patch }));
+  };
+
+  async function handleTest() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const payload = formToPayload(form);
+      const result = await apiFetch<TestResult>("/api/v1/datasources/test", getToken, {
+        method: "POST",
+        body: JSON.stringify({
+          source_type: payload.source_type,
+          config: payload.config,
+          auth_type: payload.auth_type,
+          credential_kv_secret: payload.credential_kv_secret,
+        }),
+      });
+      setTestResult(result);
+    } catch (err: unknown) {
+      setTestResult({ ok: false, message: err instanceof Error ? err.message : "Test failed" });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -419,8 +452,26 @@ function DataSourceModal({ editing, onClose, onSaved, getToken }: ModalProps) {
             </Field>
           </div>
 
+          {/* Test result banner */}
+          {testResult && (
+            <div style={{
+              background: testResult.ok ? "#f0fdf4" : "#fff1f2",
+              border: `1px solid ${testResult.ok ? "#86efac" : "#fca5a5"}`,
+              borderRadius: 8, padding: "10px 14px", marginTop: 4,
+              color: testResult.ok ? "#16a34a" : "#dc2626", fontSize: 13,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <i className={`fas ${testResult.ok ? "fa-circle-check" : "fa-circle-xmark"}`} />
+                <strong>{testResult.message}</strong>
+              </div>
+              {testResult.detail && (
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.8 }}>{testResult.detail}</div>
+              )}
+            </div>
+          )}
+
           {/* Actions */}
-          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 8 }}>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 12 }}>
             <button
               type="button"
               onClick={onClose}
@@ -430,6 +481,22 @@ function DataSourceModal({ editing, onClose, onSaved, getToken }: ModalProps) {
               }}
             >
               Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={testing || saving}
+              style={{
+                padding: "9px 18px", borderRadius: 8,
+                border: "1px solid #6366f1",
+                background: testing ? "#e0e7ff" : "#fff",
+                color: "#6366f1", fontWeight: 600, fontSize: 14,
+                cursor: testing || saving ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", gap: 8,
+              }}
+            >
+              <i className={`fas ${testing ? "fa-spinner fa-spin" : "fa-plug-circle-check"}`} />
+              {testing ? "Testing…" : "Test Connection"}
             </button>
             <button
               type="submit"
