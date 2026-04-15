@@ -41,7 +41,7 @@ Forge is the core data engineering platform that handles everything from raw ing
 │  │                  │   │                              │    │
 │  │  • Apache Spark  │   │  • Apache Airflow            │    │
 │  │  • Spark Connect │   │  • Data Quality Framework    │    │
-│  │  • Trino         │   │  • OpenLineage / Purview      │    │
+│  │  • Trino         │   │  • OpenLineage / Purview     │    │
 │  └──────────────────┘   │  • Observability Stack       │    │
 │           │             │  • Developer Portal          │    │
 │           ▼             └──────────────────────────────┘    │

@@ -184,7 +184,8 @@ else
   ADLS_ACCOUNT="forgeadls${_SUB_SUFFIX}${ENV}"
 fi
 PG_HOST="${PG_SERVER}.postgres.database.azure.com"
-DNS_LABEL="forge-portal-${_A}${ENV}"
+# Azure DNS labels must be lowercase — lowercase the entire label
+DNS_LABEL="forge-portal-${_A}${ENV}"; DNS_LABEL="${DNS_LABEL,,}"
 
 # Resolve location: explicit arg > existing RG > existing cluster > westcentralus
 # Checking RG (not cluster) means this works correctly on first deploy too.
@@ -201,7 +202,7 @@ NODE_RG_ORCH=$(az aks show --resource-group "$RESOURCE_GROUP" --name "$ORCH_CLUS
   --query nodeResourceGroup -o tsv 2>/dev/null || echo "")
 
 PUBLIC_HOST="${DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
-COMPUTE_DNS_LABEL="forge-compute-${_A}${ENV}"
+COMPUTE_DNS_LABEL="forge-compute-${_A}${ENV}"; COMPUTE_DNS_LABEL="${COMPUTE_DNS_LABEL,,}"
 COMPUTE_PUBLIC_HOST="${COMPUTE_DNS_LABEL}.${LOCATION}.cloudapp.azure.com"
 FORGE_REDIRECT_URI="https://${COMPUTE_PUBLIC_HOST}/oauth2/callback"
 
@@ -736,6 +737,9 @@ else
       --source "$src" --image "$dst" --output none 2>/dev/null \
       && echo "    ✓ $dst (imported)" || echo "    WARN: $dst import failed"
   }
+  # ingress-nginx — Azure Policy blocks registry.k8s.io on restricted clusters
+  _acr_import "registry.k8s.io/ingress-nginx/controller:v1.15.1"               "ingress-nginx/controller:v1.15.1"
+  _acr_import "registry.k8s.io/defaultbackend-amd64:1.5"                       "defaultbackend-amd64:1.5"
   _acr_import "registry.k8s.io/git-sync/git-sync:v4.4.2"                        "git-sync:v4.4.2"
   _acr_import "ghcr.io/kubeflow/spark-operator/controller:2.5.0"               "spark-operator-controller:2.5.0"
   _acr_import "ghcr.io/kubeflow/spark-operator/kubectl:2.5.0"                  "spark-operator-kubectl:2.5.0"
@@ -898,14 +902,30 @@ else
     --name "hms-postgres-host" --query value -o tsv 2>/dev/null || echo "$PG_HOST")
 
   echo "  [6.0] ingress-nginx (compute)..."
-  _DNS_LABEL_COMPUTE="forge-compute-${_A}${ENV}"
+  _DNS_LABEL_COMPUTE="${COMPUTE_DNS_LABEL}"
   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update 2>/dev/null || true
   helm repo update ingress-nginx 2>/dev/null || true
+  # Only clean up truly stuck releases (pending state from a killed process).
+  # "failed" releases are left alone — pods may already be running; helm upgrade will succeed.
+  _ing_status=$(helm status ingress-nginx -n ingress-nginx --kube-context "$COMPUTE_CLUSTER" 2>/dev/null \
+    | awk '/^STATUS:/ {print $2}' || echo "")
+  if [[ "$_ing_status" == "pending-install" || "$_ing_status" == "pending-upgrade" || "$_ing_status" == "pending-rollback" ]]; then
+    echo "    Resetting stuck ingress-nginx release on compute (status: $_ing_status)..."
+    helm uninstall ingress-nginx -n ingress-nginx --kube-context "$COMPUTE_CLUSTER" 2>/dev/null || true
+    sleep 5
+  fi
   helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
     --namespace ingress-nginx --create-namespace \
     --kube-context "$COMPUTE_CLUSTER" \
     --values "${REPO_ROOT}/infra/helm/compute/ingress-nginx/values.yaml" \
     --set "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=${_DNS_LABEL_COMPUTE}" \
+    --set "controller.image.registry=${ACR}.azurecr.io" \
+    --set "controller.image.image=ingress-nginx/controller" \
+    --set "controller.image.tag=v1.15.1" \
+    --set "controller.image.digest=" \
+    --set "defaultBackend.image.registry=${ACR}.azurecr.io" \
+    --set "defaultBackend.image.image=defaultbackend-amd64" \
+    --set "defaultBackend.image.tag=1.5" \
     --wait --timeout 10m
   # Set DNS label and S360 tag on compute cluster public IP (same as orch)
   COMPUTE_EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
@@ -1523,12 +1543,31 @@ MIGJOB
   echo "  [7.1] ingress-nginx..."
   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update 2>/dev/null || true
   helm repo update ingress-nginx 2>/dev/null || true
+  # Only clean up truly stuck releases (pending state from a killed process).
+  # "failed" releases are left alone — pods may already be running; helm upgrade will succeed.
+  # Also delete any stale ValidatingWebhookConfiguration from a prior install with admissionWebhooks=true.
+  kubectl delete validatingwebhookconfiguration ingress-nginx-admission \
+    --context "$ORCH_CLUSTER" 2>/dev/null || true
+  _ing_status=$(helm status ingress-nginx -n ingress-nginx --kube-context "$ORCH_CLUSTER" 2>/dev/null \
+    | awk '/^STATUS:/ {print $2}' || echo "")
+  if [[ "$_ing_status" == "pending-install" || "$_ing_status" == "pending-upgrade" || "$_ing_status" == "pending-rollback" ]]; then
+    echo "    Resetting stuck ingress-nginx release on orch (status: $_ing_status)..."
+    helm uninstall ingress-nginx -n ingress-nginx --kube-context "$ORCH_CLUSTER" 2>/dev/null || true
+    sleep 5
+  fi
   helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
     --namespace ingress-nginx --create-namespace \
     --kube-context "$ORCH_CLUSTER" \
     --values "${REPO_ROOT}/infra/helm/orchestration/ingress-nginx/values.yaml" \
     --set "controller.service.annotations.service\.beta\.kubernetes\.io/azure-dns-label-name=${DNS_LABEL}" \
-    --wait --timeout 5m
+    --set "controller.image.registry=${ACR}.azurecr.io" \
+    --set "controller.image.image=ingress-nginx/controller" \
+    --set "controller.image.tag=v1.15.1" \
+    --set "controller.image.digest=" \
+    --set "defaultBackend.image.registry=${ACR}.azurecr.io" \
+    --set "defaultBackend.image.image=defaultbackend-amd64" \
+    --set "defaultBackend.image.tag=1.5" \
+    --wait --timeout 10m
   EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx \
     --context "$ORCH_CLUSTER" \
     --output jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")

@@ -645,7 +645,7 @@ export default function AboutPage() {
             icon="fa-bolt"
             color="#e25a1c"
             title="Spark 4.1 on Kubernetes"
-            body="Apache Spark 4.1.0 via Spark Operator. Spark Connect for interactive development from VS Code or Jupyter — no cluster SSH required."
+            body="Apache Spark 4.1.1 via Spark Operator. Spark Connect for interactive development from VS Code or Jupyter — no cluster SSH required."
           />
           <FeatureCard
             icon="fa-table"
@@ -1271,7 +1271,7 @@ dags/
 from pyspark.sql import SparkSession
 
 spark = SparkSession.builder \\
-  .remote("sc://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com:15002") \\
+  .remote("sc://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com:15002") \\
   .getOrCreate()
 
 df = spark.read.format("delta") \\
@@ -1282,11 +1282,11 @@ df.show()
 $token = az account get-access-token \\
   --resource https://management.azure.com/ \\
   --query accessToken -o tsv
-trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com \\
+trino --server=https://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com \\
       --access-token="$token" --catalog=hive
 
 # Trino UI (browser)
-# https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com/ui/`}
+# https://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com/ui/`}
             />
           </div>
         </div>

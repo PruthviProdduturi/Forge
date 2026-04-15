@@ -48,9 +48,8 @@ controller:
     compute-full-forwarded-for: "true"
     use-proxy-protocol: "false"
 
-  # Admission webhook needs to be reachable — keep enabled
   admissionWebhooks:
-    enabled: true
+    enabled: false
 
 defaultBackend:
   enabled: true
