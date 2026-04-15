@@ -192,7 +192,52 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Fetch kubeconfig for both clusters
+# 5. Storage Blob Data Contributor — ADLS Gen2
+#    Grants read/write access to forgeadls{alias}{env} for:
+#      - Platform admin group  → developer sync-jobs.sh (az login identity)
+#      - Spark MI              → job reads/writes on bronze/silver/gold
+#      - Airflow MI            → DAG log uploads, job artifact access
+#      - DQ MI                 → data quality rule reads and result writes
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Granting Storage Blob Data Contributor on ADLS"
+
+STORAGE_ACCOUNT="forgeadls${OWNER_ALIAS}${ENVIRONMENT}"
+STORAGE_ID=$(az storage account show \
+  --resource-group "$RG_COMPUTE" \
+  --name "$STORAGE_ACCOUNT" \
+  --query id -o tsv 2>/dev/null || echo "")
+
+# Storage Blob Data Contributor built-in role ID (immutable)
+BLOB_CONTRIBUTOR_ROLE="ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+
+_storage_assign() {
+  local principal="$1" principal_type="$2" label="$3"
+  [[ -z "$principal" || -z "$STORAGE_ID" ]] && { echo "    Skipped ($label) — principal or storage not found"; return; }
+  az role assignment create \
+    --role "$BLOB_CONTRIBUTOR_ROLE" \
+    --assignee-object-id "$principal" \
+    --assignee-principal-type "$principal_type" \
+    --scope "$STORAGE_ID" \
+    --output none 2>/dev/null \
+    && echo "    Granted: $label" \
+    || echo "    Already exists: $label"
+}
+
+# Platform admin group — developers running sync-jobs.sh
+_storage_assign "$_ADMIN_GROUP" "Group" "platform admin group"
+
+# Workload identity MIs — Spark, Airflow, DQ
+for _WL in spark airflow dq; do
+  _MI_PRINCIPAL=$(az identity show \
+    --resource-group "$RG_COMPUTE" \
+    --name "id-forge-${_WL}-${_A}${ENVIRONMENT}" \
+    --query principalId -o tsv 2>/dev/null || echo "")
+  _storage_assign "$_MI_PRINCIPAL" "ServicePrincipal" "${_WL} MI"
+done
+
+# ---------------------------------------------------------------------------
+# 6. Fetch kubeconfig for both clusters
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Fetching kubeconfig"
