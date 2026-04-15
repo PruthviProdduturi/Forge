@@ -130,31 +130,29 @@ export default function PipelinesPage() {
     >
       {/* Tag filter + Search */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
-        {allTags.length > 0 && (
-          <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+        <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+          <button
+            onClick={() => setActiveTag(null)}
+            style={{
+              padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 600,
+              background: activeTag === null ? "var(--forge-primary)" : "transparent",
+              color: activeTag === null ? "#fff" : "#64748b",
+            }}
+          >All</button>
+          {allTags.map(tag => (
             <button
-              onClick={() => setActiveTag(null)}
+              key={tag}
+              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
               style={{
                 padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-                fontSize: 13, fontWeight: 600,
-                background: activeTag === null ? "var(--forge-primary)" : "transparent",
-                color: activeTag === null ? "#fff" : "#64748b",
+                fontSize: 13, fontWeight: 600, textTransform: "capitalize",
+                background: activeTag === tag ? "var(--forge-primary)" : "transparent",
+                color: activeTag === tag ? "#fff" : "#64748b",
               }}
-            >All</button>
-            {allTags.map(tag => (
-              <button
-                key={tag}
-                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                style={{
-                  padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
-                  fontSize: 13, fontWeight: 600, textTransform: "capitalize",
-                  background: activeTag === tag ? "var(--forge-primary)" : "transparent",
-                  color: activeTag === tag ? "#fff" : "#64748b",
-                }}
-              >{tag}</button>
-            ))}
-          </div>
-        )}
+            >{tag}</button>
+          ))}
+        </div>
         <div style={{ position: "relative", maxWidth: 360, flex: 1 }}>
           <i className="fas fa-magnifying-glass" style={{
             position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
