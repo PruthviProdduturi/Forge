@@ -332,6 +332,12 @@ log "Source of truth: .forge.ts manifest"
 log "Preserved:       business logic block in .py (only user-editable region)"
 log ""
 
+# Ensure @forge/cli resolves from the infra repo without requiring a publish step.
+# Manifests import { defineJob } from "@forge/cli/schema" — symlink makes Node find it.
+_FORGE_MODULES="${DATA_REPO}/sources/dev/CoreData/node_modules/@forge"
+mkdir -p "${_FORGE_MODULES}"
+ln -sf "${REPO_ROOT}/sdk/cli" "${_FORGE_MODULES}/cli" 2>/dev/null || true
+
 GENERATED_PY=()
 GENERATED_DQ=()
 
