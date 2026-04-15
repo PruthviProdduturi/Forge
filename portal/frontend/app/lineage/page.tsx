@@ -110,11 +110,75 @@ export default function LineagePage() {
     }
   }, [getToken]);
 
+  const heroContent = (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "5px 14px", borderRadius: 20,
+        background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
+        fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)",
+      }}>
+        <i className="fas fa-circle" style={{ fontSize: 7, color: "#4ade80" }} />
+        Microsoft Purview
+      </div>
+      {selectedEntity && (
+        <>
+          <i className="fas fa-chevron-right" style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }} />
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "5px 14px", borderRadius: 20,
+            background: "rgba(255,255,255,0.18)", border: "1px solid rgba(255,255,255,0.3)",
+            fontSize: 12, fontWeight: 600, color: "#fff",
+          }}>
+            <i className="fas fa-table" style={{ fontSize: 10 }} />
+            {selectedEntity.name}
+          </div>
+          {lineageData && (
+            <>
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "5px 14px", borderRadius: 20,
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.7)",
+              }}>
+                <i className="fas fa-arrow-up" style={{ fontSize: 9 }} />
+                {lineageData.upstream.length} upstream
+              </div>
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: 6,
+                padding: "5px 14px", borderRadius: 20,
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.7)",
+              }}>
+                <i className="fas fa-arrow-down" style={{ fontSize: 9 }} />
+                {lineageData.downstream.length} downstream
+              </div>
+            </>
+          )}
+        </>
+      )}
+      {searchResults !== null && !selectedEntity && (
+        <>
+          <i className="fas fa-chevron-right" style={{ color: "rgba(255,255,255,0.3)", fontSize: 10 }} />
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            padding: "5px 14px", borderRadius: 20,
+            background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+            fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.7)",
+          }}>
+            {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for &ldquo;{query}&rdquo;
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   return (
     <PageLayout
       icon="fa-share-nodes"
       title="Lineage Explorer"
       subtitle="Trace upstream and downstream dependencies from Microsoft Purview"
+      heroContent={heroContent}
     >
       {/* Search bar */}
       <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: "3px solid var(--forge-primary)", borderRadius: 12, padding: "20px 24px", marginBottom: 24, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
