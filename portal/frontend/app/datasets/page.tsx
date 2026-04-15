@@ -122,10 +122,6 @@ export default function DatasetsPage() {
               }}
             >
               {layer === "all" ? "All" : LAYER_META[layer].label}
-              <span style={{
-                marginLeft: 6, fontSize: 11,
-                opacity: 0.8,
-              }}>({counts[layer]})</span>
             </button>
           ))}
         </div>
