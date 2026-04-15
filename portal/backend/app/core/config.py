@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     compute_cluster_name: str = ""   # e.g. aks-forge-compute-prproddu-dev
     orch_cluster_name: str = ""      # e.g. aks-forge-orchestration-prproddu-dev
 
-    # Airflow
+    # Airflow — credentials injected by forge-up.sh (portal-api-svc KV secret → AIRFLOW_PASSWORD env)
     airflow_url: str = "http://airflow-api-server.airflow.svc.cluster.local:8080"
-    airflow_username: str = "admin"
-    airflow_password: str = "admin"
+    airflow_username: str = "portal-api-svc"
+    airflow_password: str = ""
 
     # Trino
     trino_host: str = "trino.trino.svc.cluster.local"

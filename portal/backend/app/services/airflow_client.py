@@ -4,9 +4,10 @@ Auth flow (Airflow 3 REST API v2):
   1. POST /auth/token with username/password → JWT (expires in ~24h)
   2. Use JWT as Bearer token for all /api/v2/* calls.
 
-The service account (portal-api-svc, Viewer role) is created by forge-up.sh
-phase 7.4.1. Password is injected via AIRFLOW_PASSWORD env var (from KV at
-deploy time). The JWT is cached in-process and refreshed before expiry.
+Service account: portal-api-svc (Viewer role), created by forge-up.sh phase 7.4.1.
+Password: generated randomly, stored in KV as airflow-portal-api-password, and
+injected as AIRFLOW_PASSWORD env var at deploy time (workload identity → KV → env).
+The JWT is cached in-process and refreshed 1h before expiry.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ async def _get_jwt() -> str:
     global _jwt, _jwt_expiry
     if _jwt and time.time() < _jwt_expiry:
         return _jwt
+    if not settings.airflow_password:
+        raise RuntimeError("AIRFLOW_PASSWORD env var not set — check forge-up.sh phase 7.4.1")
     async with httpx.AsyncClient(base_url=settings.airflow_url, timeout=10.0) as client:
         resp = await client.post(
             "/auth/token",

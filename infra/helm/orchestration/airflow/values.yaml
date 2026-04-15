@@ -71,9 +71,9 @@ config:
     sql_alchemy_pool_recycle: "3000"
     sql_alchemy_pool_pre_ping: "True"
   api:
-    # Allow basic_password auth for REST API so portal backend can connect.
-    # Web UI still uses AAD OAuth (AUTH_TYPE = AUTH_OAUTH in webserverConfig).
-    auth_backends: "airflow.api.auth.backend.basic_password"
+    # Bearer JWT auth — portal backend POSTs /auth/token (portal-api-svc credentials
+    # from KV) to get an Airflow JWT, then passes it as Authorization: Bearer.
+    auth_backends: "airflow.api.auth.backend.bearer_auth"
   core:
     # Dev guardrails — keep dev cheap and predictable.
     # 10 DAGs max; no historical backfill; DAGs auto-expire after 5 days.
@@ -131,15 +131,9 @@ webserver:
     type: ClusterIP
   waitForMigrations:
     enabled: false
-  # Local admin for portal backend API calls (web UI login still uses AAD OAuth)
+  # No local admin — portal backend uses workload identity token (Bearer auth)
   defaultUser:
-    enabled: true
-    role: Admin
-    username: admin
-    email: admin@forge.local
-    firstName: Forge
-    lastName: Admin
-    password: admin
+    enabled: false
 
 # ---------------------------------------------------------------------------
 # Scheduler — single replica for dev (HA: 2 replicas in prod)
@@ -314,8 +308,6 @@ extraEnv: |
         name: airflow-oauth-credentials
         key: client-id
         optional: true
-  - name: AIRFLOW__API__AUTH_BACKENDS
-    value: "airflow.providers.fab.auth_manager.api.auth.backend.basic_auth"
 
 extraVolumes:
   - name: compute-kubeconfig
