@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { ForgeLogo } from "../../components/ForgeLogo";
 import { useTheme } from "../../contexts/ThemeContext";
+import { PageLayout } from "../../components/PageLayout";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -366,7 +367,8 @@ export default function AboutPage() {
   const { primaryColor } = useTheme();
 
   return (
-    <div style={{ margin: "0 -1.5rem" }}>
+    <PageLayout icon="fa-circle-info" title="About Forge">
+      <div style={{ margin: "0 -1.5rem" }}>
       {/* ── Internal sticky nav ──────────────────────────────────────────────── */}
       <nav
         aria-label="Page sections"
@@ -419,7 +421,7 @@ export default function AboutPage() {
         ))}
       </nav>
 
-      {/* ── 1. Hero ──────────────────────────────────────────────────────────── */}
+      {/* ── 1. Hero (inline — rich about-page hero with logo + CTA) ─────────── */}
       <section
         style={{
           background: `linear-gradient(135deg, ${primaryColor} 0%, #0f1e2e 100%)`,
@@ -1291,6 +1293,7 @@ trino --server=https://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com \
           </div>
         </div>
       </section>
-    </div>
+      </div>
+    </PageLayout>
   );
 }

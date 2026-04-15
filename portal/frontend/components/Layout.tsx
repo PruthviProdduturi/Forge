@@ -29,12 +29,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/pipelines", label: "Pipelines", icon: "fa-sitemap" },
-  { href: "/datasets", label: "Datasets", icon: "fa-database" },
-  { href: "/datasources", label: "Data Sources", icon: "fa-plug" },
-  { href: "/lineage", label: "Lineage", icon: "fa-share-nodes" },
-  { href: "/dq", label: "Data Quality", icon: "fa-shield-halved" },
-  { href: "/cost", label: "Cost", icon: "fa-coins" },
+  { href: "/datasources", label: "Sources",       icon: "fa-plug" },
+  { href: "/pipelines",   label: "Pipelines",     icon: "fa-sitemap" },
+  { href: "/datasets",    label: "Datasets",       icon: "fa-database" },
+  { href: "/lineage",     label: "Lineage",        icon: "fa-share-nodes" },
+  { href: "/dq",          label: "Quality",        icon: "fa-shield-halved" },
+  { href: "/cost",        label: "Cost",           icon: "fa-coins" },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {

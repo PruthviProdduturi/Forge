@@ -3,50 +3,126 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../contexts/ThemeContext";
 
-const PRESET_COLORS = [
-  "#1e3a5f", "#0078d4", "#107c10", "#d83b01",
-  "#5c2d91", "#008272", "#004b1c", "#32145a",
-  "#004e8c", "#8764b8", "#0099bc", "#e3008c",
-];
+// ── Color math ────────────────────────────────────────────────────────────────
 
-interface ThemeModalProps {
-  onClose: () => void;
+function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
+  const f = (n: number) => {
+    const k = (n + h / 60) % 6;
+    return v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+  };
+  return [Math.round(f(5) * 255), Math.round(f(3) * 255), Math.round(f(1) * 255)];
 }
+
+function rgbToHex(r: number, g: number, b: number): string {
+  return "#" + [r, g, b].map(x => x.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToHsv(hex: string): [number, number, number] {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = ((g - b) / d + 6) % 6;
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  const s = max === 0 ? 0 : d / max;
+  return [h, s, max];
+}
+
+function isValidHex(v: string) { return /^#[0-9a-fA-F]{6}$/.test(v); }
+
+// ── Picker ────────────────────────────────────────────────────────────────────
+
+interface ThemeModalProps { onClose: () => void; }
 
 export function ThemeModal({ onClose }: ThemeModalProps) {
   const { primaryColor, saveTheme } = useTheme();
-  const [localColor, setLocalColor] = useState(primaryColor);
+
+  const initHsv = isValidHex(primaryColor) ? hexToHsv(primaryColor) : [210, 1, 0.83];
+  const [hue, setHue] = useState(initHsv[0]);
+  const [sat, setSat] = useState(initHsv[1]);
+  const [val, setVal] = useState(initHsv[2]);
   const [hexInput, setHexInput] = useState(primaryColor);
   const [saving, setSaving] = useState(false);
+
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const hueRef   = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
+  // Derived hex
+  const [r, g, b] = hsvToRgb(hue, sat, val);
+  const currentHex = rgbToHex(r, g, b);
+  const hueColor   = rgbToHex(...hsvToRgb(hue, 1, 1));
+
+  // Sync hex input when picker changes
+  useEffect(() => { setHexInput(currentHex); }, [currentHex]);
+
+  // ── Gradient canvas drag ────────────────────────────────────────────────────
+  const draggingCanvas = useRef(false);
+
+  const handleCanvasPointer = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top)  / rect.height));
+    setSat(x);
+    setVal(1 - y);
+  }, []);
+
   useEffect(() => {
-    setLocalColor(primaryColor);
-    setHexInput(primaryColor);
-  }, [primaryColor]);
-
-  const applyColor = useCallback((color: string) => {
-    setLocalColor(color);
-    setHexInput(color);
+    const move = (e: PointerEvent) => {
+      if (!draggingCanvas.current || !canvasRef.current) return;
+      const rect = canvasRef.current.getBoundingClientRect();
+      setSat(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
+      setVal(Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height)));
+    };
+    const up = () => { draggingCanvas.current = false; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, []);
 
+  // ── Hue slider drag ────────────────────────────────────────────────────────
+  const draggingHue = useRef(false);
+
+  const handleHuePointer = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = hueRef.current!.getBoundingClientRect();
+    setHue(Math.max(0, Math.min(360, ((e.clientX - rect.left) / rect.width) * 360)));
+  }, []);
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      if (!draggingHue.current || !hueRef.current) return;
+      const rect = hueRef.current.getBoundingClientRect();
+      setHue(Math.max(0, Math.min(360, ((e.clientX - rect.left) / rect.width) * 360)));
+    };
+    const up = () => { draggingHue.current = false; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+  }, []);
+
+  // ── Hex input ─────────────────────────────────────────────────────────────
   const handleHexChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setHexInput(val);
-    if (/^#[0-9a-fA-F]{6}$/.test(val)) setLocalColor(val);
+    const v = e.target.value;
+    setHexInput(v);
+    if (isValidHex(v)) {
+      const [h, s, vv] = hexToHsv(v);
+      setHue(h); setSat(s); setVal(vv);
+    }
   }, []);
 
+  // ── Save ──────────────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
-    if (!/^#[0-9a-fA-F]{6}$/.test(localColor)) return;
     setSaving(true);
-    try {
-      await saveTheme(localColor);
-    } finally {
-      setSaving(false);
-      onClose();
-    }
-  }, [localColor, saveTheme, onClose]);
+    try { await saveTheme(currentHex); }
+    finally { setSaving(false); onClose(); }
+  }, [currentHex, saveTheme, onClose]);
 
+  // ── Close ─────────────────────────────────────────────────────────────────
   const handleOverlayClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     if (e.target === overlayRef.current) onClose();
   }, [onClose]);
@@ -58,15 +134,10 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
   }, [onClose]);
 
   return (
-    <div
-      className="modal-overlay"
-      ref={overlayRef}
-      onClick={handleOverlayClick}
-      role="dialog"
-      aria-modal="true"
-      aria-label="Theme settings"
-    >
-      <div className="modal-box">
+    <div className="modal-overlay" ref={overlayRef} onClick={handleOverlayClick}
+      role="dialog" aria-modal="true" aria-label="Theme settings">
+      <div className="modal-box" style={{ width: 320 }}>
+
         <div className="modal-header">
           <span className="modal-title">
             <i className="fas fa-palette" style={{ marginRight: 8, opacity: 0.7 }} />
@@ -77,69 +148,92 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
           </button>
         </div>
 
-        <div className="modal-section-label" style={{ marginTop: 0 }}>Custom colour</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <label
-            htmlFor="forge-color-picker"
-            style={{
-              width: 44, height: 44, borderRadius: 10, border: "2px solid #e2e8f0",
-              background: localColor, cursor: "pointer", flexShrink: 0,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              position: "relative", overflow: "hidden",
-              transition: "box-shadow 0.15s",
-              boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-            }}
-            title="Click to open colour picker"
-          >
-            <input
-              id="forge-color-picker"
-              type="color"
-              value={localColor}
-              onChange={(e) => applyColor(e.target.value)}
-              aria-label="Color picker"
-              style={{
-                position: "absolute", inset: 0, width: "100%", height: "100%",
-                opacity: 0, cursor: "pointer", padding: 0, border: "none",
-              }}
-            />
-          </label>
-          <div style={{ flex: 1 }}>
-            <input
-              type="text"
-              className="color-hex-input"
-              value={hexInput}
-              onChange={handleHexChange}
-              maxLength={7}
-              placeholder="#1e3a5f"
-              spellCheck={false}
-              aria-label="Hex color value"
-            />
-            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>
-              Click the swatch to pick any colour
-            </div>
-          </div>
+        {/* ── Saturation/Value canvas ── */}
+        <div
+          ref={canvasRef}
+          onPointerDown={(e) => { draggingCanvas.current = true; e.currentTarget.setPointerCapture(e.pointerId); handleCanvasPointer(e); }}
+          onPointerMove={(e) => { if (draggingCanvas.current) handleCanvasPointer(e); }}
+          style={{
+            width: "100%", height: 180, borderRadius: 10,
+            position: "relative", cursor: "crosshair", userSelect: "none",
+            background: hueColor,
+            marginBottom: 12,
+          }}
+        >
+          {/* white-to-transparent left-to-right */}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 10,
+            background: "linear-gradient(to right, #fff, transparent)",
+          }} />
+          {/* transparent-to-black top-to-bottom */}
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 10,
+            background: "linear-gradient(to bottom, transparent, #000)",
+          }} />
+          {/* cursor */}
+          <div style={{
+            position: "absolute",
+            left: `${sat * 100}%`,
+            top:  `${(1 - val) * 100}%`,
+            transform: "translate(-50%, -50%)",
+            width: 14, height: 14, borderRadius: "50%",
+            border: "2px solid #fff",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.4)",
+            background: currentHex,
+            pointerEvents: "none",
+          }} />
         </div>
 
-        <div className="modal-section-label" style={{ marginTop: "1rem" }}>Presets</div>
-        <div className="color-presets" role="list" aria-label="Preset colors">
-          {PRESET_COLORS.map((c) => (
-            <button
-              key={c}
-              className={`color-preset-dot${localColor.toLowerCase() === c.toLowerCase() ? " active" : ""}`}
-              style={{ background: c }}
-              onClick={() => applyColor(c)}
-              aria-label={c}
-              title={c}
-              type="button"
-              role="listitem"
-            />
-          ))}
+        {/* ── Hue slider ── */}
+        <div
+          ref={hueRef}
+          onPointerDown={(e) => { draggingHue.current = true; e.currentTarget.setPointerCapture(e.pointerId); handleHuePointer(e); }}
+          onPointerMove={(e) => { if (draggingHue.current) handleHuePointer(e); }}
+          style={{
+            width: "100%", height: 14, borderRadius: 7,
+            position: "relative", cursor: "ew-resize", userSelect: "none",
+            background: "linear-gradient(to right,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)",
+            marginBottom: 16,
+          }}
+        >
+          <div style={{
+            position: "absolute",
+            left: `${(hue / 360) * 100}%`,
+            top: "50%",
+            transform: "translate(-50%, -50%)",
+            width: 18, height: 18, borderRadius: "50%",
+            border: "2px solid #fff",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.3)",
+            background: hueColor,
+            pointerEvents: "none",
+          }} />
+        </div>
+
+        {/* ── Preview + hex ── */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 8,
+            background: currentHex,
+            border: "2px solid #e2e8f0",
+            flexShrink: 0,
+          }} />
+          <input
+            type="text"
+            className="color-hex-input"
+            value={hexInput}
+            onChange={handleHexChange}
+            maxLength={7}
+            placeholder="#0078d4"
+            spellCheck={false}
+            aria-label="Hex color value"
+            style={{ flex: 1 }}
+          />
         </div>
 
         <button
           className="modal-save-btn"
           onClick={handleSave}
-          disabled={saving || !/^#[0-9a-fA-F]{6}$/.test(localColor)}
+          disabled={saving}
           type="button"
         >
           {saving ? (
@@ -160,6 +254,7 @@ export function ThemeModal({ onClose }: ThemeModalProps) {
             </>
           )}
         </button>
+
       </div>
     </div>
   );

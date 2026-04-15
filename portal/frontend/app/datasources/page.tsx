@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
+import { PageLayout } from "../../components/PageLayout";
 
 const ACCENT = "var(--forge-primary)";
 
@@ -647,50 +648,32 @@ export default function DataSourcesPage() {
   const adlsCount = sources.filter(s => s.source_type === "adls_gen2").length;
   const adxCount = sources.filter(s => s.source_type === "adx").length;
 
-  return (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)" }}>
-      {/* Hero */}
-      <div style={{
-        background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
-        padding: "48px 1.5rem 40px",
-      }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-            <div style={{
-              width: 42, height: 42, borderRadius: 11, background: "rgba(255,255,255,0.15)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <i className="fas fa-plug" style={{ color: "#fff", fontSize: 18 }} />
-            </div>
-            <h1 style={{ fontSize: "clamp(1.6rem,3.5vw,2.2rem)", fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-              Data Sources
-            </h1>
-          </div>
-          <p style={{ color: "rgba(255,255,255,0.7)", margin: 0, fontSize: 15 }}>
-            Register ADLS Gen2 and Azure Data Explorer sources — reference them by name when onboarding data to bronze
-          </p>
-          {!loading && !error && (
-            <div style={{ display: "flex", gap: 16, marginTop: 20, flexWrap: "wrap" }}>
-              {[
-                { label: "Total", value: sources.length, icon: "fa-plug" },
-                { label: "ADLS Gen2", value: adlsCount, icon: "fa-layer-group" },
-                { label: "ADX", value: adxCount, icon: "fa-chart-bar" },
-              ].map(s => (
-                <div key={s.label} style={{
-                  background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
-                  borderRadius: 10, padding: "8px 18px", display: "flex", alignItems: "center", gap: 8,
-                }}>
-                  <i className={`fas ${s.icon}`} style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }} />
-                  <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{s.value}</span>
-                  <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>{s.label}</span>
-                </div>
-              ))}
-            </div>
-          )}
+  const heroContent = !loading && !error ? (
+    <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+      {[
+        { label: "Total", value: sources.length, icon: "fa-plug" },
+        { label: "ADLS Gen2", value: adlsCount, icon: "fa-layer-group" },
+        { label: "ADX", value: adxCount, icon: "fa-chart-bar" },
+      ].map(s => (
+        <div key={s.label} style={{
+          background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
+          borderRadius: 10, padding: "8px 18px", display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <i className={`fas ${s.icon}`} style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }} />
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{s.value}</span>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", fontWeight: 600 }}>{s.label}</span>
         </div>
-      </div>
+      ))}
+    </div>
+  ) : undefined;
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
+  return (
+    <PageLayout
+      icon="fa-plug"
+      title="Data Sources"
+      subtitle="Register ADLS Gen2 and Azure Data Explorer sources — reference them by name when onboarding data to bronze"
+      heroContent={heroContent}
+    >
         {/* Toolbar */}
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
           <div style={{ position: "relative", flex: "1 1 320px", maxWidth: 480 }}>
@@ -891,7 +874,6 @@ export default function DataSourcesPage() {
             </div>
           </div>
         )}
-      </div>
 
       {modalOpen && (
         <DataSourceModal
@@ -910,6 +892,6 @@ export default function DataSourcesPage() {
           getToken={getToken}
         />
       )}
-    </div>
+    </PageLayout>
   );
 }

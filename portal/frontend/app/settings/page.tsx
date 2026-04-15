@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
+import { PageLayout } from "../../components/PageLayout";
 
 interface PlatformInfo {
   env: string;
@@ -39,31 +40,12 @@ export default function PlatformSettingsPage() {
     : null;
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      {/* Hero */}
-      <div style={{
-        background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
-        padding: "48px 1.5rem 40px",
-      }}>
-        <div style={{ maxWidth: 860, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-            <div style={{
-              width: 42, height: 42, borderRadius: 11, background: "rgba(255,255,255,0.15)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <i className="fas fa-server" style={{ color: "#fff", fontSize: 18 }} />
-            </div>
-            <h1 style={{ fontSize: "clamp(1.6rem,3.5vw,2.2rem)", fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-              Platform
-            </h1>
-          </div>
-          <p style={{ color: "rgba(255,255,255,0.7)", margin: 0, fontSize: 15 }}>
-            Connected infrastructure endpoints and environment configuration.
-          </p>
-        </div>
-      </div>
-
-      <div style={{ maxWidth: 860, margin: "0 auto", padding: "32px 1.5rem 80px" }}>
+    <PageLayout
+      icon="fa-server"
+      title="Platform"
+      subtitle="Connected infrastructure endpoints and environment configuration."
+    >
+      <div style={{ maxWidth: 860, margin: "0 auto" }}>
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", overflow: "hidden" }}>
           {platformInfo ? (
             <div style={{ padding: "8px 24px 20px" }}>
@@ -82,7 +64,7 @@ export default function PlatformSettingsPage() {
           )}
         </div>
       </div>
-    </div>
+    </PageLayout>
   );
 }
 

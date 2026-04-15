@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../../auth/useAuth";
 import { apiFetch } from "../../../utils/api";
+import { PageLayout } from "../../../components/PageLayout";
 
 function maskGuid(val: string): string {
   if (!val) return "";
@@ -80,31 +81,12 @@ export default function AuthSettingsPage() {
   }, [getToken, clientId, tenantId]);
 
   return (
-    <div style={{ minHeight: "100vh" }}>
-      {/* Hero */}
-      <div style={{
-        background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
-        padding: "48px 1.5rem 40px",
-      }}>
-        <div style={{ maxWidth: 700, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-            <div style={{
-              width: 42, height: 42, borderRadius: 11, background: "rgba(255,255,255,0.15)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <i className="fas fa-shield-halved" style={{ color: "#fff", fontSize: 18 }} />
-            </div>
-            <h1 style={{ fontSize: "clamp(1.6rem,3.5vw,2.2rem)", fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-              Authentication
-            </h1>
-          </div>
-          <p style={{ color: "rgba(255,255,255,0.7)", margin: 0, fontSize: 15 }}>
-            Configure the login method for all Forge users.
-          </p>
-        </div>
-      </div>
-
-      <div style={{ maxWidth: 700, margin: "0 auto", padding: "32px 1.5rem 80px" }}>
+    <PageLayout
+      icon="fa-shield-halved"
+      title="Authentication"
+      subtitle="Configure the login method for all Forge users."
+    >
+      <div style={{ maxWidth: 700, margin: "0 auto" }}>
         {isConnecting || (!role && !loaded) ? (
           <div style={{ color: "#94a3b8", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
             <i className="fas fa-spinner fa-spin" />
@@ -235,6 +217,6 @@ export default function AuthSettingsPage() {
           </div>
         )}
       </div>
-    </div>
+    </PageLayout>
   );
 }

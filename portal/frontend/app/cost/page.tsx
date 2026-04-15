@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { ForgeLoader } from "../../components/ForgeLoader";
+import { PageLayout } from "../../components/PageLayout";
 
 interface RgCost {
   key: string;
@@ -160,131 +161,112 @@ export default function CostPage() {
     .reduce((s, r) => s + (r.total_cost ?? 0), 0);
   const currency = rgs[0]?.currency ?? "GBP";
 
-  return (
-    <div style={{ minHeight: "100vh" }}>
-      {/* Hero */}
-      <div style={{
-        background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
-        padding: "48px 1.5rem 40px",
-      }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-            <div style={{
-              width: 42, height: 42, borderRadius: 11, background: "rgba(255,255,255,0.15)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
-              <i className="fas fa-coins" style={{ color: "#fff", fontSize: 18 }} />
-            </div>
-            <h1 style={{ fontSize: "clamp(1.6rem,3.5vw,2.2rem)", fontWeight: 800, color: "#fff", margin: 0, letterSpacing: "-0.02em" }}>
-              Cost Explorer
-            </h1>
-          </div>
-          <p style={{ color: "rgba(255,255,255,0.7)", margin: 0, fontSize: 15 }}>
-            Azure spend across Forge resource groups
-          </p>
+  const heroContent = (
+    <div style={{ display: "flex", gap: 6 }}>
+      {[7, 30, 90].map((d) => (
+        <button
+          key={d}
+          onClick={() => setDays(d)}
+          type="button"
+          style={{
+            padding: "5px 14px", borderRadius: 8,
+            border: "1px solid rgba(255,255,255,0.3)",
+            background: days === d ? "rgba(255,255,255,0.25)" : "transparent",
+            color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}
+        >
+          {d}d
+        </button>
+      ))}
+    </div>
+  );
 
-          <div style={{ display: "flex", gap: 6, marginTop: 20 }}>
-            {[7, 30, 90].map((d) => (
-              <button
-                key={d}
-                onClick={() => setDays(d)}
-                type="button"
-                style={{
-                  padding: "5px 14px", borderRadius: 8,
-                  border: "1px solid rgba(255,255,255,0.3)",
-                  background: days === d ? "rgba(255,255,255,0.25)" : "transparent",
-                  color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                }}
-              >
-                {d}d
-              </button>
+  return (
+    <PageLayout
+      icon="fa-coins"
+      title="Cost Explorer"
+      subtitle="Azure spend across Forge resource groups"
+      heroContent={heroContent}
+    >
+      {loading && <ForgeLoader text="Loading cost data…" fullscreen={false} />}
+
+      {!loading && error && (
+        <div style={{
+          background: "#fff", border: "1px solid #fca5a5", borderTop: "3px solid #ef4444",
+          borderRadius: 12, padding: "20px 24px", color: "#dc2626", fontSize: 13,
+          display: "flex", alignItems: "center", gap: 10,
+        }}>
+          <i className="fas fa-circle-exclamation" />
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          {/* Combined total */}
+          {rgs.some((r) => r.total_cost !== null) && (
+            <div style={{ marginBottom: 28 }}>
+              <div style={{
+                display: "inline-flex", alignItems: "baseline", gap: 12,
+                padding: "16px 24px", background: "#fff", borderRadius: 14,
+                border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "#94a3b8" }}>
+                  Total — last {days} days
+                </span>
+                <span style={{ fontSize: 36, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                  {formatCurrency(totalAcrossRgs, currency)}
+                </span>
+                <span style={{ fontSize: 12, color: "#94a3b8" }}>
+                  across {rgs.filter((r) => r.total_cost !== null).length} resource group{rgs.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* RG cards */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(440px, 1fr))", gap: 24, marginBottom: 32 }}>
+            {rgs.map((rg) => (
+              <RgCard key={rg.key} rg={rg} days={days} />
             ))}
           </div>
-        </div>
-      </div>
 
-      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
-
-        {loading && <ForgeLoader text="Loading cost data…" fullscreen={false} />}
-
-        {!loading && error && (
+          {/* Cost per pipeline — coming soon */}
           <div style={{
-            background: "#fff", border: "1px solid #fca5a5", borderTop: "3px solid #ef4444",
-            borderRadius: 12, padding: "20px 24px", color: "#dc2626", fontSize: 13,
-            display: "flex", alignItems: "center", gap: 10,
+            background: "#fff", borderRadius: 16,
+            border: "1px dashed #cbd5e1",
+            padding: "32px 28px",
+            display: "flex", alignItems: "center", gap: 20,
           }}>
-            <i className="fas fa-circle-exclamation" />
-            {error}
-          </div>
-        )}
-
-        {!loading && !error && (
-          <>
-            {/* Combined total */}
-            {rgs.some((r) => r.total_cost !== null) && (
-              <div style={{ marginBottom: 28 }}>
-                <div style={{
-                  display: "inline-flex", alignItems: "baseline", gap: 12,
-                  padding: "16px 24px", background: "#fff", borderRadius: 14,
-                  border: "1px solid #e2e8f0", boxShadow: "0 1px 4px rgba(0,0,0,0.04)",
-                }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.09em", color: "#94a3b8" }}>
-                    Total — last {days} days
-                  </span>
-                  <span style={{ fontSize: 36, fontWeight: 800, color: "#0f172a", letterSpacing: "-0.02em" }}>
-                    {formatCurrency(totalAcrossRgs, currency)}
-                  </span>
-                  <span style={{ fontSize: 12, color: "#94a3b8" }}>
-                    across {rgs.filter((r) => r.total_cost !== null).length} resource group{rgs.length !== 1 ? "s" : ""}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* RG cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(440px, 1fr))", gap: 24, marginBottom: 32 }}>
-              {rgs.map((rg) => (
-                <RgCard key={rg.key} rg={rg} days={days} />
-              ))}
-            </div>
-
-            {/* Cost per pipeline — coming soon */}
             <div style={{
-              background: "#fff", borderRadius: 16,
-              border: "1px dashed #cbd5e1",
-              padding: "32px 28px",
-              display: "flex", alignItems: "center", gap: 20,
+              width: 48, height: 48, borderRadius: 12, flexShrink: 0,
+              background: "rgba(var(--forge-primary-rgb), 0.06)",
+              display: "flex", alignItems: "center", justifyContent: "center",
             }}>
-              <div style={{
-                width: 48, height: 48, borderRadius: 12, flexShrink: 0,
-                background: "rgba(var(--forge-primary-rgb), 0.06)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                <i className="fas fa-sitemap" style={{ color: "var(--forge-primary)", fontSize: 20, opacity: 0.5 }} />
-              </div>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: "#334155" }}>
-                    Cost per Pipeline
-                  </span>
-                  <span style={{
-                    fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em",
-                    padding: "2px 8px", borderRadius: 20,
-                    background: "rgba(var(--forge-primary-rgb), 0.08)",
-                    color: "var(--forge-primary)",
-                  }}>
-                    Coming soon
-                  </span>
-                </div>
-                <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.6 }}>
-                  Tag your Azure resources with <code style={{ fontFamily: "monospace", background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, fontSize: 12 }}>pipeline=&lt;name&gt;</code> and
-                  cost attribution per DAG will appear here automatically.
-                </p>
-              </div>
+              <i className="fas fa-sitemap" style={{ color: "var(--forge-primary)", fontSize: 20, opacity: 0.5 }} />
             </div>
-          </>
-        )}
-      </div>
-    </div>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#334155" }}>
+                  Cost per Pipeline
+                </span>
+                <span style={{
+                  fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em",
+                  padding: "2px 8px", borderRadius: 20,
+                  background: "rgba(var(--forge-primary-rgb), 0.08)",
+                  color: "var(--forge-primary)",
+                }}>
+                  Coming soon
+                </span>
+              </div>
+              <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.6 }}>
+                Tag your Azure resources with <code style={{ fontFamily: "monospace", background: "#f1f5f9", padding: "1px 5px", borderRadius: 4, fontSize: 12 }}>pipeline=&lt;name&gt;</code> and
+                cost attribution per DAG will appear here automatically.
+              </p>
+            </div>
+          </div>
+        </>
+      )}
+    </PageLayout>
   );
 }
