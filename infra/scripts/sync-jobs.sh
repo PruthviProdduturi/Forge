@@ -410,9 +410,11 @@ section "Push DAGs → Airflow scheduler pod"
 DAG_PUSH_DONE=false
 
 if ! dry; then
-  # Find the scheduler pod
   _AIRFLOW_NS="airflow"
+  # Resolve kubectl context — use ORCH_CLUSTER if set (forge-up.sh), else current context
+  _KUBE_CTX="${ORCH_CLUSTER:-$(kubectl config current-context 2>/dev/null || true)}"
   _SCHEDULER_POD=$(kubectl get pods -n "${_AIRFLOW_NS}" \
+    --context "${_KUBE_CTX}" \
     -l component=scheduler \
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
@@ -420,19 +422,28 @@ if ! dry; then
   if [[ -z "${_SCHEDULER_POD}" ]]; then
     warn "Airflow scheduler pod not found — skipping DAG push (is the cluster reachable?)"
   else
-    log "Scheduler pod: ${_SCHEDULER_POD}"
-    # Collect all DAG files from processed manifests
+    log "Scheduler pod: ${_SCHEDULER_POD} (context: ${_KUBE_CTX})"
     for manifest in "${MANIFEST_FILES[@]}"; do
       project_dir="$(dirname "$(dirname "${manifest}")")"
       dag_dir="${project_dir}/dags"
       if [[ -d "${dag_dir}" ]]; then
         for dag in "${dag_dir}"/*.py; do
           [[ -f "${dag}" ]] || continue
-          kubectl cp "${dag}" \
+          # Convert Git Bash path to Windows path so kubectl (Windows binary) can read it
+          _dag_win="$(cd "$(dirname "${dag}")" && pwd -W)/$(basename "${dag}")"
+          kubectl cp "${_dag_win}" \
             "${_AIRFLOW_NS}/${_SCHEDULER_POD}:/opt/airflow/dags/$(basename "${dag}")" \
-            2>/dev/null \
-            && log "  ✓ $(basename "${dag}")" \
-            || warn "  failed to copy $(basename "${dag}")"
+            --context "${_KUBE_CTX}" \
+            -c scheduler \
+            2>&1 | grep -v "^$" | sed "s/^/    /" || true
+          # Check exit code separately since we piped stderr
+          if kubectl exec -n "${_AIRFLOW_NS}" "${_SCHEDULER_POD}" -c scheduler \
+              --context "${_KUBE_CTX}" \
+              -- test -f "/opt/airflow/dags/$(basename "${dag}")" 2>/dev/null; then
+            log "  ✓ $(basename "${dag}")"
+          else
+            warn "  failed to copy $(basename "${dag}")"
+          fi
         done
       fi
     done
