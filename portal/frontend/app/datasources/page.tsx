@@ -671,7 +671,7 @@ export default function DataSourcesPage() {
     <PageLayout
       icon="fa-plug"
       title="Data Sources"
-      subtitle="Register ADLS Gen2 and Azure Data Explorer sources — reference them by name when onboarding data to bronze"
+      subtitle="Manage registered data sources for bronze ingestion"
       heroContent={heroContent}
     >
         {/* Toolbar */}

@@ -43,7 +43,7 @@ export default function PlatformSettingsPage() {
     <PageLayout
       icon="fa-server"
       title="Platform"
-      subtitle="Connected infrastructure endpoints and environment configuration."
+      subtitle="Connected infrastructure endpoints and environment configuration"
     >
       <div style={{ maxWidth: 860, margin: "0 auto" }}>
         <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #e2e8f0", overflow: "hidden" }}>

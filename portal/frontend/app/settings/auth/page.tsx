@@ -84,7 +84,7 @@ export default function AuthSettingsPage() {
     <PageLayout
       icon="fa-shield-halved"
       title="Authentication"
-      subtitle="Configure the login method for all Forge users."
+      subtitle="Configure the login method for all Forge users"
     >
       <div style={{ maxWidth: 700, margin: "0 auto" }}>
         {isConnecting || (!role && !loaded) ? (
