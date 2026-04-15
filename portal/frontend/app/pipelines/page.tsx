@@ -83,16 +83,6 @@ export default function PipelinesPage() {
     );
   }, [pipelines, search, activeTag]);
 
-  // Group by first tag
-  const grouped = useMemo(() => {
-    const groups: Record<string, Pipeline[]> = {};
-    for (const p of filtered) {
-      const key = p.tags[0] ?? "Untagged";
-      if (!groups[key]) groups[key] = [];
-      groups[key].push(p);
-    }
-    return groups;
-  }, [filtered]);
 
   async function handleTrigger(dag_id: string) {
     setTriggering(dag_id);
@@ -212,99 +202,91 @@ export default function PipelinesPage() {
         </div>
       )}
 
-      {!loading && !error && Object.keys(grouped).length === 0 && (
+      {!loading && !error && filtered.length === 0 && (
         <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
           <i className="fas fa-inbox" style={{ fontSize: 32, marginBottom: 12, display: "block" }} />
           No pipelines found
         </div>
       )}
 
-      {!loading && !error && Object.entries(grouped).map(([group, items]) => (
-        <div key={group} style={{ marginBottom: 32 }}>
-          <div style={{
-            fontSize: 11, fontWeight: 700, letterSpacing: "0.09em",
-            textTransform: "uppercase", color: "#94a3b8", marginBottom: 12,
-          }}>
-            {group} <span style={{ fontWeight: 400 }}>({items.length})</span>
-          </div>
-          <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
-                  {["Pipeline", "Schedule", "Last Run", "Status", ""].map(h => (
-                    <th key={h} style={{
-                      padding: "10px 16px", textAlign: "left",
-                      fontSize: 11, fontWeight: 700, color: "#94a3b8",
-                      textTransform: "uppercase", letterSpacing: "0.07em",
-                      whiteSpace: "nowrap",
-                    }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((p, idx) => (
-                  <tr
-                    key={p.dag_id}
-                    style={{
-                      borderBottom: idx < items.length - 1 ? "1px solid #f8fafc" : "none",
-                      background: idx % 2 === 0 ? "#fff" : "#fafbfc",
-                    }}
-                  >
-                    <td style={{ padding: "12px 16px" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{
-                          width: 7, height: 7, borderRadius: "50%",
-                          background: p.is_paused ? "#94a3b8" : "#22c55e",
-                          flexShrink: 0,
-                        }} />
-                        <div>
-                          <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 14 }}>{p.dag_id}</div>
-                          {p.description && (
-                            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 1 }}>{p.description}</div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: "#64748b", whiteSpace: "nowrap" }}>
-                      {p.schedule ? (
-                        <span style={{ background: "#f1f5f9", padding: "2px 8px", borderRadius: 6, fontFamily: "monospace", fontSize: 12 }}>
-                          {p.schedule}
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td style={{ padding: "12px 16px", fontSize: 13, color: "#64748b", whiteSpace: "nowrap" }}>
-                      {timeAgo(p.last_run_at)}
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <StateBadge state={p.last_run_state} />
-                      {p.is_paused && (
-                        <span style={{ marginLeft: 6, fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>PAUSED</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      {canTrigger && (
-                        <button
-                          onClick={() => handleTrigger(p.dag_id)}
-                          disabled={triggering === p.dag_id}
-                          style={{
-                            padding: "5px 12px", borderRadius: 7, border: `1px solid ${ACCENT}`,
-                            background: triggering === p.dag_id ? "#e0f2fe" : "transparent",
-                            color: ACCENT, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                            display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-                          }}
-                        >
-                          <i className={`fas ${triggering === p.dag_id ? "fa-spinner fa-spin" : "fa-play"}`} style={{ fontSize: 10 }} />
-                          Trigger
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+      {!loading && !error && filtered.length > 0 && (
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid #f1f5f9" }}>
+                {["Pipeline", "Schedule", "Last Run", "Status", ""].map(h => (
+                  <th key={h} style={{
+                    padding: "10px 16px", textAlign: "left",
+                    fontSize: 11, fontWeight: 700, color: "#94a3b8",
+                    textTransform: "uppercase", letterSpacing: "0.07em",
+                    whiteSpace: "nowrap",
+                  }}>{h}</th>
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((p, idx) => (
+                <tr
+                  key={p.dag_id}
+                  style={{
+                    borderBottom: idx < filtered.length - 1 ? "1px solid #f8fafc" : "none",
+                    background: idx % 2 === 0 ? "#fff" : "#fafbfc",
+                  }}
+                >
+                  <td style={{ padding: "12px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{
+                        width: 7, height: 7, borderRadius: "50%",
+                        background: p.is_paused ? "#94a3b8" : "#22c55e",
+                        flexShrink: 0,
+                      }} />
+                      <div>
+                        <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 14 }}>{p.dag_id}</div>
+                        {p.description && (
+                          <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 1 }}>{p.description}</div>
+                        )}
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ padding: "12px 16px", fontSize: 13, color: "#64748b", whiteSpace: "nowrap" }}>
+                    {p.schedule ? (
+                      <span style={{ background: "#f1f5f9", padding: "2px 8px", borderRadius: 6, fontFamily: "monospace", fontSize: 12 }}>
+                        {p.schedule}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td style={{ padding: "12px 16px", fontSize: 13, color: "#64748b", whiteSpace: "nowrap" }}>
+                    {timeAgo(p.last_run_at)}
+                  </td>
+                  <td style={{ padding: "12px 16px" }}>
+                    <StateBadge state={p.last_run_state} />
+                    {p.is_paused && (
+                      <span style={{ marginLeft: 6, fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>PAUSED</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "12px 16px" }}>
+                    {canTrigger && (
+                      <button
+                        onClick={() => handleTrigger(p.dag_id)}
+                        disabled={triggering === p.dag_id}
+                        style={{
+                          padding: "5px 12px", borderRadius: 7, border: `1px solid ${ACCENT}`,
+                          background: triggering === p.dag_id ? "#e0f2fe" : "transparent",
+                          color: ACCENT, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                          display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                        }}
+                      >
+                        <i className={`fas ${triggering === p.dag_id ? "fa-spinner fa-spin" : "fa-play"}`} style={{ fontSize: 10 }} />
+                        Trigger
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      ))}
+      )}
     </PageLayout>
   );
 }
