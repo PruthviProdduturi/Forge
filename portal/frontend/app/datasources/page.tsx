@@ -609,6 +609,7 @@ export default function DataSourcesPage() {
   const [editing, setEditing] = useState<DataSource | null>(null);
   const [deleting, setDeleting] = useState<DataSource | null>(null);
   const [search, setSearch] = useState("");
+  const [activeType, setActiveType] = useState<"all" | "adls_gen2" | "adx">("all");
 
   useEffect(() => {
     apiFetch<DataSource[]>("/api/v1/datasources", getToken)
@@ -617,14 +618,13 @@ export default function DataSourcesPage() {
       .finally(() => setLoading(false));
   }, [getToken]);
 
-  const filtered = search.trim()
-    ? sources.filter(s =>
-        s.name.includes(search.toLowerCase()) ||
-        s.display_name.toLowerCase().includes(search.toLowerCase()) ||
-        s.description.toLowerCase().includes(search.toLowerCase()) ||
-        s.source_type.includes(search.toLowerCase())
-      )
-    : sources;
+  const filtered = sources
+    .filter(s => activeType === "all" || s.source_type === activeType)
+    .filter(s => !search.trim() ||
+      s.name.toLowerCase().includes(search.toLowerCase()) ||
+      s.display_name.toLowerCase().includes(search.toLowerCase()) ||
+      s.description.toLowerCase().includes(search.toLowerCase())
+    );
 
   const handleSaved = useCallback((ds: DataSource) => {
     setSources(prev => {
@@ -676,7 +676,7 @@ export default function DataSourcesPage() {
     >
         {/* Toolbar */}
         <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
-          <div style={{ position: "relative", flex: "1 1 320px", maxWidth: 480 }}>
+          <div style={{ position: "relative", flex: "1 1 280px", maxWidth: 360 }}>
             <i className="fas fa-magnifying-glass" style={{
               position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
               color: "#94a3b8", fontSize: 14,
@@ -684,14 +684,24 @@ export default function DataSourcesPage() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search by name, type…"
+              placeholder="Search sources…"
               style={{
-                width: "100%", padding: "10px 14px 10px 40px", borderRadius: 10,
+                width: "100%", padding: "9px 14px 9px 40px", borderRadius: 10,
                 border: "1px solid #e2e8f0", fontSize: 14, background: "#fff",
                 boxShadow: "0 1px 3px rgba(0,0,0,0.04)", outline: "none",
                 boxSizing: "border-box",
               }}
             />
+          </div>
+          <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4 }}>
+            {([["all", "All"], ["adls_gen2", "ADLS Gen2"], ["adx", "ADX"]] as const).map(([val, label]) => (
+              <button key={val} onClick={() => setActiveType(val)} style={{
+                padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer",
+                fontSize: 13, fontWeight: 600,
+                background: activeType === val ? "var(--forge-primary)" : "transparent",
+                color: activeType === val ? "#fff" : "#64748b",
+              }}>{label}</button>
+            ))}
           </div>
           <button
             onClick={() => { setEditing(null); setModalOpen(true); }}
