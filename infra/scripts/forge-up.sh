@@ -616,7 +616,7 @@ fi
 # service account password from KV at runtime via DefaultAzureCredential.
 _KV_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KV_NAME}"
 _KV_SECRETS_USER_ROLE="4633458b-17de-408a-b874-0445c86b69e6"
-az role assignment create \
+MSYS_NO_PATHCONV=1 az role assignment create \
   --role "${_KV_SECRETS_USER_ROLE}" \
   --assignee-object-id "${PORTAL_MI_PRINCIPAL_ID}" \
   --assignee-principal-type ServicePrincipal \
