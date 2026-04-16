@@ -49,9 +49,10 @@ spec:
             - name: AIRFLOW_USERNAME
               value: {{ .Values.api.env.airflowUsername | quote }}
             {{- end }}
-            {{- /* AIRFLOW_PASSWORD intentionally omitted — portal-api fetches it
-                   from Key Vault at startup via workload identity (DefaultAzureCredential).
-                   Set this env var only to override KV lookup (local dev). */ -}}
+            {{- /* AIRFLOW_PASSWORD intentionally not injected here.
+                   portal-api reads the password from Key Vault at startup
+                   via DefaultAzureCredential (workload identity → KV Secrets User).
+                   Set AIRFLOW_PASSWORD env var only for local dev override. */ -}}
             {{- if .Values.api.env.trinoHost }}
             - name: TRINO_HOST
               value: {{ .Values.api.env.trinoHost | quote }}

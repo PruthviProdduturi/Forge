@@ -610,6 +610,20 @@ if [[ -n "$APP_OBJ_ID" ]]; then
   fi
 fi
 
+# Grant portal MI Key Vault Secrets User on the platform KV (idempotent).
+# This is also in Bicep (identity.bicep kvPortalSecretsOfficer) but runs here too
+# so --skip-infra deploys don't lose the assignment. Portal-api reads the Airflow
+# service account password from KV at runtime via DefaultAzureCredential.
+_KV_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${KV_NAME}"
+_KV_SECRETS_USER_ROLE="4633458b-17de-408a-b874-0445c86b69e6"
+az role assignment create \
+  --role "${_KV_SECRETS_USER_ROLE}" \
+  --assignee-object-id "${PORTAL_MI_PRINCIPAL_ID}" \
+  --assignee-principal-type ServicePrincipal \
+  --scope "${_KV_RESOURCE_ID}" \
+  --output none 2>/dev/null || true
+echo "    Portal MI → Key Vault Secrets User on ${KV_NAME}"
+
 # Assign id-forge-portal-{env} MI to orch cluster VMSS nodes so IMDS works from
 # portal-auth-proxy pods (same pattern as id-forge-trino-{env} on compute VMSS).
 PORTAL_MI_RESOURCE_ID="/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-forge-portal-${_A}${ENV}"
@@ -1678,6 +1692,7 @@ MIGJOB
   kubectl create serviceaccount portal-api -n portal --context "$ORCH_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f - 2>/dev/null || true
 
+
   # Remove legacy split ingresses (forge-portal-web / forge-portal-api) that
   # were replaced by the consolidated forge-portal ingress via portal-auth-proxy.
   kubectl delete ingress forge-portal-web forge-portal-api -n portal \
@@ -2140,10 +2155,7 @@ echo "║    export FORGE_COMPUTE_HOST=\\                      ║"
 printf "║      %-48s║\n" "$COMPUTE_PUBLIC_HOST"
 echo "║                                                      ║"
 echo "║  AIRFLOW                                             ║"
-echo "║    kubectl port-forward svc/airflow-api-server \\     ║"
-echo "║      8081:8080 -n airflow \\                         ║"
-printf "║      --context %-37s║\n" "$ORCH_CLUSTER"
-echo "║    Then open: http://localhost:8081                  ║"
+printf "║    URL:    https://%-34s║\n" "${AIRFLOW_PUBLIC_HOST}"
 echo "║                                                      ║"
 echo "║  TABLES (after pipelines run)                        ║"
 echo "║    SELECT * FROM delta.bronze.nyctaxi LIMIT 10;      ║"

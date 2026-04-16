@@ -5,10 +5,10 @@ Auth flow (Airflow 3 REST API v2):
   2. Use JWT as Bearer token for all /api/v2/* calls.
 
 Service account: portal-api-svc (Viewer role), created by forge-up.sh phase 7.4.1.
-Password: stored in Key Vault as airflow-portal-api-password, fetched at first
-use via workload identity (DefaultAzureCredential → KV). AIRFLOW_PASSWORD env
-var overrides KV lookup (useful for local dev). The JWT is cached in-process
-and refreshed 1h before expiry.
+Password: stored in Key Vault as airflow-portal-api-password. Fetched at first
+use via DefaultAzureCredential (workload identity → KV Secrets User role).
+AIRFLOW_PASSWORD env var overrides KV lookup for local dev only.
+The JWT is cached in-process and refreshed 1h before expiry.
 """
 from __future__ import annotations
 
@@ -32,34 +32,30 @@ settings = get_settings()
 # ---------------------------------------------------------------------------
 _jwt: str = ""
 _jwt_expiry: float = 0.0
-_airflow_password: str = ""  # resolved once from KV or env var
+_airflow_password: str = ""  # resolved once from env var or KV
 
 
 def _resolve_airflow_password() -> str:
     """Return the portal-api-svc password.
 
     Priority:
-      1. AIRFLOW_PASSWORD env var (set by forge-up.sh for backward compat / local dev)
-      2. Key Vault secret airflow-portal-api-password (fetched via workload identity)
+      1. AIRFLOW_PASSWORD env var (local dev override)
+      2. Key Vault secret airflow-portal-api-password (via workload identity)
     """
     global _airflow_password
     if _airflow_password:
         return _airflow_password
-
     if settings.airflow_password:
         _airflow_password = settings.airflow_password
         return _airflow_password
-
     if not settings.key_vault_url:
         raise RuntimeError(
-            "Neither AIRFLOW_PASSWORD env var nor KEY_VAULT_URL is set — "
-            "cannot resolve Airflow service account password."
+            "Neither AIRFLOW_PASSWORD env var nor KEY_VAULT_URL is configured"
         )
-
     log.info("airflow_password_kv_fetch", kv=settings.key_vault_url)
     credential = DefaultAzureCredential()
-    client = SecretClient(vault_url=settings.key_vault_url, credential=credential)
-    secret = client.get_secret("airflow-portal-api-password")
+    kv_client = SecretClient(vault_url=settings.key_vault_url, credential=credential)
+    secret = kv_client.get_secret("airflow-portal-api-password")
     _airflow_password = secret.value or ""
     if not _airflow_password:
         raise RuntimeError("KV secret airflow-portal-api-password is empty")
