@@ -268,12 +268,15 @@ export default function HomePage() {
                   const s = p.last_run_state ? STATE_STYLE[p.last_run_state] ?? { bg: "#f1f5f9", color: "#64748b", label: p.last_run_state } : null;
                   const neverRun = !p.last_run_state;
                   return (
-                    <div key={p.dag_id} style={{
-                      display: "flex", alignItems: "center", gap: 12,
+                    <Link key={p.dag_id} href="/pipelines" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 12,
                       padding: "12px 16px",
                       borderBottom: idx < recentPipelines.length - 1 ? "1px solid #f8fafc" : "none",
                       background: idx % 2 === 0 ? "#fff" : "#fafbfc",
-                    }}>
+                      cursor: "pointer",
+                    }}
+                      onMouseEnter={e => (e.currentTarget as HTMLAnchorElement).style.background = "#f0f9ff"}
+                      onMouseLeave={e => (e.currentTarget as HTMLAnchorElement).style.background = idx % 2 === 0 ? "#fff" : "#fafbfc"}
+                    >
                       <span style={{
                         width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
                         background: p.is_paused ? "#94a3b8" : neverRun ? "#d1d5db" : (s?.color ?? "#94a3b8"),
@@ -298,7 +301,7 @@ export default function HomePage() {
                       <span style={{ fontSize: 12, color: "#94a3b8", whiteSpace: "nowrap", minWidth: 52, textAlign: "right" }}>
                         {timeAgo(p.last_run_at)}
                       </span>
-                    </div>
+                    </Link>
                   );
                 })
               )}
