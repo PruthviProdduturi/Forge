@@ -1,8 +1,8 @@
 # =============================================================================
-# .dockerignore — Spark image build context (repo root)
+# .dockerignore — repo-root build context (Spark + Airflow images)
 #
-# Only the Spark Dockerfile uses repo root as build context (needed for
-# sdk/python). Everything else is excluded to minimise upload size.
+# Both Spark and Airflow Dockerfiles use repo root as build context.
+# Everything else is excluded to minimise upload size.
 # =============================================================================
 
 # Exclude everything by default
@@ -14,3 +14,10 @@ infra/docker/spark/wheels/
 
 # Forge DQ / SDK — baked into the Spark image
 !sdk/python/
+
+# Airflow Dockerfile + plugins
+!infra/docker/airflow/
+infra/docker/airflow/wheels/
+
+# Platform plugins — ForgeSparkOperator, ForgeDqGateOperator
+!orchestration/airflow/plugins/

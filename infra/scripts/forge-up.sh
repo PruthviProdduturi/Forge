@@ -61,7 +61,7 @@ ALIAS=""
 LOCATION_ARG=""   # explicit --location override; empty = auto-detect
 SKIP_INFRA=false
 SKIP_BUILD=false
-SKIP_SYNC=false
+SKIP_SYNC=true  # Bulk sync removed — deploy individual jobs via sync-jobs.sh --job <name>
 SKIP_PG_GRANTS=false
 RUN_TEST=false
 TEST_DATE="2023-01-15"
@@ -650,20 +650,51 @@ kubectl create secret generic airflow-oauth-credentials \
 echo "    airflow-oauth-credentials"
 
 # Compute cluster kubeconfig for Airflow (SparkKubernetesOperator)
-COMPUTE_KUBECONFIG=$(az aks get-credentials \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$COMPUTE_CLUSTER" \
-  --file - 2>/dev/null || echo "")
+# Use a static service-account token (not kubelogin / az aks get-credentials).
+# az aks get-credentials produces an exec-based kubeconfig that requires kubelogin
+# with --login devicecode (interactive) — unusable inside Airflow worker pods.
+# Instead: airflow-spark-submitter SA in spark-jobs namespace with a long-lived
+# token secret (kubernetes.io/service-account-token), scoped to SparkApplication CRUD.
+_COMPUTE_SA_CA=$(kubectl get secret airflow-spark-submitter-token \
+  -n spark-jobs --context "$COMPUTE_CLUSTER" \
+  -o jsonpath='{.data.ca\.crt}' 2>/dev/null || echo "")
+_COMPUTE_SA_TOKEN=$(kubectl get secret airflow-spark-submitter-token \
+  -n spark-jobs --context "$COMPUTE_CLUSTER" \
+  -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || echo "")
+_COMPUTE_SERVER=$(kubectl config view --context "$COMPUTE_CLUSTER" --minify \
+  -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || echo "")
 
-if [[ -n "$COMPUTE_KUBECONFIG" ]]; then
+if [[ -n "$_COMPUTE_SA_TOKEN" && -n "$_COMPUTE_SA_CA" && -n "$_COMPUTE_SERVER" ]]; then
+  COMPUTE_KUBECONFIG=$(cat <<KUBECFG
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority-data: ${_COMPUTE_SA_CA}
+    server: ${_COMPUTE_SERVER}
+  name: compute
+contexts:
+- context:
+    cluster: compute
+    namespace: spark-jobs
+    user: airflow-spark-submitter
+  name: compute
+current-context: compute
+users:
+- name: airflow-spark-submitter
+  user:
+    token: ${_COMPUTE_SA_TOKEN}
+KUBECFG
+)
   kubectl create secret generic airflow-compute-kubeconfig \
     --from-literal="config=${COMPUTE_KUBECONFIG}" \
     --namespace airflow \
     --context "$ORCH_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$ORCH_CLUSTER" -f -
-  echo "    airflow-compute-kubeconfig"
+  echo "    airflow-compute-kubeconfig (static SA token — no kubelogin required)"
 else
-  echo "    WARN: could not fetch compute kubeconfig — SparkKubernetesOperator will fail"
+  echo "    WARN: airflow-spark-submitter-token not found on compute cluster — run forge-up.sh --full first"
+  echo "          SparkKubernetesOperator will fail until the SA token secret exists."
 fi
 
 # Trino auth proxy session secret (compute cluster)
@@ -761,7 +792,7 @@ else
   _acr_import "registry.k8s.io/ingress-nginx/controller:v1.15.1"               "ingress-nginx/controller:v1.15.1"
   _acr_import "registry.k8s.io/defaultbackend-amd64:1.5"                       "defaultbackend-amd64:1.5"
   _acr_import "registry.k8s.io/git-sync/git-sync:v4.4.2"                        "git-sync:v4.4.2"
-  _acr_import "ghcr.io/kubeflow/spark-operator/controller:2.5.0"               "spark-operator-controller:2.5.0"
+  # spark-operator/kubectl is imported as-is; controller is built custom (adds hadoop-azure)
   _acr_import "ghcr.io/kubeflow/spark-operator/kubectl:2.5.0"                  "spark-operator-kubectl:2.5.0"
   # cert-manager — all 5 images must come from ACR (Azure Policy blocks quay.io)
   _acr_import "quay.io/jetstack/cert-manager-controller:v1.17.1"               "cert-manager-controller:v1.17.1"
@@ -802,7 +833,18 @@ fi
 if [[ "$SKIP_BUILD" == "true" ]]; then
   echo "  Skipped: all custom images (--skip-build)"
 else
-  # All 7 images are independent — submit all ACR Tasks in parallel.
+  # ACR has publicNetworkAccess=Disabled for S360 compliance.
+  # ACR Tasks (the build agents) run from Azure's shared infrastructure and are
+  # blocked by that setting. Temporarily enable public access for the build,
+  # then disable it again regardless of outcome.
+  echo "  Enabling ACR public access for image builds..."
+  az acr update --name "$ACR" --resource-group "$ACR_RG" \
+    --public-network-enabled true --default-action Allow --output none 2>/dev/null \
+    && echo "  ✓ ACR public access enabled" \
+    || echo "  WARN: could not enable ACR public access (builds may fail)"
+  _ACR_RESTORE_PUBLIC=true
+
+  # All images are independent — submit all ACR Tasks in parallel.
   # Each az acr build runs in Azure (ACR Tasks), no local CPU contention.
   # Reduces Phase 5 from ~8 min sequential → ~2 min parallel.
   _BUILD_NAMES=()
@@ -847,9 +889,10 @@ else
     _BUILD_PIDS+=($!)
   }
 
+  _queue_build "spark-operator"   "spark-operator-controller" "2.5.0" "${REPO_ROOT}/infra/docker/spark-operator/Dockerfile"   "${REPO_ROOT}/infra/docker/spark-operator/"
   _queue_build "spark"            "spark"            "$SPARK_TAG"   "${REPO_ROOT}/infra/docker/spark/Dockerfile"             "${REPO_ROOT}/"
   _queue_build "trino"            "trino"            "$TRINO_TAG"   "${REPO_ROOT}/infra/docker/trino/Dockerfile"             "${REPO_ROOT}/infra/docker/trino/"
-  _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/infra/docker/airflow/"
+  _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/"
   _queue_build "hive-metastore"   "hive-metastore"   "$HMS_TAG"     "${REPO_ROOT}/infra/docker/hive-metastore/Dockerfile"   "${REPO_ROOT}/infra/docker/hive-metastore/"
   _queue_build "trino-auth-proxy"  "trino-auth-proxy"  "1.2"      "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile"  "${REPO_ROOT}/infra/docker/trino-auth-proxy/"
   _queue_build "portal-auth-proxy" "portal-auth-proxy" "1.0"      "${REPO_ROOT}/infra/docker/portal-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/portal-auth-proxy/"
@@ -876,9 +919,40 @@ else
     rm -f "${_BUILD_LOGS[$i]}"
   done
 
-  if [[ ${#_BUILD_FAILED[@]} -gt 0 ]]; then
-    echo "ERROR: Image build(s) failed: ${_BUILD_FAILED[*]}"
+  # Only portal images are blocking — compute images (spark/trino/airflow/hive-metastore)
+  # can fail due to transient Ubuntu package mirror outages without stopping the portal deploy.
+  _PORTAL_FAILED=()
+  _COMPUTE_FAILED=()
+  for img in "${_BUILD_FAILED[@]}"; do
+    case "$img" in
+      portal-api|portal-web|portal-auth-proxy|trino-auth-proxy)
+        _PORTAL_FAILED+=("$img") ;;
+      *)
+        _COMPUTE_FAILED+=("$img") ;;
+    esac
+  done
+  if [[ ${#_COMPUTE_FAILED[@]} -gt 0 ]]; then
+    echo "WARN: Compute image build(s) failed (non-blocking): ${_COMPUTE_FAILED[*]}"
+    echo "      These may be caused by transient Ubuntu package mirror outages."
+    echo "      Existing ACR images will be used for compute services."
+  fi
+  if [[ ${#_PORTAL_FAILED[@]} -gt 0 ]]; then
+    echo "ERROR: Portal image build(s) failed: ${_PORTAL_FAILED[*]}"
+    # Restore ACR public access before exiting on error
+    if [[ -n "$_ACR_RESTORE_PUBLIC" ]]; then
+      az acr update --name "$ACR" --resource-group "$ACR_RG" \
+        --public-network-enabled false --default-action Deny --output none 2>/dev/null
+    fi
     exit 1
+  fi
+
+  # Restore ACR to private-only after all builds complete (S360 compliance)
+  if [[ -n "$_ACR_RESTORE_PUBLIC" ]]; then
+    echo "  Disabling ACR public access (S360 restore)..."
+    az acr update --name "$ACR" --resource-group "$ACR_RG" \
+      --public-network-enabled false --default-action Deny --output none 2>/dev/null \
+      && echo "  ✓ ACR restored to private" \
+      || echo "  WARN: could not restore ACR — run: az acr update --name ${ACR} --public-network-enabled false --default-action Deny"
   fi
 fi
 echo ""
@@ -974,8 +1048,12 @@ else
   echo "    Done"
 
   echo "  [6.0.5] cert-manager + Let's Encrypt issuer (compute)..."
-  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
-    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
+  _ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>&1)
+  if [[ ${#_ACR_TOKEN} -lt 50 ]]; then
+    echo "ERROR: ACR login failed (token length=${#_ACR_TOKEN}). Check ACR firewall / az login." >&2
+    exit 1
+  fi
+  echo "$_ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin
   helm upgrade --install cert-manager \
     "oci://${ACR}.azurecr.io/helm/cert-manager" \
     --version "v1.17.1" \
@@ -1023,6 +1101,131 @@ else
     | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
   kubectl create namespace spark-jobs --context "$COMPUTE_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>/dev/null || true
+
+  # forge-platform-config: env/storage_account values consumed by Spark driver pod env vars.
+  kubectl create configmap forge-platform-config \
+    --from-literal=env="$ENV" \
+    --from-literal=storage_account="${ADLS_ACCOUNT}" \
+    -n spark-jobs --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>&1 | grep -v "^$" || true
+
+  # spark-fixed-entrypoint: ConfigMap that overrides /opt/entrypoint.sh in driver pods
+  # to force --deploy-mode client. The spark-operator sets deployMode=cluster in
+  # spark.properties which would cause spark-submit to create a second driver pod with
+  # the same name (naming conflict). Mounting this ConfigMap fixes the issue without
+  # requiring an image rebuild.
+  kubectl create configmap spark-fixed-entrypoint \
+    --from-literal=entrypoint.sh='#!/bin/bash
+set -e
+case "$1" in
+  driver)
+    shift
+    exec "${SPARK_HOME}/bin/spark-class" org.apache.spark.deploy.SparkSubmit \
+      --deploy-mode client "$@"
+    ;;
+  executor)
+    CMD=(
+      "${SPARK_HOME}/bin/spark-class"
+      "org.apache.spark.executor.CoarseGrainedExecutorBackend"
+      --driver-url "${SPARK_DRIVER_URL}"
+      --executor-id "${SPARK_EXECUTOR_ID}"
+      --cores "${SPARK_EXECUTOR_CORES}"
+      --app-id "${SPARK_APPLICATION_ID}"
+      --hostname "${SPARK_EXECUTOR_POD_IP}"
+      --resourceProfileId "${SPARK_RESOURCE_PROFILE_ID}"
+    )
+    exec "${CMD[@]}"
+    ;;
+  *)
+    exec "$@"
+    ;;
+esac
+' \
+    -n spark-jobs --context "$COMPUTE_CLUSTER" \
+    --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>&1 | grep -v "^$" || true
+
+  # spark: driver service account used by Spark driver pods to create executor pods.
+  kubectl apply --context "$COMPUTE_CLUSTER" -f - <<SPARK_DRIVER_RBAC 2>&1 | grep -v "^$" || true
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: spark
+  namespace: spark-jobs
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-driver
+  namespace: spark-jobs
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: spark-driver
+  namespace: spark-jobs
+subjects:
+  - kind: ServiceAccount
+    name: spark
+    namespace: spark-jobs
+roleRef:
+  kind: Role
+  name: spark-driver
+  apiGroup: rbac.authorization.k8s.io
+SPARK_DRIVER_RBAC
+
+  # airflow-spark-submitter: static-token SA used by SparkKubernetesOperator to submit
+  # SparkApplication CRDs from Airflow worker pods to the compute cluster.
+  kubectl apply --context "$COMPUTE_CLUSTER" -f - <<SPARK_SUBMITTER_RBAC 2>&1 | grep -v "^$" || true
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airflow-spark-submitter
+  namespace: spark-jobs
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: airflow-spark-submitter-token
+  namespace: spark-jobs
+  annotations:
+    kubernetes.io/service-account.name: airflow-spark-submitter
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: spark-submitter
+  namespace: spark-jobs
+rules:
+  - apiGroups: ["sparkoperator.k8s.io"]
+    resources: ["sparkapplications", "sparkapplications/status", "scheduledsparkapplications"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-spark-submitter
+  namespace: spark-jobs
+subjects:
+  - kind: ServiceAccount
+    name: airflow-spark-submitter
+    namespace: spark-jobs
+roleRef:
+  kind: Role
+  name: spark-submitter
+  apiGroup: rbac.authorization.k8s.io
+SPARK_SUBMITTER_RBAC
+
   helm upgrade --install spark-operator \
     "oci://${ACR}.azurecr.io/helm/spark-operator" \
     --version 2.5.0 \
@@ -1615,8 +1818,12 @@ MIGJOB
   echo "    Done"
 
   echo "  [7.2] cert-manager + Let's Encrypt issuer..."
-  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
-    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
+  _ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>&1)
+  if [[ ${#_ACR_TOKEN} -lt 50 ]]; then
+    echo "ERROR: ACR login failed (token length=${#_ACR_TOKEN}). Check ACR firewall / az login." >&2
+    exit 1
+  fi
+  echo "$_ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin
   helm upgrade --install cert-manager \
     "oci://${ACR}.azurecr.io/helm/cert-manager" \
     --version "v1.17.1" \
@@ -1639,13 +1846,75 @@ MIGJOB
   echo "  [7.4] Airflow..."
   az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
     | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
+  # Grant Airflow SA permission to read its own task pod logs (fallback when ADLS log write fails).
+  kubectl apply --context "$ORCH_CLUSTER" -f - <<'AIRFLOW_POD_RBAC' 2>&1 | grep -v "^$" || true
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-pod-reader
+  namespace: airflow
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-pod-reader
+  namespace: airflow
+subjects:
+  - kind: ServiceAccount
+    name: airflow
+    namespace: airflow
+roleRef:
+  kind: Role
+  name: airflow-pod-reader
+  apiGroup: rbac.authorization.k8s.io
+AIRFLOW_POD_RBAC
   # Apply dev DAG policy ConfigMap before Helm — policy plugin is mounted into pods.
   kubectl apply -f "${REPO_ROOT}/infra/helm/orchestration/airflow/forge-dev-policy-configmap.yaml" \
     --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
+  # forge-platform-config: provides FORGE_STORAGE_ACCOUNT to the dag-restore init container
+  # so it can pull DAG files from ADLS on pod startup. Created before helm so the ConfigMap
+  # exists when the dag-processor pod first starts. Use dry-run+apply for idempotency.
+  kubectl create configmap forge-platform-config \
+    --from-literal=FORGE_STORAGE_ACCOUNT="${ADLS_ACCOUNT}" \
+    -n airflow --context "$ORCH_CLUSTER" \
+    --dry-run=client -o yaml \
+    | kubectl apply -f - --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
   # Apply webserver_config.py ConfigMap — Airflow 3.x chart no longer auto-mounts
   # webserverConfig into the api-server pod; apply explicitly so FABAuthManager picks up OAuth.
   kubectl apply -f "${REPO_ROOT}/infra/helm/orchestration/airflow/webserver-config-configmap.yaml" \
     --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
+  # Upload platform Spark jobs to ADLS — these are consumed by ForgeDqGateOperator and
+  # other platform-level Spark tasks (not user jobs, which are uploaded by sync-jobs.sh).
+  echo "  [7.x] Uploading platform Spark jobs → ADLS code/spark/jobs/..."
+  for _pjob in "${REPO_ROOT}/orchestration/spark-jobs/"*.py; do
+    [[ -f "${_pjob}" ]] || continue
+    az storage blob upload \
+      --account-name "${ADLS_ACCOUNT}" \
+      --container-name code \
+      --name "spark/jobs/$(basename "${_pjob}")" \
+      --file "${_pjob}" \
+      --overwrite \
+      --auth-mode login \
+      --output none 2>/dev/null \
+      && echo "    ✓ $(basename "${_pjob}") → code/spark/jobs/" \
+      || echo "    WARN: failed to upload $(basename "${_pjob}") — check ADLS permissions"
+  done
+  # forge-airflow-plugin ConfigMap — shadows /opt/airflow/plugins/forge_airflow/operators.py
+  # in all Airflow pods via volumeMount in values.yaml. Created from the repo source so
+  # plugin updates propagate within ~60s without an image rebuild. Applied before helm
+  # so the ConfigMap exists when pods start.
+  kubectl create namespace airflow --context "$ORCH_CLUSTER" --dry-run=client -o yaml \
+    | kubectl apply -f - --context "$ORCH_CLUSTER" 2>/dev/null || true
+  kubectl create configmap forge-airflow-plugin \
+    --from-file=operators.py="${REPO_ROOT}/orchestration/airflow/plugins/forge_airflow/operators.py" \
+    -n airflow --context "$ORCH_CLUSTER" \
+    --dry-run=client -o yaml \
+    | kubectl apply -f - --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
+  echo "  ✓ forge-airflow-plugin ConfigMap applied"
   # git-sync image must come from ACR — Azure Policy blocks registry.k8s.io.
   # Import is done in Phase 5 (_import_to_acr). Override image here.
   helm upgrade --install airflow \
@@ -1660,11 +1929,14 @@ MIGJOB
     --set "dags.gitSync.branch=${GIT_BRANCH}" \
     --set "images.gitSync.repository=${ACR}.azurecr.io/git-sync" \
     --set "images.gitSync.tag=v4.4.2" \
-    --set "ingress.web.host=${AIRFLOW_PUBLIC_HOST}" \
+    --set "ingress.apiServer.host=${AIRFLOW_PUBLIC_HOST}" \
     ${AIRFLOW_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${AIRFLOW_WI_CLIENT_ID}"} \
-    --wait --timeout 10m
+    ${AIRFLOW_WI_CLIENT_ID:+--set "env[100].name=AZURE_CLIENT_ID" --set "env[100].value=${AIRFLOW_WI_CLIENT_ID}"} \
+    --set "dagProcessor.extraInitContainers[0].image=${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}" \
+    --wait --timeout 20m
 
   # Create portal-api-svc local user for REST API auth (idempotent).
+  # Role: Op — required to trigger DAG runs via /api/v2/dags/{id}/dagRuns.
   # Password is stored in Key Vault and injected into portal-api at deploy time.
   echo "  [7.4.1] Airflow portal service user..."
   _AIRFLOW_SVC_PWD=$(az keyvault secret show --vault-name "$KV_NAME" \
@@ -1675,14 +1947,23 @@ MIGJOB
       --name airflow-portal-api-password --value "$_AIRFLOW_SVC_PWD" \
       --output none 2>/dev/null || true
   fi
+  # Wait up to 5 extra minutes for api-server to be ready (catches slow pod starts after helm).
+  echo "    Waiting for airflow-api-server to be ready..."
+  kubectl rollout status deployment/airflow-api-server -n airflow \
+    --context "$ORCH_CLUSTER" --timeout=5m 2>/dev/null || true
+  # Upsert: delete existing user first (idempotent), then create fresh.
+  kubectl exec -n airflow --context "$ORCH_CLUSTER" \
+    deploy/airflow-api-server -- \
+    airflow users delete --username portal-api-svc 2>/dev/null || true
   kubectl exec -n airflow --context "$ORCH_CLUSTER" \
     deploy/airflow-api-server -- \
     airflow users create \
       --username portal-api-svc \
       --password "$_AIRFLOW_SVC_PWD" \
-      --role Viewer \
+      --role Op \
       --email portal-api@forge.internal \
-      --firstname Portal --lastname API 2>/dev/null || true
+      --firstname Portal --lastname API \
+    || echo "  WARN: portal-api-svc user creation failed — re-run deploy to retry."
   echo "    Done"
 
   echo "  [7.5] Portal..."

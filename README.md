@@ -164,50 +164,72 @@ df.show()
 
 ## Developer Guide
 
-### Writing a Spark Job
+### Writing a Pipeline
 
-Place your Spark application under `compute/spark/jobs/`. Submit via `SparkApplication` CRD:
+Pipelines are defined in a single TypeScript manifest (`.forge.ts`). The CLI generates the Spark job, Airflow DAG, and DQ rules from that manifest.
 
-```yaml
-apiVersion: sparkoperator.k8s.io/v1beta2
-kind: SparkApplication
-metadata:
-  name: my-job
-  namespace: spark-jobs
-spec:
-  type: Python
-  pythonVersion: "3"
-  mode: cluster
-  image: "forgeacr{alias}.azurecr.io/spark:4.1.1"
-  mainApplicationFile: "abfss://code@<account>.dfs.core.windows.net/jobs/my_job.py"
+```bash
+# 1. Create a manifest stub
+forge init --name my_job --layer bronze
+
+# 2. Edit the manifest: src/{project}/manifests/my_job.forge.ts
+
+# 3. Generate the job, DAG, and DQ rules
+forge generate --job my_job --manifest-dir src/{project}/manifests --dir .
+
+# 4. Fill in business logic between FORGE:BUSINESS_LOGIC:START / END
+
+# 5. Deploy
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job my_job
 ```
 
-### Writing an Airflow DAG
+`sync-jobs.sh` uploads the Spark job to `ADLS code/spark/jobs/`, the DQ rules to `ADLS code/dq/rules/`, and the DAG file is picked up by git-sync within 30 seconds.
 
-Drop your DAG file into `orchestration/airflow/dags/`. Use the built-in templates:
+### How DAGs are generated
+
+Each manifest produces a DAG that uses platform operators — DAG authors never write SparkApplication YAML:
 
 ```python
-from dags.ingestion.raw_ingestion_template import build_raw_ingestion_dag
+from forge_airflow.operators import ForgeSparkOperator, ForgeDqGateOperator
 
-dag = build_raw_ingestion_dag(
-    dag_id="ingest_sales_orders",
-    source_config={"type": "blob", "path": "abfss://bronze@.../sales/orders/"},
-    schedule="@daily",
+ingest = ForgeSparkOperator(
+    task_id="ingest",
+    job="my_job_bronze",       # matches Spark .py file name in ADLS
+    layer="bronze",
+    env_vars={"PARTITION_DATE": "{{ ds }}"},
+)
+
+dq_gate = ForgeDqGateOperator(
+    task_id="dq_gate",
+    job="my_job_bronze",       # reads dq/rules/my_job_bronze.yaml from ADLS
+    layer="bronze",
+    table="bronze.my_job",
+)
+
+ingest >> dq_gate
+```
+
+`ForgeSparkOperator` reads platform config (`spark_image`, `storage_account`, `aad_tenant_id`, `spark_mi_client_id`) from Airflow Variables at parse time and builds the full `SparkApplication` YAML internally.
+
+### Cross-DAG dependencies
+
+Downstream DAGs declare `triggeredBy` in the manifest instead of the upstream DAG pushing triggers. The generated DAG uses `ExternalTaskSensor`:
+
+```python
+# silver DAG — waits for bronze to complete each day
+wait_for_bronze = ExternalTaskSensor(
+    task_id="wait_for_bronze",
+    external_dag_id="my_job_bronze_dag",
+    external_task_id=None,          # waits for the entire DAG run
+    mode="reschedule",
+    timeout=timedelta(hours=8),
+    poke_interval=120,
 )
 ```
 
-### Running Data Quality Checks
+### Data Quality
 
-```python
-from forge.dq.sdk import DQRunner, load_ruleset
-
-ruleset = load_ruleset("orchestration/dq/rules/sales_orders.yaml")
-runner = DQRunner(spark=spark, ruleset=ruleset)
-report = runner.run(df)
-
-if not report.passed:
-    raise ValueError(f"DQ failed: {report.summary}")
-```
+DQ rules live in `dq/{name}.yaml` (generated once, then yours to extend). The DQ gate runs as a dedicated Spark job (`forge_dq_gate.py`) via `ForgeDqGateOperator` — it reads the rules from ADLS at runtime. `CRITICAL` violations raise `DQCriticalFailureError` and fail the Airflow task.
 
 ---
 

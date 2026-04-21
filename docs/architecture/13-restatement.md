@@ -74,43 +74,35 @@ Bronze does **not** use trackers. Bronze is append-only raw data — reprocessin
 
 ### 2.4 How Pipelines Use Trackers
 
-At the start of each Airflow task that writes a partition, the pipeline checks for the tracker:
+Tracker checking and writing is handled automatically by the `ForgeJob` base class in `forge_sdk`. Data engineers do not call tracker APIs directly in generated pipelines.
 
-```python
-from forge.sdk.tracker import TrackerClient
+At job startup, `ForgeJob.setup()` checks for the tracker file in ADLS:
 
-tracker = TrackerClient()
-
-@task
-def transform_silver(execution_date: str, **context):
-    partition = f"year={execution_date[:4]}/month={execution_date[5:7]}/day={execution_date[8:10]}/hour=00"
-    dataset   = "sales.orders_v1"
-
-    # Check tracker — skip if already processed
-    if tracker.exists(layer="silver", dataset=dataset, asset_version="v1", partition=partition):
-        log.info("Tracker found — partition already processed, skipping.")
-        return  # idempotent exit
-
-    # --- do the work ---
-    df = spark.read.format("delta").load(f"abfss://bronze@{ACCOUNT}.dfs.core.windows.net/sales/orders/v1/year={partition[:4]}/month={partition[5:7]}/day={partition[8:10]}/hour=00/")
-    df_silver = apply_transformations(df)
-    df_silver.write.mode("overwrite").parquet(
-        f"abfss://silver@{ACCOUNT}.dfs.core.windows.net/sales/orders/{partition}/"
-    )
-
-    # Write tracker only after successful write
-    tracker.write(
-        layer="silver",
-        dataset=dataset,
-        asset_version="v1",
-        partition=partition,
-        row_count=df_silver.count(),
-        output_size_bytes=get_partition_size(partition),
-        schema_version="v1",
-    )
+```
+abfss://{layer}@{storage}.dfs.core.windows.net/{table_path}/_tracker/{date_key}/tracker.json
 ```
 
-**Key rule:** The tracker is written **last**, after the data write completes. If the task fails mid-write, no tracker is written. The next run will overwrite the partial data and write a clean tracker.
+- **Tracker found** → `SystemExit(0)` — the task exits cleanly with success. Airflow marks it done. No reprocessing.
+- **Tracker absent** → the job proceeds to read, transform, and write.
+
+After the data write completes, `ForgeJob` writes `tracker.json`:
+
+```json
+{
+  "version": "v1",
+  "job": "NycTaxiSilver",
+  "table": "silver.nyctaxi",
+  "partition": { "date": "01_04_2026_00" },
+  "status": "success",
+  "rows_written": 847291,
+  "completed_at": "2026-04-01T03:12:45+00:00",
+  "forge_env": "dev"
+}
+```
+
+**Key rule:** The tracker is written **last**, after the Delta write completes and is committed. If the task fails mid-write, no tracker is written. The next run overwrites the partial data and writes a clean tracker.
+
+**Restatement:** Triggering a restatement from the portal deletes the tracker file for the target partition(s). On the next Airflow run (or a triggered backfill), the job finds no tracker and reprocesses the partition. There is no `RESTATE` env var — tracker presence is the sole gate.
 
 ---
 
@@ -500,20 +492,20 @@ missing: list[str] = tracker.list_missing(
 
 ### 7.2 Airflow Operator Integration
 
-For convenience, the `ForgeSparkOperator` and `ForgeTransformOperator` in the SDK handle tracker checking and writing automatically when `use_tracker=True` (the default):
+`ForgeSparkOperator` (from `forge_airflow.operators`) submits the Spark job as a `SparkApplication` CRD. The tracker check and write are handled **inside the Spark job itself** (`ForgeJob.setup()` and `ForgeJob.execute()`) — the operator has no awareness of tracker state. The operator succeeds when the `SparkApplication` reaches `COMPLETED` status.
 
 ```python
-from forge.sdk.operators import ForgeTransformOperator
+from forge_airflow.operators import ForgeSparkOperator
 
-transform_silver = ForgeTransformOperator(
+transform_silver = ForgeSparkOperator(
     task_id="transform_silver",
-    dataset="sales.orders",
+    job="sales_orders_silver",     # .py file in ADLS code/spark/jobs/
     layer="silver",
-    transform_fn="jobs.sales.orders.transform_silver",
-    use_tracker=True,        # default — skip if tracker present, write on success
-    schema_version="v3",
+    env_vars={"PARTITION_DATE": "{{ ds }}", "PARTITION_HOUR": "0"},
 )
 ```
+
+If the tracker already exists when the job starts, the Spark job exits with `SystemExit(0)` — the `SparkApplication` completes successfully, and the Airflow task is marked done without reprocessing data.
 
 ---
 

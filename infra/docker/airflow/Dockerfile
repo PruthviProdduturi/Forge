@@ -51,8 +51,10 @@ USER airflow
 
 # ----------------------------------------------------------------------------
 # Copy requirements.txt into image
+# Build context = repo root (consistent with spark image).
+# All paths below are relative to the repo root.
 # ----------------------------------------------------------------------------
-COPY --chown=airflow:root requirements.txt /opt/airflow/requirements.txt
+COPY --chown=airflow:root infra/docker/airflow/requirements.txt /opt/airflow/requirements.txt
 
 # ----------------------------------------------------------------------------
 # Install providers and dependencies
@@ -83,7 +85,7 @@ RUN pip install --no-cache-dir \
 #   mkdir -p infra/docker/airflow/wheels
 #   touch infra/docker/airflow/wheels/.gitkeep
 # ----------------------------------------------------------------------------
-COPY --chown=airflow:root wheels/ /opt/airflow/wheels/
+COPY --chown=airflow:root infra/docker/airflow/wheels/ /opt/airflow/wheels/
 
 RUN WHEELS_DIR="/opt/airflow/wheels"; \
     \
@@ -104,12 +106,13 @@ RUN WHEELS_DIR="/opt/airflow/wheels"; \
     fi
 
 # ----------------------------------------------------------------------------
-# Copy DAGs and plugins that are baked into the image (platform-level only).
-# Domain-specific DAGs are mounted via the ADLS-backed git-sync sidecar at
-# runtime — they are NOT baked into this image.
+# Copy platform-level plugins baked into the image.
+# orchestration/airflow/plugins/ is the single source of truth for:
+#   - forge_airflow/  (ForgeSparkOperator, ForgeDqGateOperator)
+#   - forge_dev_policy.py (dev DAG guardrails, no-op in prod)
+# Domain-specific DAGs are delivered at runtime via git-sync — NOT baked in.
 # ----------------------------------------------------------------------------
-COPY --chown=airflow:root dags/   /opt/airflow/dags/platform/
-COPY --chown=airflow:root plugins/ /opt/airflow/plugins/
+COPY --chown=airflow:root orchestration/airflow/plugins/ /opt/airflow/plugins/
 
 # ----------------------------------------------------------------------------
 # Environment configuration

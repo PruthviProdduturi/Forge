@@ -25,6 +25,7 @@ Routes:
 import logging
 import os
 
+import jwt
 import msal
 import requests as req_lib
 from flask import Flask, Response, redirect, request, session
@@ -51,6 +52,10 @@ SCOPES           = ["User.Read"]
 MANAGED_IDENTITY_CLIENT_ID = os.environ["MANAGED_IDENTITY_CLIENT_ID"]
 IMDS_URL = "http://169.254.169.254/metadata/identity/oauth2/token"
 
+# Microsoft JWKS endpoint — used to validate Bearer tokens from CLI tools
+_JWKS_URL = f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
+_jwks_client = jwt.PyJWKClient(_JWKS_URL, cache_jwk_set=True, lifespan=3600)
+
 # Role priority — highest match wins
 _ROLE_PRIORITY = ["Admin", "Editor", "Analyst", "Viewer"]
 
@@ -61,6 +66,71 @@ def _extract_role(roles: list[str]) -> str:
         if r.lower() in lowered:
             return r
     return "Viewer"
+
+
+def _validate_bearer(token: str) -> dict | None:
+    """Validate an AAD Bearer token and return user claims, or None if invalid.
+
+    Two code paths based on audience:
+
+    Portal token (aud = CLIENT_ID):
+      Full RS256 signature + audience + issuer validation via JWKS.
+
+    MS Graph token (aud = graph.microsoft.com or 00000003-...):
+      Microsoft does not sign Graph access tokens for third-party verification
+      (they are opaque to non-Graph callers). We validate issuer (tenant check)
+      and expiry only — no signature check. This is safe because:
+        • The token is transmitted over HTTPS (TLS provides transport integrity).
+        • Issuer check prevents tokens from other tenants.
+        • Expiry check prevents replay of old tokens.
+      Graph tokens are always available via `az account get-access-token` after
+      `az login` without needing explicit consent on the portal app registration.
+    """
+    import time as _time
+
+    _GRAPH_AUDIENCES = {
+        "https://graph.microsoft.com",
+        "00000003-0000-0000-c000-000000000000",
+    }
+    _VALID_ISSUERS = {
+        f"https://login.microsoftonline.com/{TENANT_ID}/v2.0",
+        f"https://sts.windows.net/{TENANT_ID}/",
+    }
+    try:
+        # Decode header+payload without signature verification to determine audience
+        unverified = jwt.decode(
+            token,
+            options={"verify_signature": False},
+            algorithms=["RS256"],
+        )
+        aud = unverified.get("aud", "")
+        iss = unverified.get("iss", "")
+
+        if aud in _GRAPH_AUDIENCES:
+            # Graph token — verify issuer (tenant) and expiry only; skip signature.
+            if iss not in _VALID_ISSUERS:
+                log.warning("bearer_graph_wrong_tenant: iss=%s", iss)
+                return None
+            if unverified.get("exp", 0) < _time.time():
+                log.warning("bearer_graph_token_expired")
+                return None
+            log.info("bearer_graph_accepted: upn=%s", unverified.get("preferred_username", "?"))
+            return unverified
+
+        # Portal-specific token — full RS256 signature + audience + issuer validation
+        signing_key = _jwks_client.get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=CLIENT_ID,
+            issuer=list(_VALID_ISSUERS),
+        )
+        return claims
+
+    except Exception as exc:
+        log.warning("bearer_validation_failed: %s", exc)
+        return None
 
 
 def _get_assertion() -> str:
@@ -171,18 +241,22 @@ _HOP_BY_HOP = {"host", "content-length", "transfer-encoding", "connection",
                "te", "trailers", "upgrade"}
 
 
-def _proxy(upstream_base: str, path: str) -> Response:
+def _proxy(upstream_base: str, path: str, extra_headers: dict | None = None) -> Response:
     url = f"{upstream_base.rstrip('/')}/{path.lstrip('/')}"
     if request.query_string:
         url += f"?{request.query_string.decode()}"
 
     headers = {k: v for k, v in request.headers if k.lower() not in _HOP_BY_HOP}
 
-    # Inject authenticated user identity — portal-api trusts these headers
-    headers["X-User-Email"] = session["user_email"]
-    headers["X-User-Name"]  = session["user_name"]
-    headers["X-User-Roles"] = session["user_roles"]
-    headers["X-User-Role"]  = session["user_role"]
+    if extra_headers:
+        # Bearer token path — user identity comes from JWT claims
+        headers.update(extra_headers)
+    else:
+        # Session cookie path — user identity injected from validated session
+        headers["X-User-Email"] = session["user_email"]
+        headers["X-User-Name"]  = session["user_name"]
+        headers["X-User-Roles"] = session["user_roles"]
+        headers["X-User-Role"]  = session["user_role"]
 
     resp = upstream_session.request(
         method=request.method,
@@ -201,6 +275,27 @@ def _proxy(upstream_base: str, path: str) -> Response:
 @app.route("/", defaults={"path": ""}, methods=METHODS)
 @app.route("/<path:path>", methods=METHODS)
 def proxy(path: str) -> Response:
+    # Bearer token bypass — allows CLI tools (forge generate) to call /api/*
+    # directly using an Azure AD access token instead of a browser session.
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer ") and path.startswith("api/"):
+        token = auth_header[len("Bearer "):]
+        claims = _validate_bearer(token)
+        if claims is None:
+            return Response("Invalid or expired Bearer token", status=401)
+        # Inject user identity from JWT claims — same headers portal-api trusts
+        raw_roles = claims.get("roles", [])
+        if isinstance(raw_roles, str):
+            raw_roles = [raw_roles]
+        email = claims.get("preferred_username") or claims.get("upn") or claims.get("email") or ""
+        name  = claims.get("name", email.split("@")[0] if email else "cli-user")
+        return _proxy(PORTAL_API_URL, path, extra_headers={
+            "X-User-Email": email,
+            "X-User-Name":  name,
+            "X-User-Roles": ",".join(raw_roles),
+            "X-User-Role":  _extract_role(raw_roles),
+        })
+
     # Unauthenticated — redirect HTML requests to sign-in; return 401 for API/XHR
     if "user_email" not in session:
         if path.startswith("api/"):

@@ -15,7 +15,7 @@ src/dq/rules/my_job.yaml            ← generated once, then yours to extend
 
 On re-generation, the business logic block inside `.py` is **preserved**. Everything else is regenerated from the manifest.
 
-The Spark job calls into `forge_sdk` and `forge_dq` at runtime. These are distributed to every executor automatically via `spark.submit.pyFiles: forge_lib.zip` — no image rebuild needed when the SDK changes.
+The Spark job calls into `forge_sdk` and `forge_dq` at runtime. These libraries are baked into the Spark image at build time. SDK updates require an image rebuild and re-deploy via `forge-up.sh --skip-infra`.
 
 ---
 
@@ -70,6 +70,8 @@ forge generate --job nyc_taxi_bronze --manifest-dir src/spark/jobs --dir . --ver
 | `{name}_dag.py` | `src/airflow/dags/{ingestion\|transformation}/{name}_dag.py` | Yes — fully managed |
 | `{name}.yaml` | `src/dq/rules/{name}.yaml` | No — written once, then yours |
 
+The generated DAG imports `ForgeSparkOperator` and `ForgeDqGateOperator` from the `forge_airflow` plugin. If `triggeredBy` is set, an `ExternalTaskSensor` is prepended. If `endDate` is set, `end_date=datetime(...)` is written into the `DAG(...)` constructor. No `SparkApplication` YAML appears in the DAG file — the operator builds it internally from Airflow Variables and manifest parameters.
+
 ---
 
 ### `forge generate --check` — CI gate
@@ -103,9 +105,12 @@ export default defineJob({
   layer: "silver",                    // bronze | silver | gold
   description: "Clean NYC taxi trips",
 
-  schedule: "0 0 1 * *",             // cron — omit if triggered by upstream
-  triggeredBy: "nyc_taxi_bronze",    // upstream DAG id
-  triggers: ["nyc_taxi_gold"],       // DAGs to trigger on success
+  schedule: "0 2 * * *",             // cron — all layers typically share the same schedule
+  triggeredBy: "nyc_taxi_bronze",    // upstream DAG id → ExternalTaskSensor generated
+  // triggers field removed — consumers declare triggeredBy on their own manifests
+
+  endDate: "2024-12-31",             // YYYY-MM-DD — stops scheduling after this date
+                                      // required for bounded backfills; omit for ongoing pipelines
 
   // ── Partition ──────────────────────────────────────────────────────────
   // Bronze  →  __year / __month / __day / __hour  (4 integer columns)
@@ -236,6 +241,8 @@ abfss://silver@{storage}.dfs.core.windows.net/{table}/_tracker/01_02_1991_00/tra
 ```
 
 The job also guards against empty partitions — if `df.count() == 0` after the business logic block, the write and tracker are skipped and the job exits cleanly (no failure, no empty Delta partition).
+
+`setup()` checks the tracker before running. If the tracker exists, the job exits cleanly — making Airflow retries and backfill re-runs safe. To restate a partition, delete the tracker file from ADLS and re-trigger the Airflow run. The `RESTATE` env var is not used; restatement is managed via the portal or by deleting the tracker directly.
 
 ---
 

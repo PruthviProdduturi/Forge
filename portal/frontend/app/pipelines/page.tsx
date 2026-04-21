@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
 import { useAuth } from "../../auth/useAuth";
+import { useForgeEnv } from "../../hooks/useForgeEnv";
 import { apiFetch } from "../../utils/api";
 import { PageLayout } from "../../components/PageLayout";
 import { ForgeLoader } from "../../components/ForgeLoader";
@@ -15,6 +17,7 @@ interface Pipeline {
   is_paused: boolean;
   last_run_state: string | null;
   last_run_at: string | null;
+  last_run_id: string | null;
   next_run_at: string | null;
   schedule: string | null;
   tags: string[];
@@ -51,20 +54,30 @@ function StateBadge({ state }: { state: string | null }) {
 
 export default function PipelinesPage() {
   const { getToken, role } = useAuth();
+  const { isDev } = useForgeEnv();
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
+  const [myDagIds, setMyDagIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [activeStatus, setActiveStatus] = useState<"active" | "paused" | "failed" | null>(null);
+  const [showMine, setShowMine] = useState(false);
   const [triggering, setTriggering] = useState<string | null>(null);
   const [triggerMsg, setTriggerMsg] = useState<{ dag_id: string; ok: boolean; msg: string } | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [togglingPause, setTogglingPause] = useState<string | null>(null);
+  const [stopConfirm, setStopConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetch<Pipeline[]>("/api/pipelines", getToken)
       .then(setPipelines)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+    apiFetch<string[]>("/api/pipelines/mine", getToken)
+      .then(setMyDagIds)
+      .catch(() => setMyDagIds([]));
   }, [getToken]);
 
   const canTrigger = role === "Admin" || role === "Editor";
@@ -76,6 +89,7 @@ export default function PipelinesPage() {
 
   const filtered = useMemo(() => {
     let list = pipelines;
+    if (showMine) list = list.filter(p => myDagIds.includes(p.dag_id));
     if (activeTag) list = list.filter(p => p.tags.includes(activeTag));
     if (activeStatus === "active") list = list.filter(p => p.is_active && !p.is_paused);
     if (activeStatus === "paused") list = list.filter(p => p.is_paused);
@@ -87,17 +101,19 @@ export default function PipelinesPage() {
         p.description.toLowerCase().includes(q) ||
         p.tags.some(t => t.toLowerCase().includes(q))
     );
-  }, [pipelines, search, activeTag, activeStatus]);
+  }, [pipelines, myDagIds, search, activeTag, activeStatus, showMine]);
 
 
-  async function handleTrigger(dag_id: string) {
+  async function handleTrigger(dag_id: string, force = false) {
     setTriggering(dag_id);
     try {
       await apiFetch(`/api/pipelines/${dag_id}/trigger`, getToken, {
         method: "POST",
-        body: JSON.stringify({ conf: {} }),
+        body: JSON.stringify({ conf: {}, force }),
       });
-      setTriggerMsg({ dag_id, ok: true, msg: "Triggered successfully" });
+      const msg = force ? "Active run cancelled — new run triggered" : "Triggered successfully";
+      setTriggerMsg({ dag_id, ok: true, msg });
+      if (force) setPipelines(prev => prev.map(p => p.dag_id === dag_id ? { ...p, last_run_state: "queued" } : p));
     } catch (e: unknown) {
       setTriggerMsg({ dag_id, ok: false, msg: e instanceof Error ? e.message : "Trigger failed" });
     } finally {
@@ -106,10 +122,41 @@ export default function PipelinesPage() {
     }
   }
 
+  async function handleDelete(dag_id: string) {
+    setDeleting(dag_id);
+    setDeleteConfirm(null);
+    try {
+      await apiFetch(`/api/pipelines/${dag_id}`, getToken, { method: "DELETE" });
+      setPipelines(prev => prev.filter(p => p.dag_id !== dag_id));
+      setMyDagIds(prev => prev.filter(id => id !== dag_id));
+      setTriggerMsg({ dag_id, ok: true, msg: "Deleted successfully" });
+    } catch (e: unknown) {
+      setTriggerMsg({ dag_id, ok: false, msg: e instanceof Error ? e.message : "Delete failed" });
+    } finally {
+      setDeleting(null);
+      setTimeout(() => setTriggerMsg(null), 4000);
+    }
+  }
+
+  async function handlePauseToggle(dag_id: string, currently_paused: boolean) {
+    setTogglingPause(dag_id);
+    const action = currently_paused ? "unpause" : "pause";
+    try {
+      await apiFetch(`/api/pipelines/${dag_id}/${action}`, getToken, { method: "POST" });
+      setPipelines(prev => prev.map(p => p.dag_id === dag_id ? { ...p, is_paused: !currently_paused, is_active: currently_paused } : p));
+    } catch (e: unknown) {
+      setTriggerMsg({ dag_id, ok: false, msg: e instanceof Error ? e.message : `${action} failed` });
+      setTimeout(() => setTriggerMsg(null), 4000);
+    } finally {
+      setTogglingPause(null);
+    }
+  }
+
   const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
       {[
         { label: "Total", value: loading ? "—" : pipelines.length, icon: "fa-layer-group" },
+        { label: "Mine", value: loading ? "—" : myDagIds.length, icon: "fa-user" },
         { label: "Active", value: loading ? "—" : pipelines.filter(p => p.is_active).length, icon: "fa-circle-play" },
         { label: "Paused", value: loading ? "—" : pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle" },
         { label: "Failed", value: loading ? "—" : pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark" },
@@ -137,7 +184,11 @@ export default function PipelinesPage() {
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
         {/* Unified filter bar */}
         <div style={{ display: "flex", gap: 4, background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: 4, alignItems: "center" }}>
-          <button onClick={() => { setActiveTag(null); setActiveStatus(null); }} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: activeTag === null && activeStatus === null ? "var(--forge-primary)" : "transparent", color: activeTag === null && activeStatus === null ? "#fff" : "#64748b" }}>All</button>
+          <button onClick={() => { setActiveTag(null); setActiveStatus(null); setShowMine(false); }} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: !showMine && activeTag === null && activeStatus === null ? "var(--forge-primary)" : "transparent", color: !showMine && activeTag === null && activeStatus === null ? "#fff" : "#64748b" }}>All</button>
+          <button onClick={() => setShowMine(!showMine)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, background: showMine ? "var(--forge-primary)" : "transparent", color: showMine ? "#fff" : "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
+            <i className="fas fa-user" style={{ fontSize: 11 }} />
+            Mine
+          </button>
           {allTags.map(tag => (
             <button key={tag} onClick={() => setActiveTag(activeTag === tag ? null : tag)} style={{ padding: "5px 14px", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, textTransform: "capitalize", background: activeTag === tag ? "var(--forge-primary)" : "transparent", color: activeTag === tag ? "#fff" : "#64748b" }}>{tag}</button>
           ))}
@@ -227,7 +278,10 @@ export default function PipelinesPage() {
                         flexShrink: 0,
                       }} />
                       <div>
-                        <div style={{ fontWeight: 600, color: "#0f172a", fontSize: 14 }}>{p.dag_id}</div>
+                        <Link href={`/pipelines/${p.dag_id}`} style={{ fontWeight: 600, color: "#0f172a", fontSize: 14, textDecoration: "none" }}
+                          onMouseEnter={e => (e.currentTarget as HTMLAnchorElement).style.color = "var(--forge-primary)"}
+                          onMouseLeave={e => (e.currentTarget as HTMLAnchorElement).style.color = "#0f172a"}
+                        >{p.dag_id}</Link>
                         {p.description && (
                           <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 1 }}>{p.description}</div>
                         )}
@@ -251,21 +305,104 @@ export default function PipelinesPage() {
                     )}
                   </td>
                   <td style={{ padding: "12px 16px" }}>
-                    {canTrigger && (
-                      <button
-                        onClick={() => handleTrigger(p.dag_id)}
-                        disabled={triggering === p.dag_id}
-                        style={{
-                          padding: "5px 12px", borderRadius: 7, border: `1px solid ${ACCENT}`,
-                          background: triggering === p.dag_id ? "#e0f2fe" : "transparent",
-                          color: ACCENT, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                          display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
-                        }}
-                      >
-                        <i className={`fas ${triggering === p.dag_id ? "fa-spinner fa-spin" : "fa-play"}`} style={{ fontSize: 10 }} />
-                        Trigger
-                      </button>
-                    )}
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {canTrigger && isDev && (p.last_run_state === "running" || p.last_run_state === "queued") ? (
+                        /* Active run — Retrigger (cancel existing + start fresh) — dev only */
+                        stopConfirm === p.dag_id ? (
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            <span style={{ fontSize: 11, color: "#d97706", fontWeight: 600 }}>Cancel & retrigger?</span>
+                            <button
+                              onClick={() => { setStopConfirm(null); handleTrigger(p.dag_id, true); }}
+                              disabled={triggering === p.dag_id}
+                              style={{ padding: "4px 10px", borderRadius: 7, border: "1px solid #f59e0b", background: "#fef3c7", color: "#d97706", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                            >
+                              {triggering === p.dag_id ? <i className="fas fa-spinner fa-spin" style={{ fontSize: 10 }} /> : "Yes"}
+                            </button>
+                            <button onClick={() => setStopConfirm(null)} style={{ padding: "4px 10px", borderRadius: 7, border: "1px solid #e2e8f0", background: "transparent", color: "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>No</button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setStopConfirm(p.dag_id)}
+                            style={{
+                              padding: "5px 12px", borderRadius: 7, border: "1px solid #f59e0b",
+                              background: "#fef3c7", color: "#d97706", fontSize: 12, fontWeight: 600,
+                              cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                            }}
+                            title="Cancel active run and trigger a fresh run"
+                          >
+                            <i className="fas fa-rotate-right" style={{ fontSize: 10 }} />
+                            Retrigger
+                          </button>
+                        )
+                      ) : canTrigger ? (
+                        <button
+                          onClick={() => handleTrigger(p.dag_id)}
+                          disabled={triggering === p.dag_id}
+                          style={{
+                            padding: "5px 12px", borderRadius: 7, border: `1px solid ${ACCENT}`,
+                            background: triggering === p.dag_id ? "#e0f2fe" : "transparent",
+                            color: ACCENT, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                            display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
+                          }}
+                        >
+                          <i className={`fas ${triggering === p.dag_id ? "fa-spinner fa-spin" : "fa-play"}`} style={{ fontSize: 10 }} />
+                          Trigger
+                        </button>
+                      ) : null}
+                      {canTrigger && (
+                        <button
+                          onClick={() => handlePauseToggle(p.dag_id, p.is_paused)}
+                          disabled={togglingPause === p.dag_id}
+                          title={p.is_paused ? "Unpause DAG" : "Pause DAG"}
+                          style={{
+                            padding: "5px 10px", borderRadius: 7,
+                            border: `1px solid ${p.is_paused ? "#e2e8f0" : "#e2e8f0"}`,
+                            background: "transparent", color: p.is_paused ? "#16a34a" : "#94a3b8",
+                            fontSize: 12, fontWeight: 600, cursor: "pointer",
+                            display: "flex", alignItems: "center", gap: 5,
+                          }}
+                        >
+                          <i className={`fas ${togglingPause === p.dag_id ? "fa-spinner fa-spin" : p.is_paused ? "fa-play-circle" : "fa-pause-circle"}`} style={{ fontSize: 11 }} />
+                        </button>
+                      )}
+                      {canTrigger && isDev && deleteConfirm === p.dag_id ? (
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>Sure?</span>
+                          <button
+                            onClick={() => handleDelete(p.dag_id)}
+                            disabled={deleting === p.dag_id}
+                            style={{
+                              padding: "4px 10px", borderRadius: 7, border: "1px solid #dc2626",
+                              background: "#fee2e2", color: "#dc2626", fontSize: 12, fontWeight: 600,
+                              cursor: "pointer", whiteSpace: "nowrap",
+                            }}
+                          >
+                            {deleting === p.dag_id ? <i className="fas fa-spinner fa-spin" style={{ fontSize: 10 }} /> : "Yes"}
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirm(null)}
+                            style={{
+                              padding: "4px 10px", borderRadius: 7, border: "1px solid #e2e8f0",
+                              background: "transparent", color: "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer",
+                            }}
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : canTrigger && isDev ? (
+                        <button
+                          onClick={() => setDeleteConfirm(p.dag_id)}
+                          style={{
+                            padding: "5px 10px", borderRadius: 7, border: "1px solid #fca5a5",
+                            background: "transparent", color: "#dc2626", fontSize: 12, fontWeight: 600,
+                            cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+                          }}
+                          title="Delete pipeline (dev only)"
+                        >
+                          <i className="fas fa-trash" style={{ fontSize: 10 }} />
+                        </button>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}

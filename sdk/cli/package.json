@@ -5,8 +5,8 @@
   "type": "module",
   "bin": { "forge": "./dist/index.js" },
   "exports": {
-    ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    ".": "./dist/index.js",
+    "./schema": "./dist/schema.js"
   },
   "scripts": {
     "build": "tsc",

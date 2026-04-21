@@ -140,7 +140,11 @@ _kv_assign() {
 
 # Fetch platform admin group from parameters file
 _PARAMS_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../bicep/environments/${ENVIRONMENT}/${ENVIRONMENT}.parameters.json"
-_ADMIN_GROUP=$(python3 -c "import json,sys; p=json.load(open('${_PARAMS_FILE}')); print(p.get('parameters',{}).get('platformAdminGroupObjectId',{}).get('value',''))" 2>/dev/null || echo "")
+# Extract platform admin group — try platformAdminGroupObjectId first, then adminGroupObjectIds[0]
+_ADMIN_GROUP=$(grep '"platformAdminGroupObjectId"' "${_PARAMS_FILE}" | grep -o '[0-9a-f-]\{36\}' | head -1 || true)
+if [[ -z "$_ADMIN_GROUP" ]]; then
+  _ADMIN_GROUP=$(grep '"adminGroupObjectIds"' "${_PARAMS_FILE}" | grep -o '[0-9a-f-]\{36\}' | head -1 || true)
+fi
 
 _kv_assign "$_ADMIN_GROUP" "$_KV_SECRETS_OFFICER" "Group" "platform admin — Secrets Officer"
 _kv_assign "$_ADMIN_GROUP" "$_KV_CRYPTO_OFFICER"  "Group" "platform admin — Crypto Officer"

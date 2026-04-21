@@ -10,8 +10,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { execSync } from "node:child_process";
 import { ForgeJobManifestSchema, type ForgeJobManifest } from "./schema.js";
-import { generatePython } from "./templates/python.js";
+import { generatePython, type ResolvedExternalSource } from "./templates/python.js";
 import { generateDag, dagFolder } from "./templates/dag.js";
 import { generateDqYaml } from "./templates/dq.js";
 
@@ -55,6 +56,92 @@ export function validateManifest(raw: unknown): ForgeJobManifest {
     throw new Error(`Manifest validation failed:\n${messages}`);
   }
   return result.data;
+}
+
+// ---------------------------------------------------------------------------
+// External source resolution (portal API fetch)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch a registered data source's connection config from the Forge portal API.
+ *
+ * Portal URL resolution order:
+ *   1. FORGE_PORTAL_URL env var  (explicit override)
+ *   2. Derived from FORGE_ENV → https://forge-portal-{env}.westcentralus.cloudapp.azure.com
+ *   3. Default to dev public endpoint
+ */
+export async function resolveExternalSource(
+  slug: string
+): Promise<ResolvedExternalSource> {
+  const forgeEnv   = (process.env["FORGE_ENV"]     ?? "dev").toLowerCase();
+  const ownerAlias = (process.env["OWNER_ALIAS"]   ?? "").toLowerCase();
+  const location   = (process.env["FORGE_LOCATION"] ?? "northcentralus").toLowerCase();
+  // DNS label matches forge-up.sh: forge-portal-{alias}-{env} (alias has trailing dash when set)
+  const aliasPrefix = ownerAlias ? `${ownerAlias}-` : "";
+  const label      = `forge-portal-${aliasPrefix}${forgeEnv}`;
+  const derivedUrl = `https://${label}.${location}.cloudapp.azure.com`;
+  const portalUrl  = process.env["FORGE_PORTAL_URL"] ?? derivedUrl;
+
+  // Acquire an MS Graph token via az CLI — always available after `az login`,
+  // no consent required on the portal app registration.
+  // The portal auth proxy accepts Graph tokens and extracts user identity from claims.
+  let bearerToken = "";
+  try {
+    bearerToken = execSync(
+      `az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv`,
+      { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
+    ).trim();
+  } catch {
+    // az CLI not installed or not logged in — fall through, will get 401 below.
+  }
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (bearerToken) headers["Authorization"] = `Bearer ${bearerToken}`;
+
+  let sources: Array<{ name: string; config: Record<string, string> }>;
+  try {
+    const resp = await fetch(`${portalUrl}/api/v1/datasources`, { headers });
+    if (resp.status === 401) {
+      throw new Error(
+        `Authentication required. Ensure you are logged into Azure:\n` +
+        `    az login\n` +
+        `  Then re-run forge generate.`
+      );
+    }
+    if (!resp.ok) {
+      throw new Error(`Portal returned HTTP ${resp.status}`);
+    }
+    sources = await resp.json() as typeof sources;
+  } catch (err) {
+    if (String(err).includes("Authentication required")) throw err;
+    throw new Error(
+      `Cannot reach Forge portal at ${portalUrl}.\n` +
+      `  Ensure you are connected to the network or override the URL with:\n` +
+      `    FORGE_PORTAL_URL=<url> forge generate --job ...\n` +
+      `  Original error: ${err}`
+    );
+  }
+
+  const ds = sources.find((s) => s.name === slug);
+  if (!ds) {
+    throw new Error(
+      `Data source '${slug}' is not registered in the Forge portal (${portalUrl}).\n` +
+      `  Register it first: portal → Data Sources → Add Source.`
+    );
+  }
+
+  const account   = ds.config["account"] ?? "";
+  const container = ds.config["container"] ?? "";
+  const basePath  = (ds.config["base_path"] ?? "").replace(/^\/|\/$/g, ""); // strip leading/trailing slashes
+
+  if (!account || !container) {
+    throw new Error(
+      `Data source '${slug}' is missing 'account' or 'container' in its config. ` +
+      `Check the registration in the Forge portal.`
+    );
+  }
+
+  return { slug, account, container, basePath };
 }
 
 // ---------------------------------------------------------------------------
@@ -125,6 +212,18 @@ export async function generateJob(
 
   const paths = resolveOutputPaths(manifest, outputDir);
 
+  // Resolve external source config from portal API if needed
+  let resolvedSource: ResolvedExternalSource | undefined;
+  if (manifest.source.registeredSource) {
+    resolvedSource = await resolveExternalSource(manifest.source.registeredSource);
+    if (verbose) {
+      console.log(
+        `[forge generate] RESOLVED source '${resolvedSource.slug}' → ` +
+        `abfss://${resolvedSource.container}@${resolvedSource.account}.dfs.core.windows.net/${resolvedSource.basePath}`
+      );
+    }
+  }
+
   // Read existing Python content to preserve business logic
   let existingPy: string | undefined;
   if (fs.existsSync(paths.pythonJob)) {
@@ -132,7 +231,7 @@ export async function generateJob(
   }
 
   // Generate content
-  const pythonContent = generatePython(manifest, existingPy);
+  const pythonContent = generatePython(manifest, existingPy, resolvedSource);
   const { content: dagContent } = generateDag(manifest);
   const dqContent = paths.dqRules ? generateDqYaml(manifest) : null;
 
@@ -223,8 +322,15 @@ export function generateManifestStub(
   const sourcePart =
     layer === "bronze"
       ? `  source: {
-    type: "external",
-    path: "abfss://raw@<storage_account>.dfs.core.windows.net/<path>/{PARTITION_DATE}/*.parquet",
+    // Register your data source in the Forge portal (Data Sources tab) first,
+    // then reference its slug here. forge generate fetches the connection details
+    // (account, container, basePath) from the portal at codegen time.
+    // sourcePath is appended after basePath; use {variable} placeholders for
+    // runtime values (e.g. {_year}, {_month}, {PARTITION_DATE}).
+    registeredSource: "<portal-data-source-slug>",
+    sourcePath: "<sub-path>/{PARTITION_DATE}/*.parquet",
+    name: "${name}",
+    version: 1,
     format: "parquet",
     options: { mergeSchema: "true" },
   },`
@@ -253,11 +359,6 @@ export function generateManifestStub(
       ? `  triggeredBy: "<upstream_bronze_dag_id>",\n  `
       : layer === "gold"
       ? `  triggeredBy: "<upstream_silver_dag_id>",\n  `
-      : "";
-
-  const triggersPart =
-    layer === "bronze" || layer === "silver"
-      ? `  triggers: ["<downstream_dag_id>"],\n  `
       : "";
 
   // Date column convention: use a real column name from the source data
@@ -291,7 +392,7 @@ ${sourcePart}
     table: "lakehouse.${layer}.${name}",
   },
 
-  ${dqPart}${triggeredByPart}${triggersPart}resources: {
+  ${dqPart}${triggeredByPart}resources: {
     driver:   { cores: 2, memory: "4g" },
     executor: { cores: 4, memory: "8g", instances: 2 },
   },

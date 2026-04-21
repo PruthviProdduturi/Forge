@@ -1,79 +1,78 @@
 /**
  * Forge CLI — DQ Rules YAML Generator
  *
- * Produces a skeleton Data Quality rules file for a manifest that has `dq`
- * configured.  The output matches the format used by the Forge DQ framework
- * (forge_dq @track decorator) and mirrors the existing rules files in
- * examples/orchestration/dq/rules/.
+ * Produces a Data Quality rules YAML from inline rules defined in the manifest.
+ * The output matches the format used by the Forge DQ framework (forge_dq DQRunner).
  *
- * The generated file is a starting point — engineers are expected to add
- * domain-specific rules before it is committed.
+ * Two entry points:
+ *   generateDqYaml(manifest) — writes a full YAML file with header comments;
+ *                              useful as documentation / audit artifact.
+ *   rulesAsYaml(manifest)    — returns a compact YAML snippet of the rules array
+ *                              only; used by dag.ts to embed inline rules in the
+ *                              DQ gate SparkApplication YAML (base64-encoded).
  */
 import type { ForgeJobManifest } from "../schema.js";
 
+type DqRule = NonNullable<ForgeJobManifest["dq"]>["rules"][number];
+
 /**
- * Generate a skeleton DQ YAML rules file from a manifest.
+ * Render a single DQ rule as YAML lines (2-space indent relative to the
+ * `rules:` list; each item starts with `- name:`).
+ */
+function renderRule(rule: DqRule): string {
+  const lines: string[] = [
+    `  - name: ${rule.name}`,
+    `    type: ${rule.type}`,
+  ];
+  if (rule.column !== undefined)      lines.push(`    column: ${rule.column}`);
+  if (rule.min !== undefined)         lines.push(`    min: ${rule.min}`);
+  if (rule.max !== undefined)         lines.push(`    max: ${rule.max}`);
+  if (rule.values !== undefined && rule.values.length > 0) {
+    lines.push(`    values: [${rule.values.map((v) => `"${v}"`).join(", ")}]`);
+  }
+  lines.push(`    severity: ${rule.severity ?? "critical"}`);
+  if (rule.description !== undefined) lines.push(`    description: "${rule.description}"`);
+  return lines.join("\n");
+}
+
+/**
+ * Return a compact YAML snippet containing only the `rules:` array.
+ * Used by dag.ts to embed inline rules in the DQ gate task (base64-encoded).
  *
- * @param manifest Validated ForgeJobManifest (must have `dq` set)
- * @returns YAML string ready to write to disk
+ * Returns an empty string if the manifest has no inline DQ rules.
+ */
+export function rulesAsYaml(manifest: ForgeJobManifest): string {
+  const rules = manifest.dq?.rules;
+  if (!rules || rules.length === 0) return "";
+  return `rules:\n${rules.map(renderRule).join("\n")}`;
+}
+
+/**
+ * Generate a full DQ YAML rules file from a manifest that uses inline rules.
+ *
+ * @param manifest Validated ForgeJobManifest (must have `dq.rules` set as an array)
+ * @returns YAML string ready to write to disk, or empty string if no rules.
  */
 export function generateDqYaml(manifest: ForgeJobManifest): string {
-  const table = manifest.output.table;
-  const layer = manifest.layer;
-  // Bronze: 4 integer columns. Silver/Gold: 1 string __date column.
-  const partitionCols: string[] =
-    layer === "bronze"
-      ? ["__year", "__month", "__day", "__hour"]
-      : ["__date"];
+  const rules = manifest.dq?.rules;
+  if (!rules || rules.length === 0) return "";
 
-  // Build a set of sensible starter rules based on layer and partition columns
-  const partitionRules = partitionCols
-    .map(
-      (col) => `
-  - name: not_null_${col.toLowerCase()}
-    type: not_null
-    column: ${col}
-    severity: critical
-    description: Partition column must never be null.`
-    )
-    .join("\n");
+  const table =
+    manifest.output.table ??
+    `lakehouse.${manifest.layer}.${manifest.output.path.assetName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")}`;
 
-  const layerRules =
-    layer === "silver" || layer === "gold"
-      ? `
-  # ---------------------------------------------------------------------------
-  # Uniqueness
-  # ---------------------------------------------------------------------------
-  - name: row_count_positive
-    type: row_count
-    min: 1
-    severity: critical
-    description: Table must contain at least one row per partition.
+  const failFastStr = manifest.dq?.failFast !== false ? "true" : "false";
 
-  # ---------------------------------------------------------------------------
-  # Freshness (add threshold appropriate for your schedule)
-  # ---------------------------------------------------------------------------
-  # - name: freshness_check
-  #   type: max_staleness_hours
-  #   column: _processed_at
-  #   max_hours: 25
-  #   severity: warning`
-      : `
-  # ---------------------------------------------------------------------------
-  # Row count
-  # ---------------------------------------------------------------------------
-  - name: row_count_positive
-    type: row_count
-    min: 1
-    severity: critical
-    description: Bronze partition must contain at least one row.`;
+  const rulesYaml = rules.map(renderRule).join("\n");
 
-  return `# DQ rules for ${manifest.name} — edit this file to add domain rules
+  return `# DQ rules for ${manifest.name} — generated from inline manifest rules
 # Generated by: forge generate --job ${manifest.name}
-# Applied by:   forge_dq @track decorator inside ${manifest.name}.py
+# Applied by:   forge_dq DQRunner inside the dq_gate_${manifest.layer} Spark task
 #
 # Severity levels:
-#   critical — job fails on violation (fail_fast=${manifest.dq?.failFast !== false ? "true" : "false"})
+#   critical — job fails on violation (fail_fast=${failFastStr})
 #   warning  — logged and continued; never fails the job
 #
 # Rule types supported by forge_dq:
@@ -87,21 +86,6 @@ owner: data-engineering
 tags: [${[manifest.layer, manifest.name, ...(manifest.tags ?? [])].map((t) => `"${t}"`).join(", ")}]
 
 rules:
-
-  # ---------------------------------------------------------------------------
-  # Completeness — partition columns
-  # ---------------------------------------------------------------------------
-${partitionRules}
-${layerRules}
-
-  # ---------------------------------------------------------------------------
-  # TODO: add domain-specific rules below
-  # ---------------------------------------------------------------------------
-  # Example:
-  # - name: status_accepted_values
-  #   type: accepted_values
-  #   column: status
-  #   values: [pending, confirmed, shipped, delivered, cancelled]
-  #   severity: warning
+${rulesYaml}
 `;
 }

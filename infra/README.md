@@ -73,7 +73,7 @@ helm/
 | `forge-up.sh` | **Main entry point** — full platform deploy (7 phases) |
 | `provision-infra.sh` | Bicep provisioning (called by `forge-up.sh`) |
 | `post-provision.sh` | Kubeconfig fetch + S360 IP tagging |
-| `sync-jobs.sh` | DAG/lib sync to ADLS + git push |
+| `sync-jobs.sh` | Deploy one pipeline: `--job <name>` required. Runs `forge generate`, uploads `.py` to `ADLS code/spark/jobs/`, uploads DQ YAML to `ADLS code/dq/rules/`, and the DAG is picked up via git-sync. No bulk sync mode. |
 | `portal-dev.sh` | Local portal development (no AKS needed) |
 | `generate-docs.py` | Export architecture docs |
 

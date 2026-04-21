@@ -73,9 +73,8 @@ az keyvault secret set \
 | Image | `forgeacrprproddu.azurecr.io/airflow:3.1.8` |
 | Executor | `LocalExecutor` (dev) / `KubernetesExecutor` (prod) |
 | Postgres DB | `psql-forge-prproddu-dev` → database `airflow` |
-| Git-sync repo | Azure DevOps — branch `user/PrProddu/StarRocks` |
-| Git-sync subPath | `Forge/orchestration/airflow/dags` |
-| Git-sync period | 30 seconds |
+| DAG delivery (dev) | ADLS `code/dags/` + dag-restore init container (git-sync disabled) |
+| DAG delivery (prod) | git-sync from Azure DevOps main branch |
 | Values file | `infra/helm/orchestration/airflow/values.yaml` |
 | Compute K8s connection | `kubernetes_compute_cluster` → compute cluster kubeconfig |
 
@@ -101,30 +100,32 @@ kubectl port-forward svc/airflow-api-server 8082:8080 \
 
 ```bash
 kubectl get pods -n airflow --context aks-forge-orchestration-prproddu-dev
-# NAME                              READY   STATUS    RESTARTS
-# airflow-scheduler-xxx             1/1     Running   0
-# airflow-webserver-xxx             1/1     Running   0
-# airflow-triggerer-xxx             1/1     Running   0
+# NAME                                    READY   STATUS    RESTARTS
+# airflow-dag-processor-xxx               1/1     Running   0
+# airflow-scheduler-xxx                   1/1     Running   0
+# airflow-webserver-xxx                   1/1     Running   0
+# airflow-triggerer-xxx                   1/1     Running   0
 
-# Check git-sync is working
-kubectl logs -n airflow deploy/airflow-scheduler -c git-sync \
-  --context aks-forge-orchestration-prproddu-dev | tail -5
-# Should show: level=info msg="successfully synced repo"
+# Check dag-restore init container ran successfully (on pod start)
+kubectl logs -n airflow <dag-processor-pod> -c dag-restore \
+  --context aks-forge-orchestration-prproddu-dev
+# Should show: dag-restore: N DAG(s) restored from forgeadlsdsengdev/code/dags/
 
 # Check DAGs are loaded
-kubectl exec -n airflow deploy/airflow-scheduler \
+kubectl exec -n airflow <dag-processor-pod> -c dag-processor \
   --context aks-forge-orchestration-prproddu-dev \
-  -- airflow dags list | head -10
+  -- ls /opt/airflow/dags/
 ```
 
-### DAG locations
+### DAG locations (dev)
 
-| Source (generated) | Synced to (git-sync reads) |
-|-------------------|---------------------------|
-| `examples/src/airflow/dags/ingestion/` | `orchestration/airflow/dags/ingestion/` |
-| `examples/src/airflow/dags/transformation/` | `orchestration/airflow/dags/transformation/` |
+DAGs are stored in ADLS and synced manually. There is no directory structure — each DAG is a single flat `.py` file.
 
-Bronze ingestion jobs go to `ingestion/`, Silver/Gold transformation jobs go to `transformation/`.
+| What | Where |
+|------|-------|
+| DAG files (durable) | ADLS `code/dags/{job_name}_dag.py` |
+| DAG files (live) | dag-processor pod `/opt/airflow/dags/` |
+| Restored on restart | `dag-restore` init container pulls from ADLS |
 
 ### SDK Distribution
 
@@ -133,26 +134,52 @@ Bronze ingestion jobs go to `ingestion/`, Silver/Gold transformation jobs go to 
 ### Deploying updated pipelines
 
 ```bash
-# Sync all jobs (generates DAGs + uploads job scripts + pushes DAG files)
-FORGE_ENV=dev OWNER_ALIAS=prproddu bash infra/scripts/sync-jobs.sh
+# Sync one pipeline (--job is required; there is no bulk sync mode)
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job <job_name>
+
+# Dry-run to preview what would change
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job <job_name> --dry-run
 ```
 
-Airflow picks up new DAGs within 30 seconds via git-sync. No portal redeploy needed.
+`sync-jobs.sh`:
+1. Runs `forge generate` for the named job
+2. Uploads Spark job to `ADLS code/spark/jobs/`
+3. Uploads DQ rules to `ADLS code/dq/rules/`
+4. **Uploads DAG to `ADLS code/dags/`** — durable, survives pod restarts
+5. **kubectl execs Python inside dag-processor** to pull the DAG from ADLS into `/opt/airflow/dags/` immediately — no pod restart needed, dag-processor rescans every 30s
+
+On pod restart, the `dag-restore` init container automatically restores all DAGs from `ADLS code/dags/`. No manual re-sync is needed after a cluster redeployment.
 
 ### Airflow values (key sections)
 
 ```yaml
 # infra/helm/orchestration/airflow/values.yaml (excerpt)
-executor: LocalExecutor  # dev; use KubernetesExecutor for prod
+executor: KubernetesExecutor
 
 dags:
   gitSync:
-    enabled: true
-    repo: https://dev.azure.com/{org}/Forge/_git/Forge
-    branch: user/PrProddu/StarRocks
-    subPath: Forge/orchestration/airflow/dags
-    credentialsSecret: airflow-git-credentials
-    period: 30s
+    enabled: false   # dev: DAGs delivered via sync-jobs.sh → ADLS → dag-restore init container
+
+dagProcessor:
+  podLabels:
+    azure.workload.identity/use: "true"
+  extraVolumes:
+    - name: dags
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dags
+      mountPath: /opt/airflow/dags
+  extraInitContainers:
+    - name: dag-restore
+      # Image set by forge-up.sh --set to forge-airflow ACR image
+      image: "apache/airflow:3.1.8-python3.11"
+      command: [python3, "-c", "..."]  # downloads code/dags/*.py from ADLS via workload identity
+      envFrom:
+        - configMapRef:
+            name: forge-platform-config  # provides FORGE_STORAGE_ACCOUNT
+      volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
 
 webserver:
   service:
@@ -161,8 +188,6 @@ webserver:
 env:
   - name: AIRFLOW__SECRETS__BACKEND
     value: "airflow.providers.microsoft.azure.secrets.key_vault.AzureKeyVaultBackend"
-  - name: AIRFLOW__SECRETS__BACKEND_KWARGS
-    value: '{"vault_url": "https://kv-forge-{env}.vault.azure.net", "connections_prefix": "airflow-connections", "variables_prefix": "airflow-variables"}'
 ```
 
 ---
@@ -344,11 +369,13 @@ env:
 
 ```
 [ ] PostgreSQL airflow database created
-[ ] Airflow scheduler pod Running:         kubectl get pods -n airflow
+[ ] Airflow dag-processor pod Running:     kubectl get pods -n airflow
+[ ] Airflow scheduler pod Running
 [ ] Airflow webserver pod Running
 [ ] Airflow triggerer pod Running
-[ ] Airflow git-sync pulling from branch user/PrProddu/StarRocks
-[ ] Airflow DAGs listed in scheduler:      airflow dags list
+[ ] forge-platform-config ConfigMap present: kubectl get cm forge-platform-config -n airflow
+[ ] dag-restore init container logs show DAGs restored (kubectl logs <pod> -c dag-restore)
+[ ] Airflow DAGs listed: kubectl exec <dag-processor-pod> -c dag-processor -- ls /opt/airflow/dags/
 [ ] kubernetes_compute_cluster connection configured
 [ ] Portal API pod Running:                kubectl get pods -n portal
 [ ] Portal Web pod Running

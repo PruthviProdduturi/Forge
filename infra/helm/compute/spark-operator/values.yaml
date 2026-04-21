@@ -22,7 +22,7 @@ image:
   registry: forgeacr.azurecr.io
   repository: spark-operator-controller
   tag: "2.5.0"
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
 # Pre-install/upgrade hook Job image (kubectl)
 hook:
@@ -50,10 +50,10 @@ controller:
   resources:
     requests:
       cpu: "100m"
-      memory: "128Mi"
+      memory: "512Mi"
     limits:
       cpu: "500m"
-      memory: "512Mi"
+      memory: "2Gi"
   nodeSelector:
     agentpool: systempool
   tolerations:

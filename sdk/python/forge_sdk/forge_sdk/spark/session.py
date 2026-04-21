@@ -76,6 +76,7 @@ def forge_session(
 
     builder = (
         SparkSession.builder.appName(app_name)
+        .enableHiveSupport()
         # ------------------------------------------------------------------
         # Delta Lake
         # ------------------------------------------------------------------

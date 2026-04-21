@@ -31,12 +31,38 @@ const DataPathSchema = z.object({
 });
 
 const SourceSchema = z.object({
-  name: z.string(),                          // dataset name, used as last path segment
-  version: z.number().int().positive(),      // version number, used as path segment
-  path: DataPathSchema,
+  name: z.string(),                          // dataset name, used as last path segment / logical identifier
+  version: z.number().int().positive(),      // version number, used as path segment / logical identifier
+  // Internal ADLS source — one of path OR registeredSource is required.
+  path: DataPathSchema.optional(),
+  // External registered source — slug must match a data source registered in the Forge portal.
+  // forge generate fetches account/container/basePath from the portal API at codegen time.
+  // sourcePath is the sub-path appended after basePath; use {variable} placeholders for runtime
+  // values (e.g. {_year}, {_month}) — they become Python f-string references.
+  registeredSource: z.string().optional(),
+  sourcePath: z.string().optional(),
+  // Full ABFS path template, e.g. "abfss://code@{self.storage}/path/puYear={_year}/*.parquet". Overrides path/registeredSource.
+  rawPath: z.string().optional(),
   format: z.enum(["parquet", "csv", "json", "delta"]).optional(),  // for non-delta sources; delta auto-detected for lakehouse containers
   options: z.record(z.string()).optional(),  // Spark reader options
-  filter: z.string().optional(),             // Delta partition filter
+  filter: z.string().optional(),             // Delta partition filter (internal sources only)
+}).superRefine((src, ctx) => {
+  const hasPath = !!src.path;
+  const hasExternal = !!src.registeredSource;
+  if (!hasPath && !hasExternal && !src.rawPath) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "source requires either 'path' (internal ADLS) or 'registeredSource' (portal-registered external source)",
+    });
+  }
+  if (src.registeredSource && !src.sourcePath) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourcePath"],
+      message: "sourcePath is required when registeredSource is set — e.g. \"puYear={_year}/puMonth={_month}/*.parquet\"",
+    });
+  }
 });
 
 const PartitionSchema = z.object({
@@ -55,9 +81,20 @@ const OutputSchema = z.object({
   table: z.string().optional(),              // HMS/Trino table name; derived as "lakehouse.{layer}.{assetName.toLowerCase()}" if omitted
 });
 
+const DqRuleSchema = z.object({
+  name: z.string(),
+  type: z.string(),          // row_count, not_null, accepted_values, min_value, max_value, etc.
+  column: z.string().optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  values: z.array(z.string()).optional(),
+  severity: z.enum(["critical", "warning"]).default("critical"),
+  description: z.string().optional(),
+});
+
 const DqSchema = z.object({
-  rules: z.string(),
-  failFast: z.boolean().optional(),
+  rules: z.array(DqRuleSchema),
+  failFast: z.boolean().optional().default(true),
 });
 
 const ResourcesSchema = z.object({
@@ -83,6 +120,18 @@ export const ForgeJobManifestSchema = z.object({
   layer: z.enum(["bronze", "silver", "gold"]),
   description: z.string(),
   schedule: z.string().optional(),
+  // startDate: ISO date string "YYYY-MM-DD". Airflow will schedule runs from this date.
+  // Set catchup: true to backfill all missed slots since startDate.
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "startDate must be YYYY-MM-DD").optional(),
+  // endDate: ISO date string "YYYY-MM-DD". Airflow will not schedule runs after this date.
+  // Use to cap a bounded backfill or decommission a pipeline without deleting the DAG.
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "endDate must be YYYY-MM-DD").optional(),
+  // catchup: if true, Airflow runs all missed slots since startDate (backfill).
+  // Combined with maxActiveRuns to control parallelism — e.g. startDate=2024-01-01,
+  // maxActiveRuns=10 → runs 10 days in parallel until caught up.
+  catchup: z.boolean().optional(),
+  // maxActiveRuns: max concurrent DAG runs (default 3). Use higher values for fast backfill.
+  maxActiveRuns: z.number().int().positive().optional(),
   tags: z.array(z.string()).optional(),
   params: z.record(ParamSchema),
   source: SourceSchema,
@@ -92,6 +141,11 @@ export const ForgeJobManifestSchema = z.object({
   resources: ResourcesSchema.optional(),
   triggers: z.array(z.string()).optional(),
   triggeredBy: z.string().optional(),
+  // DAG execution settings — all optional, sensible defaults applied per layer if omitted.
+  retries: z.number().int().min(0).max(10).optional(),
+  retryDelayMinutes: z.number().int().positive().optional(),
+  executionTimeoutHours: z.number().positive().optional(),
+  slaHours: z.number().positive().optional(),
 });
 
 // ---------------------------------------------------------------------------

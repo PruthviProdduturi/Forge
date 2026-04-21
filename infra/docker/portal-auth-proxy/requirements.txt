@@ -5,3 +5,4 @@ msal>=1.30.0
 requests>=2.32.4
 gunicorn==22.0.0
 cryptography==46.0.5
+PyJWT==2.10.1

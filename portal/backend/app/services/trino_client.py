@@ -19,21 +19,23 @@ LAYER_SCHEMAS = {
 
 
 def _get_connection() -> trino.dbapi.Connection:
-    """Create a Trino connection. Uses workload identity in cluster, basic auth in dev."""
+    """Create a Trino connection.
+
+    Port 443 → HTTPS ingress (e.g. external/dev-laptop access via Trino auth proxy).
+    Any other port → HTTP internal cluster service (no auth required; trino package
+    raises an error if auth is set on an http connection).
+    """
+    port = settings.trino_port
+    http_scheme = "https" if port == 443 else "http"
     kwargs: dict[str, Any] = {
         "host": settings.trino_host,
-        "port": settings.trino_port,
+        "port": port,
         "catalog": settings.trino_catalog,
         "schema": settings.trino_schema,
-        "http_scheme": "http",
+        "http_scheme": http_scheme,
     }
-
-    if settings.forge_env == "dev":
-        kwargs["auth"] = trino.auth.BasicAuthentication("admin", "")
-    else:
-        # In cluster — use workload identity via JWT
+    if http_scheme == "https":
         kwargs["auth"] = trino.auth.JWTAuthentication("")
-        kwargs["http_scheme"] = "https"
 
     return trino.dbapi.connect(**kwargs)
 

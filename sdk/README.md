@@ -11,6 +11,9 @@ sdk/
     forge_sdk/      ForgeJob base class, ADLS helpers, partition utilities
     forge_dq/       Data quality rule engine (track() decorator)
   vscode-extension/ VS Code extension — manifest editing and code generation
+
+orchestration/airflow/plugins/forge_airflow/
+  operators.py      ForgeSparkOperator, ForgeDqGateOperator
 ```
 
 ## The generation flow
@@ -19,11 +22,13 @@ sdk/
 .forge.ts manifest
     ↓ forge generate
 .py job + _dag.py + .yaml DQ rules
-    ↓ sync-jobs.sh
-ADLS code/spark/jobs/*.py          ← Spark driver fetches this
-ADLS code/lib/forge_lib.zip        ← Spark distributes to all executors
-orchestration/airflow/dags/        ← git-sync → Airflow
+    ↓ sync-jobs.sh --job <name>
+ADLS code/spark/jobs/{name}.py     ← Spark driver fetches this at runtime
+ADLS code/dq/rules/{name}.yaml     ← ForgeDqGateOperator reads rules from here
+dags/{name}_dag.py                 ← git-sync → Airflow (30 s)
 ```
+
+The Forge SDK (`forge_sdk`, `forge_dq`, `forge_catalog`) is baked into the Spark image at build time. No `forge_lib.zip` distribution — SDK updates require an image rebuild and re-deploy.
 
 ## CLI (sdk/cli/)
 
@@ -36,6 +41,23 @@ forge generate --job my_job --check                            # CI gate: fail i
 Install: `cd sdk/cli && npm install && npm run build && npm link`
 
 Full CLI reference: `sdk/cli/README.md`
+
+## Deploying a pipeline
+
+Always deploy a single named job — bulk sync is not supported by design:
+
+```bash
+# Deploy (or redeploy) one pipeline
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job nyc_taxi_bronze
+
+# Preview what would change without applying
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job nyc_taxi_bronze --dry-run
+```
+
+`sync-jobs.sh` regenerates the DAG + Spark job from the `.forge.ts` manifest, uploads
+the `.py` to ADLS (`code/spark/jobs/`), uploads the DQ rules to ADLS (`code/dq/rules/`),
+and the DAG file is picked up by Airflow git-sync within 30 seconds.
+`--job` is mandatory — there is no full/bulk sync mode.
 
 ## Manifest path schema
 
@@ -60,16 +82,39 @@ ADLS path formula:
 
 ## Python SDK (sdk/python/)
 
-Distributed to executors via `forge_lib.zip` — no image rebuild when the SDK changes.
+Baked into the Spark image at build time. SDK updates require an image rebuild.
 
 - `ForgeJob`: base class handling Spark session, ADLS paths, partition stamping, idempotency guard, and tracker writes
 - `forge_dq.track()`: DQ decorator — validates a DataFrame against a rules YAML before write
 
-### forge_lib.zip distribution
+### SDK distribution
 
-Built by `sync-jobs.sh` whenever `sdk/python/` changes, then uploaded to
-`abfss://code@{storage}/lib/forge_lib.zip`. Every SparkApplication references it via
-`spark.submit.pyFiles`.
+The SDK is baked into the Spark image at build time (installed from source in the Dockerfile).
+When SDK code changes, rebuild and push the Spark image, then re-run `forge-up.sh --skip-infra`
+to apply the new image. There is no `forge_lib.zip` — `spark.submit.pyFiles` is not used.
+
+## forge_airflow plugin
+
+**Location:** `orchestration/airflow/plugins/forge_airflow/operators.py`
+
+The `forge_airflow` plugin provides the two Airflow operators that all generated DAGs import. It is not part of `sdk/python/` — it ships with the orchestration layer.
+
+### ForgeSparkOperator
+
+Submits a Spark job to the compute cluster. Builds the `SparkApplication` YAML internally at execute time — no YAML is authored in the DAG file. Platform config (`spark_image`, `storage_account`, `tenant_id`, `mi_client_id`) is read from Airflow Variables via `_require()` at parse time; a missing variable raises immediately.
+
+### ForgeDqGateOperator
+
+Submits the `forge_dq_gate` platform Spark job (`orchestration/spark-jobs/forge_dq_gate.py`). Passes `RULES_PATH=abfss://code@{storage}/dq/rules/{job}.yaml` as an environment variable. The gate job downloads the YAML from ADLS, applies partition-aware filtering (bronze: `__year/__month/__day`; silver/gold: `__date = DD_MM_YYYY_HH`), runs all three DQ layers, and fails on any critical rule violation.
+
+### Deployment
+
+| Environment | Mechanism |
+|-------------|-----------|
+| Dev | `forge-airflow-plugin` ConfigMap mounted at Python site-packages in the Airflow pod. No image rebuild needed for plugin updates. |
+| Prod | Plugin files must be copied to `infra/docker/airflow/plugins/forge_airflow/` before the image build. SDK changes → image rebuild → `forge-up.sh --skip-infra`. |
+
+---
 
 ## VS Code extension (sdk/vscode-extension/)
 

@@ -117,7 +117,7 @@ Developer opens VS Code
 Edit nyc_taxi_silver.forge.ts
         │
         │  Define: schedule, source, partition column, DQ rules,
-        │          resources, triggers, params
+        │          resources, triggeredBy, endDate, params
         │
         │  forge generate --job nyc_taxi_silver
         ▼
@@ -187,14 +187,26 @@ ADLS state/deployments_dev.jsonl:
 ```
 Airflow Scheduler
         │
-        │  DAG: nyc_taxi_silver
-        │  Schedule: triggered by nyc_taxi_bronze (TriggerDagRunOperator)
+        │  DAG: nyc_taxi_silver  (schedule: "0 2 * * *")
+        │
+        │  ExternalTaskSensor: wait_for_nyc_taxi_bronze
+        │  ├── external_dag_id: nyc_taxi_bronze
+        │  ├── external_task_id: None  (waits for entire upstream DAG)
+        │  ├── mode: reschedule       (frees task pod between checks)
+        │  ├── poke_interval: 120s
+        │  └── timeout: 8h
+        │
+        │  Sensor passes when nyc_taxi_bronze DAG run for same logical date
+        │  reaches SUCCESS. Upstream DAG is unmodified — it does not know
+        │  about consumers. New consumers add triggeredBy without touching
+        │  the upstream.
         │
         │  1. Task pod created (KubernetesExecutor — ephemeral, 1 per task)
         │  2. CSI driver mounts Key Vault secrets
         │  3. OpenLineage emits START to Purview
         │
-        │  4. SparkKubernetesOperator submits SparkApplication CRD:
+        │  4. ForgeSparkOperator builds SparkApplication CRD internally
+        │     and submits it to the compute cluster:
         ▼
 SparkApplication CRD (compute cluster, namespace: spark-jobs)
         │
@@ -203,7 +215,8 @@ SparkApplication CRD (compute cluster, namespace: spark-jobs)
         │
         │  envFrom:
         │    forge-platform-config (ConfigMap)  ← FORGE_ENV, FORGE_STORAGE_ACCOUNT
-        │    PARTITION_DATE: {{ data_interval_start.strftime('%Y-%m-%d') }}
+        │    PARTITION_DATE: {{ ds }}
+        │    PARTITION_HOUR: 0
         ▼
 Spark Operator launches pods
         │
@@ -221,9 +234,8 @@ nyc_taxi_silver.py runs
         │  ┌─────────────────────────────────────────────────────┐
         │  │  setup()                                            │
         │  │  ├── _tracker_exists()  →  check ADLS tracker path  │
-        │  │  ├── If tracker found and RESTATE=false:            │
-        │  │  │     raise SystemExit(0)  ← idempotent skip       │
-        │  │  └── If RESTATE=true: log + proceed                 │
+        │  │  └── If tracker found: raise SystemExit(0)          │
+        │  │       ← idempotent skip on Airflow retry            │
         │  │                                                     │
         │  │  run()                                              │
         │  │  ├── SOURCE (locked):                               │
@@ -235,10 +247,26 @@ nyc_taxi_silver.py runs
         │  │  └── WRITE (locked):                               │
         │  │       row_count guard (skip if 0 rows)              │
         │  │       stamp __date = "01_04_2026_00"                │
-        │  │       @track DQ gate (fail_fast if critical)        │
         │  │       df.write.delta.saveAsTable(...)               │
         │  │       write tracker.json to ADLS                    │
         │  └─────────────────────────────────────────────────────┘
+        │
+        │  SparkApplication → COMPLETED
+        │  ForgeSparkOperator task → SUCCESS
+        ▼
+ForgeDqGateOperator task
+        │
+        │  Submits forge_dq_gate.py as a SparkApplication
+        │  RULES_PATH = abfss://code@{storage}/dq/rules/nyc_taxi_silver.yaml
+        │
+        │  forge_dq_gate.py:
+        │  ├── downloads rules YAML from ADLS
+        │  ├── filters to __date = "01_04_2026_00"  (silver/gold partition key)
+        │  ├── runs DQRunner (profiling + rule checks + anomaly)
+        │  ├── writes DQ results to Delta
+        │  └── emits OpenLineage DQ facet to Purview
+        │
+        │  Critical failure → task FAILED → downstream tasks UPSTREAM_FAILED
         ▼
 ADLS silver/nyc/taxi/trips/
         │
@@ -250,9 +278,9 @@ ADLS silver/nyc/taxi/trips/
         │    input:  bronze/nyc/taxi   (schema + row count)
         │    output: silver/nyc_taxi_trips  (schema + row count + DQ facet)
         │
-        │  SparkApplication → COMPLETED
-        │  Airflow task → SUCCESS
-        │  Triggers downstream: nyc_taxi_gold (TriggerDagRunOperator)
+        │  nyc_taxi_gold DAG (if it exists) has its own ExternalTaskSensor
+        │  pointing at nyc_taxi_silver — it wakes up when this DAG succeeds.
+        │  The silver DAG does not know about or trigger gold.
 ```
 
 ---
@@ -363,4 +391,4 @@ Grafana Platform Overview (live during a run):
 | Silver transform | `src/airflow/dags/transformation/` | `nyc_taxi_silver` |
 | Gold publish | `src/airflow/dags/transformation/` | `nyc_taxi_gold` |
 
-DAG files are **fully managed** — never edit them directly. All DAG configuration (schedule, retries, SLA, triggers) comes from the `.forge.ts` manifest. Re-run `forge generate` to update.
+DAG files are **fully managed** — never edit them directly. All DAG configuration (schedule, retries, endDate, triggeredBy) comes from the `.forge.ts` manifest. Re-run `forge generate` to update.

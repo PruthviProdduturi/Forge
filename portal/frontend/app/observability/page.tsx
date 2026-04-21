@@ -11,10 +11,18 @@ interface HealthData {
   status: "ok" | "degraded";
   env: string;
   checks: {
-    airflow: boolean;
-    trino: boolean;
-    adls: boolean;
+    airflow: boolean | null;
+    trino: boolean | null;
+    adls: boolean | null;
+    spark_connect: boolean | null;
   };
+}
+
+interface SparkStats {
+  running: number;
+  queued: number;
+  recent_success: number;
+  recent_failed: number;
 }
 
 const SERVICE_META = [
@@ -39,6 +47,14 @@ const SERVICE_META = [
     label: "ADLS Gen2",
     description: "Azure Data Lake Storage Gen2",
     icon: "fa-hard-drive",
+    okColor: "#059669",
+    errColor: "#dc2626",
+  },
+  {
+    key: "spark_connect" as const,
+    label: "Spark Connect",
+    description: "Spark 4.1.1 gRPC compute endpoint",
+    icon: "fa-fire-flame-curved",
     okColor: "#059669",
     errColor: "#dc2626",
   },
@@ -68,6 +84,7 @@ const EXTERNAL_LINKS = [
 export default function ObservabilityPage() {
   const { getToken } = useAuth();
   const [health, setHealth] = useState<HealthData | null>(null);
+  const [sparkStats, setSparkStats] = useState<SparkStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
@@ -76,8 +93,12 @@ export default function ObservabilityPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiFetch<HealthData>("/api/health", getToken);
+      const [data, stats] = await Promise.all([
+        apiFetch<HealthData>("/api/health", getToken),
+        apiFetch<SparkStats>("/api/spark/stats", getToken).catch(() => null),
+      ]);
       setHealth(data);
+      setSparkStats(stats);
       setLastChecked(new Date());
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to fetch health");
@@ -208,6 +229,37 @@ export default function ObservabilityPage() {
           );
         })}
       </div>
+
+      {/* Spark job activity */}
+      {sparkStats !== null && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: "#94a3b8", marginBottom: 14 }}>
+            Spark Job Activity
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 36 }}>
+            {[
+              { label: "Running", value: sparkStats.running, icon: "fa-spinner", color: "#ca8a04", bg: "#fef9c3" },
+              { label: "Queued", value: sparkStats.queued, icon: "fa-clock", color: "#0284c7", bg: "#e0f2fe" },
+              { label: "Recent Success", value: sparkStats.recent_success, icon: "fa-circle-check", color: "#16a34a", bg: "#dcfce7" },
+              { label: "Recent Failed", value: sparkStats.recent_failed, icon: "fa-circle-xmark", color: "#dc2626", bg: "#fee2e2" },
+            ].map(s => (
+              <div key={s.label} style={{
+                background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${s.color}`,
+                borderRadius: 12, padding: "16px 18px", boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                display: "flex", alignItems: "center", gap: 12,
+              }}>
+                <div style={{ width: 36, height: 36, borderRadius: 9, background: s.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 14 }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", lineHeight: 1 }}>{s.value}</div>
+                  <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 600, marginTop: 2 }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* External links */}
       <div style={{

@@ -1257,12 +1257,18 @@ export default function AboutPage() {
             />
             <StepCard
               number={2}
-              title="Author a DAG"
-              code={`# Drop your DAG into the dags/ folder.
-# It goes live in ~30 seconds via git-sync.
+              title="Author a Pipeline"
+              code={`# 1. Write a manifest
+forge init --name my_pipeline --layer bronze
 
-dags/
-  my_pipeline.py   ← your DAG here`}
+# 2. Generate Spark job, DAG, and DQ rules
+forge generate --job my_pipeline \\
+  --manifest-dir src/manifests --dir .
+
+# 3. Deploy (DAG live in ~30 s via git-sync)
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" \\
+  bash infra/scripts/sync-jobs.sh \\
+  --job my_pipeline`}
             />
             <StepCard
               number={3}

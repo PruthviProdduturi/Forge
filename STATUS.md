@@ -1,6 +1,6 @@
 # Forge Platform — Release Status
 
-> Last updated: 2026-04-01
+> Last updated: 2026-04-17
 > Branch: `user/PrProddu/StarRocks`
 > Environment: `dev` (prod deferred until dev is stable)
 > Deploy command: `bash infra/scripts/forge-up.sh --env dev --git-pat <PAT> --skip-infra --skip-pg-grants`
@@ -157,11 +157,11 @@
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Architecture docs (15 documents) | ✅ Done | All updated: SDK distribution, phase numbers, ADLS layout, dev guardrails, prod sizing |
-| Implementation guides (6 documents) | ✅ Done | Phase numbers [1–8/8], flags, forge_lib.zip removed |
-| Operational runbooks — Airflow down, DQ failure, ADLS connectivity, post-deploy | ✅ Done | |
-| Sub-READMEs — infra, portal, orchestration, sdk | ✅ Done | |
-| Developer experience guide — dev guardrails section added | ✅ Done | 5-DAG limit, 5-day auto-expire, no catchup documented |
+| Architecture docs (15 documents) | ✅ Done | Codegen redesign: ForgeSparkOperator, ForgeDqGateOperator, ExternalTaskSensor, forge generate, endDate, triggeredBy, partition conventions, idempotency tracker, ADLS layout |
+| Implementation guides (6 documents) | ✅ Done | sync-jobs.sh `--job` flag mandatory, forge_lib.zip removed throughout |
+| Operational runbooks — Airflow down, DQ failure, ADLS connectivity, post-deploy | ✅ Done | DQ failure runbook updated for ForgeDqGateOperator architecture |
+| Sub-READMEs — infra, portal, orchestration, sdk | ✅ Done | sdk/README.md: forge_lib.zip removed, SDK baked into image; sdk/cli/README.md: triggers field removed, SDK distribution corrected |
+| Developer experience guide — DAG authoring sections rewritten | ✅ Done | ForgeSparkOperator, ForgeDqGateOperator, ExternalTaskSensor patterns; forge generate workflow |
 | Prod sizing — orchestration cluster for 150+ jobs | ✅ Done | `docs/architecture/07-orchestration.md` §17; `prod.parameters.json` updated |
 | STATUS.md — this file | ✅ Done | Single source of truth for release tracking |
 

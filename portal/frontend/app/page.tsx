@@ -266,7 +266,7 @@ export default function HomePage() {
               ) : (
                 recentPipelines.map((p, idx) => {
                   const s = p.last_run_state ? STATE_STYLE[p.last_run_state] ?? { bg: "#f1f5f9", color: "#64748b", label: p.last_run_state } : null;
-                  const neverRun = !p.last_run_at;
+                  const neverRun = !p.last_run_state;
                   return (
                     <div key={p.dag_id} style={{
                       display: "flex", alignItems: "center", gap: 12,

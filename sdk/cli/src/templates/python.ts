@@ -14,6 +14,13 @@
  */
 import type { ForgeJobManifest } from "../schema.js";
 
+export interface ResolvedExternalSource {
+  slug: string;
+  account: string;
+  container: string;
+  basePath: string; // leading slash normalised away
+}
+
 // ---------------------------------------------------------------------------
 // Sentinel constants — referenced by the generate command when extracting /
 // re-splicing the business logic block.
@@ -81,15 +88,15 @@ function renderParamDocs(params: ForgeJobManifest["params"]): string {
  */
 function adlsPath(name: string, version: number, path: ForgeJobManifest["output"]["path"]): string {
   const { container, category, entity, audience, metricsCohort, assetName, storageAccount } = path;
-  const storageExpr = storageAccount ? storageAccount : "{self.storage}";
-  return `abfss://${container}@${storageExpr}/${category}/${entity}/${audience}/${metricsCohort}/${assetName}/${version}/${name}`;
+  const storageExpr = storageAccount ? storageAccount : "{os.environ['FORGE_STORAGE_ACCOUNT']}.dfs.core.windows.net";
+  return `abfss://${container}@${storageExpr}/${category}/${entity}/${audience}/${metricsCohort}/${assetName}/v${version}/${name}`;
 }
 
 /** Derive the HMS/Trino table name from the manifest. */
 function deriveTable(manifest: ForgeJobManifest): string {
   if (manifest.output.table) return manifest.output.table;
   const slug = manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return `lakehouse.${manifest.layer}.${slug}`;
+  return `${manifest.layer}.${slug}`;
 }
 
 /** Render the `_tracker_path()` instance method — layer-specific. */
@@ -141,8 +148,10 @@ function renderTrackerExistsMethod(): string {
 /** Render the `setup()` override — idempotency + restatement guard. */
 function renderSetupMethod(manifest: ForgeJobManifest): string {
   const table = deriveTable(manifest);
+  const db = manifest.layer;  // e.g. "bronze"
   return [
     `    def setup(self) -> None:`,
+    `        self.spark.sql("CREATE DATABASE IF NOT EXISTS ${db}")`,
     `        if not RESTATE and self._tracker_exists():`,
     `            self.log.info(`,
     `                "partition_complete skipping table=${table} "`,
@@ -155,12 +164,83 @@ function renderSetupMethod(manifest: ForgeJobManifest): string {
 }
 
 /** Render the source-read block (8-space indent — inside run()). */
-function renderSourceRead(manifest: ForgeJobManifest, indent = "        "): string {
+function renderSourceRead(
+  manifest: ForgeJobManifest,
+  resolvedSource?: ResolvedExternalSource,
+  indent = "        "
+): string {
   const { source } = manifest;
+
+  // ── Raw path override ─────────────────────────────────────────────────────
+  if (source.rawPath) {
+    const fmt = source.format ?? "parquet";
+    const optionsLines = Object.entries(source.options ?? {})
+      .map(([k, v]) => `${indent}    .option("${k}", "${v}")`)
+      .join("\n");
+    const readLines = fmt === "parquet"
+      ? [
+          `${indent}raw = (`,
+          `${indent}    self.spark.read`,
+          optionsLines,
+          `${indent}    .parquet(src_path)`,
+          `${indent})`,
+        ]
+      : [
+          `${indent}raw = (`,
+          `${indent}    self.spark.read`,
+          `${indent}    .format("${fmt}")`,
+          optionsLines,
+          `${indent}    .load(src_path)`,
+          `${indent})`,
+        ];
+    return [
+      `${indent}src_path = f"${source.rawPath}"`,
+      ...readLines,
+      `${indent}self.log.info("source_read path=%s", src_path)`,
+    ].filter(Boolean).join("\n");
+  }
+
+  // ── External registered source ────────────────────────────────────────────
+  // Full ABFS path = abfss://{container}@{account}.dfs.core.windows.net/{basePath}/{sourcePath}
+  // {variable} placeholders in sourcePath become Python f-string references at runtime.
+  if (resolvedSource && source.sourcePath) {
+    const fmt = source.format ?? "parquet";
+    const base = resolvedSource.basePath ? `${resolvedSource.basePath}/` : "";
+    const fullPath = `abfss://${resolvedSource.container}@${resolvedSource.account}.dfs.core.windows.net/${base}${source.sourcePath}`;
+    const optionsLines = Object.entries(source.options ?? {})
+      .map(([k, v]) => `${indent}    .option("${k}", "${v}")`)
+      .join("\n");
+
+    const readLines = fmt === "parquet"
+      ? [
+          `${indent}raw = (`,
+          `${indent}    self.spark.read`,
+          optionsLines,
+          `${indent}    .parquet(src_path)`,
+          `${indent})`,
+        ]
+      : [
+          `${indent}raw = (`,
+          `${indent}    self.spark.read`,
+          `${indent}    .format("${fmt}")`,
+          optionsLines,
+          `${indent}    .load(src_path)`,
+          `${indent})`,
+        ];
+
+    return [
+      `${indent}# Registered source: ${resolvedSource.slug} (configured in Forge portal → Data Sources)`,
+      `${indent}src_path = f"${fullPath}"`,
+      ...readLines,
+      `${indent}self.log.info("source_read source=${resolvedSource.slug} path=%s", src_path)`,
+    ].filter(Boolean).join("\n");
+  }
+
+  // ── Internal ADLS source ──────────────────────────────────────────────────
   const lakehouseContainers = new Set(["bronze", "silver", "gold"]);
-  const isDelta = source.format === "delta" || lakehouseContainers.has(source.path.container);
+  const isDelta = source.format === "delta" || (source.path && lakehouseContainers.has(source.path.container));
   const fmt = source.format ?? (isDelta ? "delta" : "parquet");
-  const srcAdls = adlsPath(source.name, source.version, source.path);
+  const srcAdls = adlsPath(source.name, source.version, source.path!);
 
   const optionsLines = Object.entries(source.options ?? {})
     .map(([k, v]) => `${indent}    .option("${k}", "${v}")`)
@@ -240,7 +320,12 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
   }
 
   // ── Delta write block ────────────────────────────────────────────────────
+  // Write to the explicit ADLS path, then register in HMS so Trino/Spark SQL
+  // can query via the table name. This ensures data lands in our bronze/silver/
+  // gold containers, not the HMS default warehouse directory.
+  const [dbName, tblName] = table.split(".");
   const deltaWrite = [
+    `${indent}_out_path = f"${outAdls}"`,
     `${indent}(`,
     `${indent}    df.write`,
     `${indent}    .format("delta")`,
@@ -248,7 +333,9 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
     `${indent}    .option("overwriteSchema", "true")`,
     `${indent}    .option("replaceWhere", f"${pyReplaceWhere}")`,
     `${indent}    .partitionBy(${partBy})`,
-    `${indent}    .saveAsTable("${table}")`,
+    `${indent}    .save(_out_path)`,
+    `${indent})`,
+    `${indent}self.spark.sql(f"CREATE TABLE IF NOT EXISTS ${table} USING DELTA LOCATION '{_out_path}'"`,
     `${indent})`,
   ].join("\n");
 
@@ -285,29 +372,6 @@ function renderWrite(manifest: ForgeJobManifest, indent = "        "): string {
     `${indent}    self.log.warning("empty_partition_skipping table=${table}")`,
     `${indent}    return`,
   ].join("\n");
-
-  // ── Assemble with or without DQ wrapper ─────────────────────────────────
-  if (dq) {
-    const failFast = dq.failFast !== false ? "True" : "False";
-    const wrappedDelta = deltaWrite.split("\n").map((l) => `    ${l}`).join("\n");
-    return [
-      rowCountGuard,
-      ``,
-      partitionStamp,
-      ``,
-      `${indent}@track(`,
-      `${indent}    dataset="${table}",`,
-      `${indent}    rules="${dq.rules}",`,
-      `${indent}    fail_fast=${failFast},`,
-      `${indent})`,
-      `${indent}def _write() -> None:`,
-      wrappedDelta,
-      ``,
-      `${indent}_write()`,
-      ``,
-      trackerWrite,
-    ].join("\n");
-  }
 
   return [
     rowCountGuard,
@@ -373,7 +437,11 @@ function buildEffectiveParams(manifest: ForgeJobManifest): ForgeJobManifest["par
 // Main generator
 // ---------------------------------------------------------------------------
 
-export function generatePython(manifest: ForgeJobManifest, existingPy?: string): string {
+export function generatePython(
+  manifest: ForgeJobManifest,
+  existingPy?: string,
+  resolvedSource?: ResolvedExternalSource
+): string {
   const className     = toPascalCase(manifest.name);
   const scheduleStr   = manifest.schedule ?? "triggered (no schedule)";
   const hasDq         = !!manifest.dq;
@@ -382,7 +450,7 @@ export function generatePython(manifest: ForgeJobManifest, existingPy?: string):
 
   const paramLines  = renderParams(effectiveParams, "");
   const paramDocs   = renderParamDocs(effectiveParams);
-  const sourceRead  = renderSourceRead(manifest);
+  const sourceRead  = renderSourceRead(manifest, resolvedSource);
   const writeBlock  = renderWrite(manifest);
   const helpersPM   = renderTrackerPathMethod(manifest);
   const helpersTE   = renderTrackerExistsMethod();
@@ -392,21 +460,19 @@ export function generatePython(manifest: ForgeJobManifest, existingPy?: string):
     ? `__year/__month/__day/__hour from ${manifest.partition.column}${manifest.partition.hasHour ? "" : " (hour=PARTITION_HOUR, default 0)"}`
     : `__date = DD_MM_YYYY_HH derived from ${manifest.partition.column}`;
 
-  const dqImport = hasDq ? `
-try:
-    from forge_dq import track
-except ImportError:
-    import functools
+  const dqImport = "";
 
-    def track(**kwargs):  # type: ignore[misc]
-        """No-op fallback when forge_dq is not installed."""
-        def decorator(fn):
-            @functools.wraps(fn)
-            def wrapper(*args, **kw):
-                return fn(*args, **kw)
-            return wrapper
-        return decorator
-` : "";
+  // Partition variable extraction — always emitted so source filters can reference
+  // _year, _month, _day (all layers) and _date_key (silver/gold) before the write block.
+  const runPartitionVars =
+    manifest.layer === "bronze"
+      ? `        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))\n`
+      : [
+          `        _year, _month, _day = (int(x) for x in PARTITION_DATE.split("-"))`,
+          `        _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")`,
+          `        _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{PARTITION_HOUR:02d}"`,
+          ``,
+        ].join("\n");
 
   return `# ==============================================================
 # GENERATED BY FORGE CLI — DO NOT EDIT OUTSIDE THE MARKED BLOCK
@@ -459,7 +525,7 @@ ${helpersSetup}
 ${SENTINEL.HELPERS_END}
 
     def run(self) -> None:
-${SENTINEL.SOURCE_START}
+${runPartitionVars}${SENTINEL.SOURCE_START}
 ${sourceRead}
 ${SENTINEL.SOURCE_END}
 

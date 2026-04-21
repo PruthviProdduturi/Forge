@@ -120,10 +120,10 @@ Typical profile assignments:
 
 | Operator | Profile | Rationale |
 |----------|---------|-----------|
-| `SparkKubernetesOperator` | `small` | The task pod only submits the CRD and polls for status; compute runs in Spark pods on the compute cluster |
+| `ForgeSparkOperator` | `small` | Task pod only submits the SparkApplication CRD and polls status; compute runs in Spark pods on the compute cluster |
+| `ForgeDqGateOperator` | `small` | Submits the `forge_dq_gate` Spark job; all DQ computation runs on the compute cluster |
+| `SparkKubernetesOperator` | `small` | Same as ForgeSparkOperator — submit and poll only |
 | `TrinoOperator` | `small` | Issues SQL via HTTP; all compute is in Trino pods on the compute cluster |
-| `DQRunnerOperator` (Python-only checks) | `medium` | Loads Delta metadata, runs Trino queries for content checks |
-| `DQRunnerOperator` (Spark-backed checks) | `small` | Delegates actual computation to a Spark job |
 | `PythonOperator` (catalog update) | `small` | Light metadata writes |
 | `EmailOperator` | `small` | Sends HTTP request to mail relay |
 
@@ -260,111 +260,98 @@ Calico network policies restrict traffic within the `airflow` namespace:
 
 ---
 
-## 5. DAG Repository Structure and git-sync
+## 5. DAG Delivery — ADLS-Based (Dev) and git-sync (Prod)
 
-### Repository Layout
+### Dev DAG Delivery Model
 
-All DAGs live in the Forge monorepo under `orchestration/airflow/dags/`. The directory structure mirrors the pipeline domain:
-
-```
-orchestration/airflow/dags/
-├── ingestion/
-│   ├── __init__.py
-│   ├── ingest_sales_orders.py
-│   ├── ingest_crm_accounts.py
-│   └── ingest_erp_inventory.py
-├── transformation/
-│   ├── __init__.py
-│   ├── transform_orders.py
-│   ├── transform_customer_ltv.py
-│   └── transform_inventory_positions.py
-├── validation/
-│   ├── __init__.py
-│   ├── validate_orders.py
-│   └── validate_inventory.py
-├── publishing/
-│   ├── __init__.py
-│   ├── publish_orders.py
-│   └── publish_inventory.py
-├── maintenance/
-│   ├── __init__.py
-│   ├── delta_optimize.py
-│   └── dq_results_compact.py
-└── common/
-    ├── __init__.py
-    ├── spark_defaults.py       ← shared SparkApplication spec defaults
-    ├── resource_profiles.py    ← KubernetesExecutor resource profiles
-    ├── callbacks.py            ← SLA miss and failure alert callbacks
-    └── sensors.py              ← shared ExternalTaskSensor wrappers
-```
-
-DAGs are never uploaded manually to any Airflow webserver. They exist only in Git and are delivered to Airflow automatically via `git-sync`.
-
-### git-sync Sidecar
-
-The scheduler and webserver pods each run a `git-sync` sidecar container alongside the main Airflow container. `git-sync` continuously polls the Git repository for changes and writes the latest DAG files to a shared volume that the Airflow process reads.
-
-Architecture:
+In **dev**, `git-sync` is disabled. DAGs are delivered manually by the engineer via `sync-jobs.sh`, which stores them durably in ADLS and pulls them into the running dag-processor pod immediately.
 
 ```
-Scheduler Pod
-┌─────────────────────────────────────────────┐
-│                                             │
-│  ┌──────────────────────┐                   │
-│  │  airflow-scheduler   │◀── reads from     │
-│  │  (main container)    │    /opt/airflow/  │
-│  └──────────────────────┘    dags/ (emptyDir)│
-│                                             │
-│  ┌──────────────────────┐                   │
-│  │  git-sync            │── writes to ─────▶│
-│  │  (sidecar container) │    /opt/airflow/  │
-│  └──────────────────────┘    dags/          │
-│           │                                 │
-└───────────┼─────────────────────────────────┘
-            │
-            │  git clone / git pull (every 60s)
-            ▼
-    Git remote (Azure DevOps / GitHub)
-    branch: main
-    path: orchestration/airflow/dags/
+Engineer workstation
+        │
+        │  bash infra/scripts/sync-jobs.sh --job <name>
+        ▼
+Step 1: forge generate  →  {project}/dags/{name}_dag.py
+Step 2: upload DAG      →  ADLS code/dags/{name}_dag.py          (durable)
+Step 3: kubectl exec    →  dag-processor:/opt/airflow/dags/       (immediate)
+        python3 pulls file from ADLS via DefaultAzureCredential
 ```
 
-Configuration in the Helm chart:
+DAGs survive pod restarts via the **`dag-restore` init container** on the dag-processor pod:
+
+```
+dag-processor Pod (on every start)
+┌───────────────────────────────────────────────────────┐
+│                                                       │
+│  ┌─────────────────┐  downloads all code/dags/*.py   │
+│  │  dag-restore    │  ────────────────────────────── │
+│  │  (init container)  from ADLS via workload identity │
+│  └────────┬────────┘                                  │
+│           │  writes to emptyDir (shared volume)       │
+│           ▼                                           │
+│  ┌─────────────────┐                                  │
+│  │  dag-processor  │◀── reads /opt/airflow/dags/      │
+│  │  (main container)                                  │
+│  └─────────────────┘                                  │
+│                                                       │
+└───────────────────────────────────────────────────────┘
+         ▲
+         │  code/dags/{dag_name}_dag.py
+    ADLS (forgeadls{alias}{env})
+```
+
+The `dag-restore` init container image is set to the forge-airflow ACR image (injected by `forge-up.sh --set`). It reads `FORGE_STORAGE_ACCOUNT` from the `forge-platform-config` ConfigMap, created by `forge-up.sh` before helm upgrade. The pod's workload identity (`azure.workload.identity/use: "true"`) gives it read access to ADLS.
+
+This means the DAG delivery is **durable across cluster redeployments** — a fresh cluster automatically restores all DAGs from ADLS with no manual intervention.
+
+**Removing a DAG (dev):**
+```bash
+# Delete from ADLS (prevents init container from restoring it)
+az storage blob delete \
+  --account-name forgeadlsdsengdev \
+  --container-name code --name dags/<dag_name>_dag.py \
+  --auth-mode login
+
+# Remove from running pod immediately
+kubectl exec <dag-processor-pod> -n airflow -c dag-processor \
+  -- rm /opt/airflow/dags/<dag_name>_dag.py
+```
+
+### Prod DAG Delivery Model
+
+In **prod**, DAGs are delivered via the `git-sync` sidecar — the classic approach. `git-sync` continuously polls the Git repository and writes DAG files to a shared volume read by the dag-processor.
 
 ```yaml
-gitSync:
-  enabled: true
-  repo: "https://dev.azure.com/org/Forge/_git/Forge"
-  branch: "main"
-  subPath: "orchestration/airflow/dags"
-  syncPeriod: 60          # seconds between git pulls
-  depth: 1                # shallow clone for speed
-  sshKeySecret: ""        # not used — auth via Azure DevOps PAT in Key Vault
-  httpSecret: "git-sync-credentials"  # Kubernetes Secret with PAT
+# prod values.yaml
+dags:
+  gitSync:
+    enabled: true
+    repo: "https://dev.azure.com/org/Forge/_git/Forge"
+    branch: "main"
+    subPath: "orchestration/airflow/dags"
+    syncPeriod: 30s
 ```
 
-The Git credentials (a read-only Azure DevOps PAT) are stored in Key Vault and projected into a Kubernetes Secret by the CSI Secrets Store Driver on pod startup.
+After a PR merges to `main`, the DAG appears in prod Airflow within ~30 seconds. No manual sync step is required.
 
 ### DAG Versioning
 
-Airflow **serializes DAGs** to the PostgreSQL metadata database. When a DAG Python file changes on disk, the scheduler detects the new file hash and updates the serialized DAG in the metadata DB. The scheduler and webserver both read from the serialized DAG, not from the Python file directly — this means webserver replicas always see the same DAG definition regardless of which replica's git-sync has already pulled the latest commit.
+Airflow **serializes DAGs** to the PostgreSQL metadata database. When a DAG Python file changes on disk, the scheduler detects the new file hash and updates the serialized DAG in the metadata DB. The scheduler and webserver both read from the serialized DAG, not from the Python file directly — this means all replicas always see the same DAG definition.
 
 Serialized DAGs are versioned in the `dag_version` table (Airflow 3.0+). The metadata DB retains the previous serialized version until the new one is confirmed parsed successfully.
 
 ### Safe Deployment — No Breaking Running DAGs
 
-When a DAG file changes in Git and git-sync delivers it to the scheduler:
+When a DAG file is updated (in dev: via `sync-jobs.sh`; in prod: via git-sync):
 
-1. The scheduler parses the new file in a subprocess. If parsing fails (syntax error, import error), the error is recorded in `import_errors` and the old serialized DAG remains active. No running DAGs are disrupted.
+1. The dag-processor parses the new file in a subprocess. If parsing fails, the error is recorded in `import_errors` and the old serialized DAG remains active. No running DAGs are disrupted.
 2. If parsing succeeds, the new serialized DAG is written to the metadata DB.
-3. **In-flight task instances continue to use the serialized DAG version that was active when the DAG run started.** They are not affected by the mid-run file change.
-4. New DAG runs (next scheduled trigger or manual trigger) use the new serialized DAG.
-
-This means a DAG can be safely updated at any time, including while a run is in progress. The convention is:
+3. **In-flight task instances continue to use the serialized DAG version active when the run started.** They are not affected by the mid-run file change.
+4. New DAG runs use the new serialized DAG.
 
 - **Additive changes** (new tasks, new parameters with defaults): always safe to deploy mid-run.
-- **Breaking changes** (removing tasks that running instances depend on, changing task IDs): coordinate with any currently-running instances. The `airflow dags pause <dag_id>` command can prevent new runs from starting while a long-running instance completes.
-- **Incompatible interface changes** to shared templates in `common/`: bump the import path or use a version suffix (`v2`) to avoid breaking imports in DAGs that haven't been updated yet.
+- **Breaking changes** (removing tasks, changing task IDs): pause the DAG first (`airflow dags pause <dag_id>`) and wait for in-flight runs to complete.
+- **Dev cleanup before update**: delete the old DAG from ADLS and the pod, then re-sync.
 
 ---
 
@@ -372,75 +359,102 @@ This means a DAG can be safely updated at any time, including while a run is in 
 
 > **Hands-on guide:** For step-by-step DAG writing, testing, and debugging examples see the [Developer Experience Guide §3 — Airflow DAG Development](../guides/developer-experience.md#3-airflow-dag-development). This section covers the architectural patterns and constraints that govern how DAGs are structured on Forge.
 
-### TaskFlow API
+### Codegen Model — forge generate
 
-All new DAGs in Forge use the **TaskFlow API** (`@task` decorator, available since Airflow 2.0). TaskFlow eliminates the need to explicitly create XCom pushes and pulls — return values from one `@task` function become the input to the next automatically.
+All Forge pipeline DAGs are **generated** from a `.forge.ts` manifest by `forge generate`. Data engineers do not write DAG files directly. The generator produces a fully managed DAG file — every import, operator instantiation, and task dependency is emitted automatically. The only user-editable artifact is the Spark job's business logic block.
 
-Standard four-stage DAG pattern:
+Generated DAGs import `ForgeSparkOperator` and `ForgeDqGateOperator` from the `forge_airflow` plugin. Platform configuration (Spark image, storage account, tenant ID, MI client ID) is injected by the operator at runtime from Airflow Variables — it never appears in the DAG file.
+
+### ForgeSparkOperator
+
+`ForgeSparkOperator` is the sole mechanism for submitting Spark jobs in generated DAGs. It replaces direct use of `SparkKubernetesOperator` for platform-managed pipelines. The operator builds the complete `SparkApplication` YAML internally at execute time — no YAML is authored or visible in the DAG file.
+
+Platform config is read from Airflow Variables at operator instantiation using `_require()`, which raises immediately if a variable is missing. This fails the DAG at parse time rather than at runtime.
 
 ```python
-from airflow.decorators import dag, task
-from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import (
-    SparkKubernetesOperator,
-)
-from datetime import datetime, timedelta
-from common.callbacks import on_failure_callback, on_sla_miss
-from common.resource_profiles import RESOURCE_PROFILES
+from forge_airflow import ForgeSparkOperator, ForgeDqGateOperator
+from datetime import datetime
 
-@dag(
-    dag_id="orders_pipeline",
-    schedule="@daily",
-    start_date=datetime(2026, 1, 1),
-    catchup=False,
-    default_args={
-        "retries": 2,
-        "retry_delay": timedelta(minutes=5),
-        "on_failure_callback": on_failure_callback,
-    },
-    sla_miss_callback=on_sla_miss,
-)
-def orders_pipeline():
+with DAG(dag_id="nyc_taxi_bronze", schedule="0 2 * * *",
+         start_date=datetime(2024, 1, 1), end_date=datetime(2024, 12, 31),
+         catchup=True, max_active_runs=10) as dag:
 
-    ingest = SparkKubernetesOperator(
-        task_id="ingest_raw_orders",
-        application="abfss://code@<account>.dfs.core.windows.net/jobs/ingest_orders.py",
-        namespace="spark-jobs",
-        kubernetes_conn_id="compute_cluster_k8s",
-        executor_config=RESOURCE_PROFILES["small"],
+    ingest_task = ForgeSparkOperator(
+        task_id="ingest_taxi_bronze",
+        job="nyc_taxi_bronze",
+        layer="bronze",
+        env_vars={"TAXI_TYPE": "yellow", "PARTITION_DATE": "{{ ds }}", "PARTITION_HOUR": "0"},
+        driver={"cores": 2, "memory": "4g"},
+        executor={"cores": 4, "memory": "8g", "instances": 2},
     )
-
-    transform = SparkKubernetesOperator(
-        task_id="transform_curated_orders",
-        application="abfss://code@<account>.dfs.core.windows.net/jobs/transform_orders.py",
-        namespace="spark-jobs",
-        kubernetes_conn_id="compute_cluster_k8s",
-        executor_config=RESOURCE_PROFILES["small"],
+    dq_task = ForgeDqGateOperator(
+        task_id="dq_gate_bronze", job="nyc_taxi_bronze", layer="bronze", table="bronze.nyctaxi",
     )
-
-    @task(executor_config=RESOURCE_PROFILES["medium"])
-    def validate_dq():
-        from forge.dq.sdk import DQRunner, load_ruleset
-        from forge.dq.reporters import StoreReporter, AlertReporter, LineageReporter
-        ruleset = load_ruleset("orchestration/dq/rules/orders.yaml")
-        runner = DQRunner(ruleset=ruleset)
-        report = runner.run()
-        for reporter in [StoreReporter(), AlertReporter(), LineageReporter()]:
-            reporter.report(report)
-        if report.has_critical_failures():
-            raise ValueError(f"DQ critical failure: {report.critical_summary()}")
-
-    publish = SparkKubernetesOperator(
-        task_id="publish_serving_orders",
-        application="abfss://code@<account>.dfs.core.windows.net/jobs/publish_orders.py",
-        namespace="spark-jobs",
-        kubernetes_conn_id="compute_cluster_k8s",
-        executor_config=RESOURCE_PROFILES["small"],
-    )
-
-    ingest >> transform >> validate_dq() >> publish
-
-orders_pipeline()
+    ingest_task >> dq_task
 ```
+
+### ForgeDqGateOperator
+
+`ForgeDqGateOperator` submits the `forge_dq_gate` platform Spark job for the given pipeline and layer. It passes `RULES_PATH=abfss://code@{storage}/dq/rules/{job}.yaml` as an environment variable — no base64-encoded rule blobs in the DAG. The job downloads the YAML from ADLS at runtime, applies partition-aware filtering, and fails the task on any critical rule violation.
+
+### Cross-DAG Dependencies — triggeredBy / ExternalTaskSensor
+
+Cross-DAG dependencies are expressed using `triggeredBy` in the manifest. The generator translates this to an `ExternalTaskSensor` at the top of the downstream DAG. The upstream DAG never needs to change when a new consumer is added.
+
+**Old pattern (removed):** upstream DAG listed `triggers: ["downstream_dag_id"]` → generator emitted `TriggerDagRunOperator`. This required updating the upstream every time a new consumer was added.
+
+**Current pattern:** downstream DAG declares `triggeredBy: "upstream_dag_id"` → generator emits `ExternalTaskSensor`. The upstream DAG is completely unchanged.
+
+ExternalTaskSensor configuration emitted by the generator:
+
+```python
+from airflow.sensors.external_task import ExternalTaskSensor
+from datetime import timedelta
+
+wait_for_nyc_taxi_bronze = ExternalTaskSensor(
+    task_id="wait_for_nyc_taxi_bronze",
+    external_dag_id="nyc_taxi_bronze",
+    external_task_id=None,        # waits for the entire upstream DAG, not a specific task
+    mode="reschedule",            # frees task slot while waiting — mandatory with KubernetesExecutor
+    timeout=timedelta(hours=8),
+    poke_interval=120,
+)
+```
+
+All layers (bronze, silver, gold) run on the same schedule (`"0 2 * * *"`). The sensor matches on the same logical date — when the upstream DAG run for the same `ds` reaches `success`, the sensor passes. `triggeredBy` is not layer-specific: any pipeline can declare a dependency on any other pipeline.
+
+Generated silver DAG with a `triggeredBy` dependency:
+
+```python
+from airflow.sensors.external_task import ExternalTaskSensor
+from forge_airflow import ForgeSparkOperator, ForgeDqGateOperator
+from datetime import datetime, timedelta
+
+with DAG(dag_id="nyc_taxi_silver", schedule="0 2 * * *",
+         start_date=datetime(2024, 1, 1), end_date=datetime(2024, 12, 31),
+         catchup=True, max_active_runs=10) as dag:
+
+    wait_for_nyc_taxi_bronze = ExternalTaskSensor(
+        task_id="wait_for_nyc_taxi_bronze", external_dag_id="nyc_taxi_bronze",
+        external_task_id=None, mode="reschedule", timeout=timedelta(hours=8), poke_interval=120,
+    )
+    ingest_task = ForgeSparkOperator(
+        task_id="transform_silver", job="nyc_taxi_silver", layer="silver",
+        env_vars={"PARTITION_DATE": "{{ ds }}", "PARTITION_HOUR": "0"},
+        driver={"cores": 2, "memory": "4g"},
+        executor={"cores": 4, "memory": "8g", "instances": 3},
+    )
+    dq_task = ForgeDqGateOperator(
+        task_id="dq_gate_silver", job="nyc_taxi_silver", layer="silver", table="silver.nyctaxi",
+    )
+    wait_for_nyc_taxi_bronze >> ingest_task >> dq_task
+```
+
+### endDate — Bounded Schedules
+
+The `endDate` manifest field (format `YYYY-MM-DD`) stops the Airflow scheduler from creating new runs after that date. It is required for bounded backfills. Without `endDate`, a backfill DAG with `catchup=True` continues indefinitely.
+
+The generator writes `end_date=datetime(YYYY, M, D)` into the `DAG(...)` constructor. For ongoing production pipelines that should not stop, omit `endDate` from the manifest.
 
 ### Dynamic Task Mapping
 
@@ -545,17 +559,49 @@ The `on_sla_miss` callback posts a structured alert to the Teams/Slack webhook a
 
 The following operators are used in Forge DAGs. Each is part of the `forgeacr/airflow:3.1.0` image.
 
+### ForgeSparkOperator
+
+**Source:** `forge_airflow` plugin — `orchestration/airflow/plugins/forge_airflow/operators.py`
+
+**Purpose in Forge:** The primary operator for all platform-managed Spark jobs. Used in all DAGs generated by `forge generate`. Builds the complete `SparkApplication` YAML internally and submits it to the compute cluster — no YAML is authored in the DAG file.
+
+**How it works:**
+
+1. At instantiation, the operator reads platform config from Airflow Variables (`spark_image`, `storage_account`, `tenant_id`, `mi_client_id`) via `_require()`. Missing variables raise immediately at parse time.
+2. At execute time, it constructs the `SparkApplication` manifest from the operator parameters and platform config, then posts it to the compute cluster's Kubernetes API.
+3. It polls the CRD status until the application reaches a terminal state (`COMPLETED`, `FAILED`, `SUBMISSION_FAILED`).
+
+```python
+ForgeSparkOperator(
+    task_id="ingest_taxi_bronze",
+    job="nyc_taxi_bronze",          # matches ADLS path: code/spark/jobs/nyc_taxi_bronze.py
+    layer="bronze",
+    env_vars={"PARTITION_DATE": "{{ ds }}", "PARTITION_HOUR": "0"},
+    driver={"cores": 2, "memory": "4g"},
+    executor={"cores": 4, "memory": "8g", "instances": 2},
+)
+```
+
+### ForgeDqGateOperator
+
+**Source:** `forge_airflow` plugin — `orchestration/airflow/plugins/forge_airflow/operators.py`
+
+**Purpose in Forge:** Runs the `forge_dq_gate` platform Spark job for a given pipeline and layer. Passes `RULES_PATH=abfss://code@{storage}/dq/rules/{job}.yaml` as an environment variable. The gate job downloads the YAML from ADLS, applies partition-aware filtering, and fails on any critical rule violation.
+
+```python
+ForgeDqGateOperator(
+    task_id="dq_gate_bronze",
+    job="nyc_taxi_bronze",
+    layer="bronze",
+    table="bronze.nyctaxi",
+)
+```
+
 ### SparkKubernetesOperator
 
 **Provider:** `apache-airflow-providers-cncf-kubernetes`
 
-**Purpose in Forge:** Submits a `SparkApplication` CRD to the compute cluster (`forge-compute`) and waits for it to reach `Completed` or `Failed` state. This is the primary mechanism for running all batch Spark jobs — ingestion, transformation, and serving materialization.
-
-**How it works:**
-
-1. The operator serializes the `SparkApplication` manifest (passed as `application_file` or built from individual parameters) and posts it to the compute cluster's Kubernetes API via the `compute_cluster_k8s` connection.
-2. It then polls the CRD status until the application reaches a terminal state (`COMPLETED`, `FAILED`, `SUBMISSION_FAILED`).
-3. On `COMPLETED`, the task succeeds. On any failure state, the task fails, Airflow retries up to `retries` times, and on exhausting retries, the `on_failure_callback` fires.
+**Purpose in Forge:** Used for hand-authored DAGs and platform maintenance jobs that are not managed by `forge generate`. Submits a `SparkApplication` CRD directly from an `application_file` YAML and polls for completion.
 
 The operator itself runs in a small task pod on the orchestration cluster. The actual Spark driver and executor pods run on the compute cluster, completely separate.
 

@@ -102,10 +102,11 @@ dags:
 
 # ---------------------------------------------------------------------------
 # Ingress — public HTTPS access to Airflow UI
-# Host is overridden at deploy time: --set ingress.web.host=forge-airflow-{alias}{env}.{loc}.cloudapp.azure.com
+# Host is overridden at deploy time: --set ingress.apiServer.host=forge-airflow-{alias}{env}.{loc}.cloudapp.azure.com
+# Note: Airflow chart 1.14+ uses ingress.apiServer (not ingress.web) for Airflow 3.x.
 # ---------------------------------------------------------------------------
 ingress:
-  web:
+  apiServer:
     enabled: true
     ingressClassName: nginx
     host: forge-airflow-dev.westcentralus.cloudapp.azure.com  # overridden by forge-up.sh
@@ -142,6 +143,8 @@ scheduler:
   replicas: 1
   waitForMigrations:
     enabled: false
+  podLabels:
+    azure.workload.identity/use: "true"
   resources:
     requests:
       cpu: "500m"
@@ -158,6 +161,8 @@ triggerer:
   replicas: 1
   waitForMigrations:
     enabled: false
+  podLabels:
+    azure.workload.identity/use: "true"
 
 # ---------------------------------------------------------------------------
 # DAG Processor — Airflow 3.x requires a separate dag-processor component
@@ -167,10 +172,69 @@ dagProcessor:
   replicas: 1
   waitForMigrations:
     enabled: false
+  podLabels:
+    azure.workload.identity/use: "true"
+  # DAGs are stored in ADLS (code/dags/*.py) and restored here on pod start.
+  # The emptyDir is shared between the dag-restore init container and the dag-processor.
+  # sync-jobs.sh uploads DAGs to ADLS; this init container pulls them on every pod restart.
+  extraVolumes:
+    - name: dags
+      emptyDir: {}
+  extraVolumeMounts:
+    - name: dags
+      mountPath: /opt/airflow/dags
+  extraInitContainers:
+    - name: dag-restore
+      # Image is overridden by forge-up.sh --set to forge-airflow ACR image.
+      # The forge-airflow image has azure-storage-blob + azure-identity installed.
+      # Placeholder here prevents Helm validation errors if --set is omitted.
+      image: "apache/airflow:3.1.8-python3.11"
+      command:
+        - python3
+        - "-c"
+        - |
+          import os, sys
+          storage = os.environ.get("FORGE_STORAGE_ACCOUNT", "")
+          if not storage:
+              print("WARN: FORGE_STORAGE_ACCOUNT not set — skipping DAG restore", flush=True)
+              sys.exit(0)
+          try:
+              from azure.storage.blob import BlobServiceClient
+              from azure.identity import DefaultAzureCredential
+          except ImportError:
+              print("WARN: azure packages not available in image — skipping DAG restore", flush=True)
+              sys.exit(0)
+          os.makedirs("/opt/airflow/dags", exist_ok=True)
+          cred = DefaultAzureCredential()
+          client = BlobServiceClient(
+              account_url=f"https://{storage}.blob.core.windows.net",
+              credential=cred,
+          )
+          container_client = client.get_container_client("code")
+          restored = 0
+          for blob in container_client.list_blobs(name_starts_with="dags/"):
+              name = blob.name[len("dags/"):]
+              if not name or not name.endswith(".py") or "/" in name:
+                  continue
+              data = container_client.get_blob_client(blob.name).download_blob().readall()
+              with open(f"/opt/airflow/dags/{name}", "wb") as f:
+                  f.write(data)
+              print(f"  restored: {name}", flush=True)
+              restored += 1
+          print(f"dag-restore: {restored} DAG(s) restored from {storage}/code/dags/", flush=True)
+      envFrom:
+        - configMapRef:
+            name: forge-platform-config
+      volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
 
 apiServer:
   waitForMigrations:
     enabled: false
+  serviceAccountName: airflow  # use main SA — airflow-api-server SA has no federated identity credential
+  podLabels:
+    azure.workload.identity/use: "true"
 
 # ---------------------------------------------------------------------------
 # Workers — not used with LocalExecutor
@@ -301,6 +365,20 @@ env:
   # returns empty in K8s, producing broken log URLs like http://:8793/...
   - name: AIRFLOW__CORE__HOSTNAME_CALLABLE
     value: "airflow.utils.net.get_host_ip_address"
+  # Remote logging — task logs written to ADLS airflow-logs container via workload identity.
+  # Airflow MI must have Storage Blob Data Contributor on forgeadls{alias}{env} (post-provision.sh §5).
+  - name: AIRFLOW__LOGGING__REMOTE_LOGGING
+    value: "True"
+  - name: AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID
+    value: "azure_blob_storage_log"
+  - name: AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER
+    value: "wasb://airflow-logs/"
+  # wasb connection — account_name only, no key. DefaultAzureCredential uses the
+  # workload identity federated token (AZURE_FEDERATED_TOKEN_FILE) for auth.
+  # additionally_allowed_tenants="*" required: azure-storage-blob resolves auth against
+  # a secondary tenant endpoint when public access is disabled, so we allow all tenants.
+  - name: AIRFLOW_CONN_AZURE_BLOB_STORAGE_LOG
+    value: '{"conn_type": "wasb", "extra": {"account_name": "forgeadlsdsengdev", "additionally_allowed_tenants": "*"}}'
 extraEnv: |
   - name: AIRFLOW__WEBSERVER__OAUTH_CLIENT_ID
     valueFrom:
@@ -313,29 +391,127 @@ extraVolumes:
   - name: compute-kubeconfig
     secret:
       secretName: airflow-compute-kubeconfig
-  # Dev DAG policy — enforces 5-day end_date, no catchup, max 2 active runs.
-  # Applied at parse time to every DAG. ConfigMap created by forge-up.sh.
-  - name: forge-dev-policy
-    configMap:
-      name: forge-dev-dag-policy
   # webserver_config.py — Airflow 3.x chart no longer auto-mounts webserverConfig
   # into the api-server pod. Mount it explicitly so FABAuthManager picks up OAuth.
   - name: webserver-config
     configMap:
       name: airflow-webserver-config
+  # forge-airflow-plugin — shadows /opt/airflow/plugins/forge_airflow/operators.py
+  # in all Airflow pods (scheduler, dag-processor, api-server). Created by forge-up.sh
+  # from orchestration/airflow/plugins/forge_airflow/operators.py so plugin updates
+  # propagate within ~60s without an image rebuild.
+  - name: forge-airflow-plugin
+    configMap:
+      name: forge-airflow-plugin
 
 extraVolumeMounts:
   - name: compute-kubeconfig
     mountPath: /opt/airflow/kubeconfig
     readOnly: true
-  - name: forge-dev-policy
-    mountPath: /opt/airflow/plugins/forge_dev_policy.py
-    subPath: forge_dev_policy.py
-    readOnly: true
   - name: webserver-config
     mountPath: /opt/airflow/webserver_config.py
     subPath: webserver_config.py
     readOnly: true
+  - name: forge-airflow-plugin
+    mountPath: /opt/airflow/plugins/forge_airflow/operators.py
+    subPath: operators.py
+    readOnly: true
+
+# ---------------------------------------------------------------------------
+# Pod template for KubernetesExecutor worker pods.
+# Airflow 3.x loads KubernetesExecutor as a secondary executor even when the
+# primary is LocalExecutor (multi-executor API). Without this, the chart does
+# not include pod_template_file.yaml in the airflow-config ConfigMap and the
+# scheduler crashes with "IsADirectoryError" when trying to enqueue a task.
+# ---------------------------------------------------------------------------
+podTemplate: |
+  apiVersion: v1
+  kind: Pod
+  metadata:
+    name: dummy
+    labels:
+      azure.workload.identity/use: "true"
+  spec:
+    serviceAccountName: airflow
+    restartPolicy: Never
+    containers:
+      - name: base
+        image: forgeacr.azurecr.io/airflow:3.1.8
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: AIRFLOW_CONN_KUBERNETES_COMPUTE_CLUSTER
+            value: "kubernetes://?in_cluster=False&kube_config_path=%2Fopt%2Fairflow%2Fkubeconfig%2Fconfig"
+          - name: FORGE_ENV
+            value: "dev"
+          - name: AIRFLOW__CORE__HOSTNAME_CALLABLE
+            value: "airflow.utils.net.get_host_ip_address"
+          - name: AIRFLOW__LOGGING__REMOTE_LOGGING
+            value: "True"
+          - name: AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID
+            value: "azure_blob_storage_log"
+          - name: AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER
+            value: "wasb://airflow-logs/"
+          - name: AIRFLOW_CONN_AZURE_BLOB_STORAGE_LOG
+            value: '{"conn_type": "wasb", "extra": {"account_name": "forgeadlsdsengdev", "additionally_allowed_tenants": "*"}}'
+          # Explicit AZURE_CLIENT_ID — AKS workload identity webhook injects AZURE_FEDERATED_TOKEN_FILE
+          # and AZURE_TENANT_ID but not always AZURE_CLIENT_ID. Set explicitly so DefaultAzureCredential
+          # uses WorkloadIdentityCredential for ADLS log uploads.
+          # Overridden at deploy time via forge-up.sh --set env[100].value=${AIRFLOW_WI_CLIENT_ID}
+          - name: AZURE_CLIENT_ID
+            value: "overridden-at-deploy-time"
+          - name: AIRFLOW_HOME
+            value: /opt/airflow
+          - name: AIRFLOW__CORE__FERNET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: airflow-fernet-key
+                key: fernet-key
+          - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+            valueFrom:
+              secretKeyRef:
+                name: airflow-db-credentials
+                key: connection
+          - name: AIRFLOW_CONN_AIRFLOW_DB
+            valueFrom:
+              secretKeyRef:
+                name: airflow-db-credentials
+                key: connection
+          - name: AIRFLOW__API__SECRET_KEY
+            valueFrom:
+              secretKeyRef:
+                name: airflow-api-secret-key
+                key: api-secret-key
+          - name: AIRFLOW__API_AUTH__JWT_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: airflow-jwt-secret
+                key: jwt-secret
+        volumeMounts:
+          - name: config
+            mountPath: /opt/airflow/airflow.cfg
+            subPath: airflow.cfg
+            readOnly: true
+          - name: config
+            mountPath: /opt/airflow/config/airflow_local_settings.py
+            subPath: airflow_local_settings.py
+            readOnly: true
+          - name: compute-kubeconfig
+            mountPath: /opt/airflow/kubeconfig
+            readOnly: true
+          - name: forge-airflow-plugin
+            mountPath: /opt/airflow/plugins/forge_airflow/operators.py
+            subPath: operators.py
+            readOnly: true
+    volumes:
+      - name: config
+        configMap:
+          name: airflow-config
+      - name: compute-kubeconfig
+        secret:
+          secretName: airflow-compute-kubeconfig
+      - name: forge-airflow-plugin
+        configMap:
+          name: forge-airflow-plugin
 
 # ---------------------------------------------------------------------------
 # Logs — stdout (captured by Azure Monitor Agent → Log Analytics)

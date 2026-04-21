@@ -7,7 +7,9 @@
 
 ## Overview
 
-When a DQ rule marked `severity: critical` fails and `failFast: true` is set in the manifest, the Spark job exits with a non-zero code and writes **no data**. The Airflow task is marked `FAILED`. No partial data is written to the Delta table.
+DQ validation runs as a dedicated platform Spark job (`forge_dq_gate.py`) submitted by `ForgeDqGateOperator` as a separate Airflow task after the ingest/transform task. When a rule marked `severity: critical` fails, `forge_dq_gate.py` raises `DQCriticalFailureError`, the `SparkApplication` exits non-zero, the `dq_gate` Airflow task is marked `FAILED`, and all downstream tasks are blocked.
+
+The ingest/transform task has already written its data to Delta before the DQ gate runs — a critical DQ failure does not undo the write. It blocks downstream consumers (e.g. the gold layer) from processing bad data.
 
 DQ warnings do not stop the pipeline — only critical failures do.
 
@@ -17,26 +19,36 @@ DQ warnings do not stop the pipeline — only critical failures do.
 
 ### 1. Find the failure in Airflow
 
+The failed task is the `dq_gate` task (e.g. `dq_gate_silver`), not the ingest/transform task. The ingest task will show `SUCCESS`.
+
 ```bash
-# Get the failed task logs
+# Get the failed dq_gate task logs (shows the Spark driver log from forge_dq_gate.py)
 kubectl exec -n airflow --context forge-orch-dev \
   deployment/airflow-scheduler \
-  -- airflow tasks logs <dag_id> <task_id> <run_id>
+  -- airflow tasks logs <dag_id> dq_gate_<layer> <run_id>
 ```
 
 Or navigate to: `https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/pipelines`
 
-Look for the DQ failure summary in the Spark driver logs:
+Look for the DQ failure summary in the `forge_dq_gate.py` Spark driver log:
 
 ```
 DQRunner: 3 rules evaluated, 1 critical failure
   [FAILED CRITICAL] schema_order_id_not_null: 142 null values found (threshold: 0)
-DQRunner: failFast=True — raising DQCriticalFailure
+DQCriticalFailureError raised — SparkApplication exits non-zero
+```
+
+You can also read the `SparkApplication` CRD for the gate job directly:
+
+```bash
+kubectl --context forge-compute-dev get sparkapplication -n spark-jobs \
+  -l forge.io/job=nyc_taxi_silver-dq-gate \
+  --sort-by=.metadata.creationTimestamp | tail -1
 ```
 
 ### 2. Query the DQ results Delta table
 
-The DQ results are persisted in ADLS even on failure (the DQ report is written before the `failFast` exception):
+The DQ results are persisted in ADLS even on critical failure (the report is written before raising `DQCriticalFailureError`):
 
 ```sql
 -- Trino query: last 10 DQ runs for a specific job
@@ -49,11 +61,18 @@ SELECT
   observed_value,
   threshold,
   run_ts
-FROM lakehouse.dq.results
-WHERE job_name = 'nyc_taxi_silver'
-  AND run_ts > now() - INTERVAL '7' DAY
+FROM dq.rules__<safe_dataset_name>
+WHERE run_ts > now() - INTERVAL '7' DAY
 ORDER BY run_ts DESC
 LIMIT 50;
+```
+
+For example, for `nyc_taxi_silver` writing to `silver.nyctaxi`:
+```sql
+SELECT rule_name, severity, status, observed_value, threshold, run_ts
+FROM dq.rules__silver_nyctaxi
+WHERE run_ts > now() - INTERVAL '7' DAY
+ORDER BY run_ts DESC LIMIT 50;
 ```
 
 ### 3. Inspect the failing rule

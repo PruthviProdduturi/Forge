@@ -9,6 +9,7 @@
  * customisation is done through the manifest.
  */
 import type { ForgeJobManifest } from "../schema.js";
+import { rulesAsYaml } from "./dq.js";
 import cronstrue from "cronstrue";
 
 // ---------------------------------------------------------------------------
@@ -58,25 +59,13 @@ function renderEnvVars(
           `${indent}  value: "{{{{ var.value.get('${name.toLowerCase()}', '${p.default ?? ""}') }}}}"`,
         ].join("\n");
       }
-      // Default: env — use partition param convention or data_interval_start
-      const nameLower = name.toLowerCase();
-      const isDateParam =
-        nameLower.includes("date") ||
-        nameLower.includes("year") ||
-        nameLower.includes("month") ||
-        nameLower.includes("hour");
-      if (isDateParam) {
-        const fmt =
-          nameLower.includes("year")
-            ? "%Y"
-            : nameLower.includes("month")
-            ? "%-m"
-            : nameLower.includes("hour")
-            ? "%-H"
-            : "%Y-%m-%d";
+      // PARTITION_DATE auto-injection: {{ ds }} = logical_date as YYYY-MM-DD.
+      // Works for both scheduled and manual triggers.
+      // Year/month/hour are derived from PARTITION_DATE in the Spark job itself.
+      if (name === "PARTITION_DATE") {
         return [
           `${indent}- name: ${name}`,
-          `${indent}  value: "{{{{ data_interval_start.strftime('${fmt}') }}}}"`,
+          `${indent}  value: "{{{{ ds }}}}"`,
         ].join("\n");
       }
       if (p.default !== undefined) {
@@ -116,19 +105,59 @@ function buildEffectiveParams(
   return base;
 }
 
-/** Render the SparkApplication YAML template string. */
-function renderSparkApp(manifest: ForgeJobManifest): string {
-  const driverCores = manifest.resources?.driver?.cores ?? 2;
-  const driverMemory = manifest.resources?.driver?.memory ?? "4g";
-  const executorCores = manifest.resources?.executor?.cores ?? 4;
-  const executorMemory = manifest.resources?.executor?.memory ?? "8g";
-  const executorInstances = manifest.resources?.executor?.instances ?? 2;
+/** Render the SparkApplication YAML template string.
+ *
+ * @param manifest  The job manifest.
+ * @param taskType  "ingest" (default) — main job; "dq" — DQ gate job.
+ */
+function renderSparkApp(
+  manifest: ForgeJobManifest,
+  taskType: "ingest" | "dq" = "ingest"
+): string {
+  const isDq = taskType === "dq";
 
-  const effectiveParams = buildEffectiveParams(manifest);
-  const envVars = renderEnvVars(effectiveParams);
+  // DQ gate uses a smaller resource footprint
+  const driverCores   = isDq ? 1  : (manifest.resources?.driver?.cores    ?? 2);
+  const driverMemory  = isDq ? "2g" : (manifest.resources?.driver?.memory  ?? "4g");
+  const executorCores = isDq ? 2  : (manifest.resources?.executor?.cores   ?? 4);
+  const executorMemory = isDq ? "4g" : (manifest.resources?.executor?.memory ?? "8g");
+  const executorInstances = isDq ? 2 : (manifest.resources?.executor?.instances ?? 2);
 
-  // Standard platform env vars appended to every job
-  const platformEnv = `      - name: FORGE_ENV
+  const appName = isDq
+    ? `${manifest.name.replace(/_/g, "-")}-dq-gate`
+    : manifest.name.replace(/_/g, "-");
+
+  const mainFile = isDq
+    ? `"abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/spark/jobs/forge_dq_gate.py"`
+    : `"abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/spark/jobs/${manifest.name}.py"`;
+
+  // Derive table name for DQ gate env vars
+  const table =
+    manifest.output.table ??
+    `${manifest.layer}.${manifest.output.path.assetName
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "")}`;
+
+  // Env vars differ by task type
+  let envVarsStr: string;
+  if (isDq) {
+    // DQ gate: fixed env vars — LAYER, TABLE, PARTITION_DATE, RULES_YAML
+    const yaml = rulesAsYaml(manifest);
+    const rulesB64 = yaml ? Buffer.from(yaml).toString("base64") : "";
+    envVarsStr = [
+      `      - name: LAYER`,
+      `        value: "${manifest.layer}"`,
+      `      - name: TABLE`,
+      `        value: "${table}"`,
+      `      - name: PARTITION_DATE`,
+      `        value: "{{{{ ds }}}}"`,
+      `      - name: RULES_YAML`,
+      `        value: "${rulesB64}"`,
+    ].join("\n");
+  } else {
+    const effectiveParams = buildEffectiveParams(manifest);
+    const envVars = renderEnvVars(effectiveParams);
+    const platformEnv = `      - name: FORGE_ENV
         valueFrom:
           configMapKeyRef:
             name: forge-platform-config
@@ -138,12 +167,12 @@ function renderSparkApp(manifest: ForgeJobManifest): string {
           configMapKeyRef:
             name: forge-platform-config
             key: storage_account`;
+    envVarsStr = envVars ? `${envVars}\n${platformEnv}` : platformEnv;
+  }
 
-  const allEnvVars = envVars ? `${envVars}\n${platformEnv}` : platformEnv;
-
-  // Adaptive shuffle for silver/gold
+  // Adaptive shuffle for silver/gold (ingest task only)
   const adaptiveConf =
-    manifest.layer !== "bronze"
+    !isDq && manifest.layer !== "bronze"
       ? `    spark.sql.adaptive.enabled: "true"
     spark.sql.adaptive.coalescePartitions.enabled: "true"`
       : "";
@@ -152,7 +181,7 @@ function renderSparkApp(manifest: ForgeJobManifest): string {
 apiVersion: sparkoperator.k8s.io/v1beta2
 kind: SparkApplication
 metadata:
-  name: ${manifest.name.replace(/_/g, "-")}-{{{{ data_interval_start.strftime('%Y-%m-%d') }}}}
+  name: ${appName}-{{{{ data_interval_start.strftime('%Y-%m-%d') }}}}
   namespace: spark-jobs
 spec:
   type: Python
@@ -160,7 +189,7 @@ spec:
   mode: cluster
   image: "{_SPARK_IMAGE}"
   imagePullPolicy: Always
-  mainApplicationFile: "abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/spark/jobs/${manifest.name}.py"
+  mainApplicationFile: ${mainFile}
   sparkVersion: "4.1.1"
   restartPolicy:
     type: OnFailure
@@ -170,17 +199,41 @@ spec:
     cores: ${driverCores}
     memory: "${driverMemory}"
     serviceAccount: spark
+    tolerations:
+      - key: workload
+        operator: Equal
+        value: spark
+        effect: NoSchedule
+    volumeMounts:
+      - name: fixed-entrypoint
+        mountPath: /opt/entrypoint.sh
+        subPath: entrypoint.sh
     labels:
-      app: ${manifest.name.replace(/_/g, "-")}
+      app: ${appName}
+      azure.workload.identity/use: "true"
     env:
-${allEnvVars}
+${envVarsStr}
   executor:
     cores: ${executorCores}
     instances: ${executorInstances}
     memory: "${executorMemory}"
+    tolerations:
+      - key: workload
+        operator: Equal
+        value: spark
+        effect: NoSchedule
     labels:
-      app: ${manifest.name.replace(/_/g, "-")}
+      app: ${appName}
+      azure.workload.identity/use: "true"
   sparkConf:
+    # ADLS Gen2 — workload identity OAuth (account-scoped; does not affect external accounts)
+    spark.hadoop.fs.azure.account.auth.type.{_STORAGE_ACCOUNT}.dfs.core.windows.net: OAuth
+    spark.hadoop.fs.azure.account.oauth.provider.type.{_STORAGE_ACCOUNT}.dfs.core.windows.net: org.apache.hadoop.fs.azurebfs.oauth2.WorkloadIdentityTokenProvider
+    spark.hadoop.fs.azure.account.oauth2.msi.tenant.{_STORAGE_ACCOUNT}.dfs.core.windows.net: "{_TENANT_ID}"
+    spark.hadoop.fs.azure.account.oauth2.client.id.{_STORAGE_ACCOUNT}.dfs.core.windows.net: "{_SPARK_MI_CLIENT}"
+    spark.hadoop.fs.abfss.impl: org.apache.hadoop.fs.azurebfs.SecureAzureBlobFileSystem
+    spark.hadoop.fs.abfs.impl: org.apache.hadoop.fs.azurebfs.AzureBlobFileSystem
+    spark.hadoop.fs.azure.enable.hierarchical.namespace: "true"
     spark.sql.extensions: io.delta.sql.DeltaSparkSessionExtension
     spark.sql.catalog.spark_catalog: org.apache.spark.sql.delta.catalog.DeltaCatalog
     spark.hadoop.hive.metastore.uris: thrift://hive-metastore.metastore.svc.cluster.local:9083
@@ -188,8 +241,12 @@ ${allEnvVars}
     spark.sql.hive.metastore.jars: builtin
     spark.databricks.delta.optimizeWrite.enabled: "true"
     spark.sql.shuffle.partitions: "24"
-    spark.submit.pyFiles: "abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/lib/forge_lib.zip"
 ${adaptiveConf}
+  volumes:
+    - name: fixed-entrypoint
+      configMap:
+        name: spark-fixed-entrypoint
+        defaultMode: 0755
 """`;
 }
 
@@ -208,11 +265,11 @@ export function generateDag(manifest: ForgeJobManifest): {
 } {
   const folder = dagFolder(manifest.layer);
   const hasSchedule = !!manifest.schedule;
-  const hasTriggers = manifest.triggers && manifest.triggers.length > 0;
+  const hasTriggeredBy = !!manifest.triggeredBy;
 
   const scheduleValue = hasSchedule
     ? `"${manifest.schedule}"`
-    : "None  # triggered by upstream";
+    : "None";
   const scheduleDesc = hasSchedule
     ? cronDescription(manifest.schedule!)
     : "Triggered (no independent schedule)";
@@ -227,63 +284,99 @@ export function generateDag(manifest: ForgeJobManifest): {
   const tags = [...new Set(allTags)];
   const tagsRepr = tags.map((t) => `"${t}"`).join(", ");
 
-  const retryDelay =
-    manifest.layer === "bronze" ? "timedelta(minutes=5)" : "timedelta(minutes=10)";
-  const slaHours = manifest.layer === "bronze" ? 2 : manifest.layer === "silver" ? 3 : 4;
-  const execHours = manifest.layer === "bronze" ? 1 : 2;
+  const retries = manifest.retries ?? 2;
+  const retryDelayMins = manifest.retryDelayMinutes ?? (manifest.layer === "bronze" ? 5 : 10);
+  const retryDelay = `timedelta(minutes=${retryDelayMins})`;
+  const slaHours = manifest.slaHours ?? (manifest.layer === "bronze" ? 2 : manifest.layer === "silver" ? 3 : 4);
+  const execHours = manifest.executionTimeoutHours ?? (manifest.layer === "bronze" ? 1 : 2);
 
-  const triggerImport =
-    hasTriggers
-      ? `from airflow.operators.trigger_dagrun import TriggerDagRunOperator\n`
-      : "";
+  const sensorImport = hasTriggeredBy
+    ? `from airflow.sensors.external_task import ExternalTaskSensor\n`
+    : "";
 
-  const taskId =
+  const ingestTaskId =
     manifest.layer === "bronze"
       ? `ingest_${manifest.name.replace(/^[^_]+_/, "")}`
       : `transform_${manifest.name.replace(/^[^_]+_[^_]+_/, "")}`;
 
-  const sparkTaskVar = `spark_task`;
+  const dqTaskId = `dq_gate_${manifest.layer}`;
 
-  const triggerTasks = (manifest.triggers ?? [])
-    .map(
-      (dagId) => `
-    trigger_${dagId} = TriggerDagRunOperator(
-        task_id="trigger_${dagId}",
-        trigger_dag_id="${dagId}",
-        logical_date="{{ data_interval_start }}",
-        wait_for_completion=False,
-        reset_dag_run=True,
-    )`
+  const ingestTaskVar = `ingest_task`;
+  const dqTaskVar = `dq_task`;
+
+  const hasDq = !!(manifest.dq?.rules && manifest.dq.rules.length > 0);
+
+  // ExternalTaskSensor task (when triggeredBy is set)
+  const upstreamDagId = manifest.triggeredBy ?? "";
+  const sensorTaskVar = hasTriggeredBy ? `wait_for_${upstreamDagId}` : "";
+  const sensorTask = hasTriggeredBy
+    ? `
+    ${sensorTaskVar} = ExternalTaskSensor(
+        task_id="wait_for_${upstreamDagId}",
+        external_dag_id="${upstreamDagId}",
+        external_task_id=None,
+        mode="reschedule",
+        timeout=timedelta(hours=8),
+        poke_interval=120,
     )
-    .join("\n");
-
-  const taskDeps =
-    hasTriggers
-      ? `\n    ${sparkTaskVar} >> [${(manifest.triggers ?? [])
-          .map((d) => `trigger_${d}`)
-          .join(", ")}]`
-      : "";
-
-  const triggeredByNote = manifest.triggeredBy
-    ? `Triggered by: ${manifest.triggeredBy} (via TriggerDagRunOperator)\n`
+`
     : "";
 
-  const triggersNote =
-    hasTriggers
-      ? `Triggers:    ${manifest.triggers!.join(", ")} on success\n`
-      : "";
+  // Build task dependency chain: sensor (if any) >> ingest >> dq_gate (if any)
+  const taskDeps = hasTriggeredBy
+    ? `\n    ${sensorTaskVar} >> ${ingestTaskVar}${hasDq ? ` >> ${dqTaskVar}` : ""}`
+    : hasDq
+    ? `\n    ${ingestTaskVar} >> ${dqTaskVar}`
+    : "";
+
+  const triggeredByNote = hasTriggeredBy
+    ? `Triggered by: ${upstreamDagId} (ExternalTaskSensor — same logical date)\n`
+    : "";
 
   const table = manifest.output.table ??
-    `lakehouse.${manifest.layer}.${manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+    `${manifest.layer}.${manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+
+  // Parse startDate from manifest or default to 2024-01-01
+  const startDateStr = manifest.startDate ?? "2024-01-01";
+  const [sdYear, sdMonth, sdDay] = startDateStr.split("-").map(Number);
+  const startDatePy = `datetime(${sdYear}, ${sdMonth}, ${sdDay})`;
+
+  const endDatePy = manifest.endDate
+    ? (() => {
+        const [edYear, edMonth, edDay] = manifest.endDate.split("-").map(Number);
+        return `datetime(${edYear}, ${edMonth}, ${edDay})`;
+      })()
+    : null;
+
+  const catchup = manifest.catchup ?? false;
+  const maxActiveRuns = manifest.maxActiveRuns ?? (manifest.schedule ? 3 : 1);
+
+  // Build env_vars dict for ForgeSparkOperator (job params + PARTITION_DATE/HOUR, no RESTATE/platform vars)
+  const effectiveParams = buildEffectiveParams(manifest);
+  const envVarEntries = Object.entries(effectiveParams)
+    .filter(([name]) => name !== "RESTATE") // RESTATE is manual only
+    .map(([name, p]) => {
+      if (name === "PARTITION_DATE") return `            "PARTITION_DATE": "{{ ds }}"`;
+      if (name === "PARTITION_HOUR") return `            "PARTITION_HOUR": "${p.default ?? 0}"`;
+      if (p.source === "airflow_var") return `            "${name}": "{{ var.value.get('${name.toLowerCase()}', '${p.default ?? ""}') }}"`;
+      return `            "${name}": "${p.default ?? ""}"`;
+    });
+  const envVarsStr = envVarEntries.length > 0
+    ? `{\n${envVarEntries.join(",\n")},\n        }`
+    : "{}";
+
 
   const content = `"""
 DAG: ${manifest.name}
 ${"=".repeat(manifest.name.length + 5)}
 ${manifest.description}
 
-${triggeredByNote}${triggersNote}Schedule:   ${scheduleDesc}
-SLA:        ${slaHours} hour${slaHours !== 1 ? "s" : ""}
-Retries:    2 × ${manifest.layer === "bronze" ? "5" : "10"}-minute back-off
+${triggeredByNote}Schedule:    ${scheduleDesc}
+Start date:  ${startDateStr}${catchup ? `  (catchup enabled — backfills all missed slots since start date)` : ""}
+${manifest.endDate ? `End date:    ${manifest.endDate}  (no runs scheduled after this date)\n` : ""}
+Parallelism: max_active_runs=${maxActiveRuns}${catchup && maxActiveRuns > 1 ? ` — up to ${maxActiveRuns} slots run in parallel during backfill` : ""}
+SLA:         ${slaHours} hours
+Retries:     ${retries} × ${retryDelayMins}-minute back-off
 
 Layer:   ${manifest.layer}
 Table:   ${table}
@@ -293,21 +386,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from airflow import DAG
-${triggerImport}from airflow.providers.cncf.kubernetes.operators.spark_kubernetes import (
-    SparkKubernetesOperator,
-)
-
-# ---------------------------------------------------------------------------
-# Shared template values — resolved at render time via Airflow Variables so
-# the same DAG file works across dev / staging / prod without edits.
-# ---------------------------------------------------------------------------
-_SPARK_IMAGE = "{{ var.value.get('spark_image', 'forgeacrprproddu.azurecr.io/spark:4.1.1') }}"
-_STORAGE_ACCOUNT = "{{ var.value.get('storage_account', 'forgeadlsprproddudev') }}"
-
-# ---------------------------------------------------------------------------
-# SparkApplication YAML — Jinja-rendered per run.
-# ---------------------------------------------------------------------------
-_SPARK_APP = ${renderSparkApp(manifest)}
+${sensorImport}from forge_airflow import ForgeSparkOperator${hasDq ? ", ForgeDqGateOperator" : ""}
 
 # ---------------------------------------------------------------------------
 # Default task arguments
@@ -315,7 +394,7 @@ _SPARK_APP = ${renderSparkApp(manifest)}
 default_args = {
     "owner": "data-engineering",
     "depends_on_past": False,
-    "retries": 2,
+    "retries": ${retries},
     "retry_delay": ${retryDelay},
     "execution_timeout": timedelta(hours=${execHours}),
     "sla": timedelta(hours=${slaHours}),
@@ -330,23 +409,31 @@ with DAG(
     dag_id="${manifest.name}",
     description="${manifest.description.replace(/"/g, '\\"')}",
     schedule=${scheduleValue},
-    start_date=datetime(2024, 1, 1),
-    catchup=False,
-    max_active_runs=3,
+    start_date=${startDatePy},
+    catchup=${catchup ? "True" : "False"},
+    ${endDatePy ? `end_date=${endDatePy},\n    ` : ""}max_active_runs=${maxActiveRuns},
+    is_paused_upon_creation=False,
     tags=[${tagsRepr}],
     default_args=default_args,
     doc_md=__doc__,
 ) as dag:
-
-    ${sparkTaskVar} = SparkKubernetesOperator(
-        task_id="${taskId}",
-        namespace="spark-jobs",
-        application_file=_SPARK_APP,
-        kubernetes_conn_id="kubernetes_compute_cluster",
-        do_xcom_push=True,
-        poll_interval=30,
+${sensorTask}
+    ${ingestTaskVar} = ForgeSparkOperator(
+        task_id="${ingestTaskId}",
+        job="${manifest.name}",
+        layer="${manifest.layer}",
+        env_vars=${envVarsStr},
+        driver={"cores": ${manifest.resources?.driver?.cores ?? 2}, "memory": "${manifest.resources?.driver?.memory ?? "4g"}"},
+        executor={"cores": ${manifest.resources?.executor?.cores ?? 4}, "memory": "${manifest.resources?.executor?.memory ?? "8g"}", "instances": ${manifest.resources?.executor?.instances ?? 2}},
     )
-${triggerTasks}${taskDeps}
+${hasDq ? `
+    ${dqTaskVar} = ForgeDqGateOperator(
+        task_id="${dqTaskId}",
+        job="${manifest.name}",
+        layer="${manifest.layer}",
+        table="${table}",
+    )
+` : ""}${taskDeps}
 `;
 
   return { content, folder };

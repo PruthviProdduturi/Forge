@@ -71,6 +71,45 @@ async def _check_adls() -> bool | None:
         return False
 
 
+@router.get("/spark/stats")
+async def spark_stats() -> dict[str, Any]:
+    """Return current Spark job activity from Airflow.
+
+    Counts only the most recent run per DAG so metrics reflect current
+    state (not historical totals). running + queued = actively in-flight jobs.
+    """
+    try:
+        dags = await airflow_client.get_dags(limit=200, only_active=False)
+    except Exception:
+        return {"running": 0, "queued": 0, "recent_success": 0, "recent_failed": 0}
+
+    running = queued = recent_success = recent_failed = 0
+    for dag in dags[:30]:  # cap to avoid too many parallel Airflow calls
+        dag_id = dag.get("dag_id", "")
+        try:
+            runs = await airflow_client.get_dag_runs(dag_id, limit=1)
+        except Exception:
+            continue
+        if not runs:
+            continue
+        state = runs[0].get("state", "")
+        if state == "running":
+            running += 1
+        elif state == "queued":
+            queued += 1
+        elif state == "success":
+            recent_success += 1
+        elif state == "failed":
+            recent_failed += 1
+
+    return {
+        "running": running,
+        "queued": queued,
+        "recent_success": recent_success,
+        "recent_failed": recent_failed,
+    }
+
+
 @router.get("/health")
 async def health_check() -> dict[str, Any]:
     """Check health of all platform services.

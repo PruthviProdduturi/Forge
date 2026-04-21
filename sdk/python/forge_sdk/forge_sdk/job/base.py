@@ -27,10 +27,22 @@ Minimal usage::
 from __future__ import annotations
 
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 
 from pyspark.sql import SparkSession
+
+
+class PartitionNotFound(RuntimeError):
+    """
+    Raised when the source partition has no data for the scheduled slot.
+
+    The Spark job exits with a non-zero code so Airflow marks the task as
+    failed and retries after the configured retry delay.  This is the correct
+    behaviour when upstream data has not yet landed — do NOT catch this error
+    in job code.
+    """
 
 from forge_sdk.config.platform import PlatformConfig
 from forge_sdk.storage.paths import (
@@ -96,6 +108,11 @@ class ForgeJob(ABC):
     # Path helpers
     # ------------------------------------------------------------------
 
+    @property
+    def storage(self) -> str:
+        """ADLS Gen2 account FQDN: ``<account>.dfs.core.windows.net``."""
+        return f"{self.config.adls_account}.dfs.core.windows.net"
+
     def bronze(self, path: str = "") -> str:
         """Return an ABFS URI in the ``bronze`` container."""
         return bronze(path, self.config)
@@ -119,6 +136,36 @@ class ForgeJob(ABC):
     # ------------------------------------------------------------------
     # Lifecycle hooks
     # ------------------------------------------------------------------
+
+    def assert_not_empty(self, df, source_desc: str = "source") -> None:
+        """
+        Assert that the source DataFrame is not empty for this partition.
+
+        Call this immediately after reading the source — before any transformation
+        or write.  If the DataFrame has no rows, raises :exc:`PartitionNotFound`
+        so Airflow fails the task and retries, waiting for upstream data to land.
+
+        Args:
+            df:          The source :class:`~pyspark.sql.DataFrame`.
+            source_desc: Human-readable description for the log message (e.g. path or table name).
+
+        Raises:
+            PartitionNotFound: When the DataFrame is empty.
+
+        Example::
+
+            df = self.spark.read.format("parquet").load(source_path)
+            self.assert_not_empty(df, source_desc=source_path)
+        """
+        partition_date = os.environ.get("PARTITION_DATE", "unknown")
+        if df.rdd.isEmpty():
+            msg = (
+                f"PartitionNotFound: no data in '{source_desc}' for partition {partition_date}. "
+                f"Upstream data not yet available — Airflow will retry."
+            )
+            self.log.error(msg)
+            raise PartitionNotFound(msg)
+        self.log.info("assert_not_empty OK source=%s partition=%s", source_desc, partition_date)
 
     def setup(self) -> None:
         """

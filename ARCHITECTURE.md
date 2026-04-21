@@ -250,7 +250,9 @@ forge<env>adls (ADLS Gen2, HNS enabled)
 ├── sandbox/                     ← container
 │   └── {user_alias}/            (per-user free area, 30-day TTL)
 └── code/                        ← container
-    └── jobs/, wheels/, jars/, checkpoints/{pipeline_id}/  (Structured Streaming checkpoints)
+    ├── spark/jobs/              (Spark driver scripts uploaded by sync-jobs.sh)
+    ├── dq/rules/                (DQ rule YAML files read by ForgeDqGateOperator at runtime)
+    └── checkpoints/{pipeline_id}/  (Structured Streaming checkpoints)
 ```
 
 ---
@@ -360,29 +362,37 @@ Airflow Scheduler (always-on)
     ▼
 Task Pod (ephemeral, per-task)
     │
-    ├── SparkKubernetesOperator → submits SparkApplication to compute cluster
-    ├── PythonOperator          → runs DQ checks, catalog updates
-    ├── TrinoOperator           → executes Trino SQL for serving views
-    └── EmptyOperator           → dependency gates
+    ├── ForgeSparkOperator    → builds SparkApplication YAML + submits to compute cluster
+    ├── ForgeDqGateOperator   → submits forge_dq_gate.py Spark job to validate partition
+    ├── ExternalTaskSensor    → waits for upstream DAG completion (cross-DAG dependency)
+    └── EmptyOperator         → dependency gates
     │
     ▼
 Results written to ADLS / Purview (lineage) / DQ store
 ```
 
+#### DAG Authoring
+
+DAGs are generated from `.forge.ts` manifests via `forge generate`. DAG authors never write `SparkApplication` YAML. Platform operators (`ForgeSparkOperator`, `ForgeDqGateOperator`) read all platform config from Airflow Variables (`spark_image`, `storage_account`, `aad_tenant_id`, `spark_mi_client_id`) at parse time.
+
 #### DAG Structure
 
-All pipelines follow a four-stage pattern:
+All generated pipelines follow this pattern (one DAG per medallion layer):
 
 ```
-ingest_raw    →    transform_curated    →    validate_dq    →    publish_serving
-     │                    │                      │                      │
-  SparkApp             SparkApp              DQ Runner             Trino views
-  (write raw)          (merge curated)      (check curated)       (refresh serving)
-     │                    │                      │                      │
-  LineageEmit          LineageEmit           DQReport              LineageEmit
+[ExternalTaskSensor]   →   ingest/transform   →   dq_gate
+        │                        │                    │
+  waits for upstream        ForgeSparkOperator   ForgeDqGateOperator
+  DAG run (optional)        reads/writes ADLS     reads rules from ADLS
+                                 │                    │ raises DQCriticalFailureError
+                            LineageEmit              on CRITICAL failures
 ```
 
-Each stage emits an OpenLineage event on START, COMPLETE, and FAIL.
+Each `ForgeSparkOperator` task emits OpenLineage events on START, COMPLETE, and FAIL.
+
+#### Cross-DAG Dependencies
+
+Downstream DAGs declare `triggeredBy: "upstream_dag_id"` in the manifest. `forge generate` produces an `ExternalTaskSensor` that waits for the upstream DAG run with `mode="reschedule"`, `timeout=timedelta(hours=8)`, and `poke_interval=120`. All layers share the same cron (`"0 2 * * *"`). The old `TriggerDagRunOperator` / `triggers` pattern is removed.
 
 #### DAG Repository
 
@@ -404,26 +414,29 @@ DAGs live in Git (`orchestration/airflow/dags/`) and are synced to Airflow via `
 
 ### Architecture
 
-The DQ framework is a Python SDK (`forge.dq`) that runs inside Airflow task pods and Spark jobs. It is not a separate service.
+The DQ framework has two modes of operation:
+
+**Generated pipelines (standard):** DQ runs as a dedicated Spark job (`forge_dq_gate.py`) submitted by `ForgeDqGateOperator` after the ingest/transform task. The job reads rules from `code/dq/rules/{job}.yaml` on ADLS, validates the target partition, and writes results to the DQ results Delta table. `CRITICAL` violations raise `DQCriticalFailureError`, failing the Airflow task and blocking downstream tasks.
+
+**Hand-authored pipelines:** The `forge_dq` Python SDK (`forge.dq`) is available for use directly inside custom Spark jobs or Airflow PythonOperator tasks. Use `DQRunner` and `@track` decorator for inline validation.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  DQ SDK (forge.dq)                                          │
-│                                                             │
-│  ┌──────────────────┐    ┌───────────────────────────────┐  │
-│  │  YAML Ruleset    │───▶│  DQRunner                     │  │
-│  │  (per dataset)   │    │  • loads rules                │  │
-│  └──────────────────┘    │  • runs checks against DF     │  │
-│                           │  • aggregates DQRunReport     │ │
-│                           └───────────────┬───────────────┘ │
-│                                           │                 │
-│                           ┌───────────────▼───────────────┐ │
-│                           │  Reporters                    │ │
-│                           │  • StoreReporter → ADLS Delta │ │
-│                           │  • AlertReporter → Webhook    │ │
-│                           │  • LineageReporter → Purview  │ │
-│                           └───────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+Generated DAG                         Hand-authored pipeline
+─────────────────────                 ──────────────────────────────
+ForgeDqGateOperator                   forge_dq Python SDK (forge.dq)
+  │                                     │
+  │  submits forge_dq_gate.py            │  ┌──────────────────┐    ┌──────────────────┐
+  │  (Spark job on compute cluster)      │  │  YAML Ruleset    │───▶│  DQRunner        │
+  │                                      │  │  (per dataset)   │    │  • runs checks   │
+  ▼                                      │  └──────────────────┘    │  • DQRunReport   │
+reads: ADLS code/dq/rules/{job}.yaml     │                          └────────┬─────────┘
+validates: target partition              │                                    │
+writes: DQ results Delta table           │                    ┌───────────────▼───────────┐
+raises: DQCriticalFailureError           │                    │  Reporters                │
+        on CRITICAL violations           │                    │  StoreReporter → ADLS     │
+                                         │                    │  AlertReporter → Webhook  │
+                                         │                    │  LineageReporter → Purview│
+                                         │                    └───────────────────────────┘
 ```
 
 ### Rule Types

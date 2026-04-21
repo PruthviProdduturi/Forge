@@ -40,9 +40,16 @@ class PlatformConfig:
     def from_env(cls) -> "PlatformConfig":
         """Build a PlatformConfig by reading environment variables."""
         env = os.environ.get("FORGE_ENV", "dev")
+        # FORGE_ADLS_ACCOUNT takes precedence; FORGE_STORAGE_ACCOUNT is the
+        # name injected by the Airflow ConfigMap for Spark pods.
+        adls_account = (
+            os.environ.get("FORGE_ADLS_ACCOUNT")
+            or os.environ.get("FORGE_STORAGE_ACCOUNT")
+            or f"forgeadlsdseng{env}"
+        )
         return cls(
             env=env,
-            adls_account=os.environ.get("FORGE_ADLS_ACCOUNT", f"forgeadls{env}"),
+            adls_account=adls_account,
             tenant_id=os.environ.get(
                 "AZURE_TENANT_ID", "72f988bf-86f1-41af-91ab-2d7cd011db47"
             ),

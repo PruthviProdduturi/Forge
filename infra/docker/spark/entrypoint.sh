@@ -12,7 +12,12 @@ set -e
 case "$1" in
   driver)
     shift
-    exec "${SPARK_HOME}/bin/spark-class" org.apache.spark.deploy.SparkSubmit "$@"
+    # Force --deploy-mode client: this pod IS the driver (created by spark-operator).
+    # The operator sets deployMode=cluster in spark.properties which would cause
+    # spark-submit to try creating a second driver pod with the same name → conflict.
+    # Command-line --deploy-mode overrides the properties file.
+    exec "${SPARK_HOME}/bin/spark-class" org.apache.spark.deploy.SparkSubmit \
+      --deploy-mode client "$@"
     ;;
   executor)
     CMD=(

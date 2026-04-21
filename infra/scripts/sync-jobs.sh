@@ -9,9 +9,12 @@
 #      Copy DAGs: examples/src/airflow/dags/ → orchestration/airflow/dags/
 #   3. Upload Spark .py     → ADLS code/spark/jobs/
 #      Upload DQ .yaml      → ADLS code/dq/rules/
+#      Upload DAG .py       → ADLS code/dags/          (durable — survives pod restarts)
 #      NOTE: forge-sdk and forge-dq are baked into the Spark image — no zip upload.
 #            SDK changes require a Spark image rebuild via forge-up.sh Phase 5.
-#   4. Commit + push DAG files → git (Airflow git-sync picks up within 30s)
+#   4. Pull DAG into running dag-processor pod via kubectl exec + Python ADLS download
+#      On pod restart, the dag-restore init container (values.yaml) restores all DAGs
+#      from ADLS automatically.
 #   5. Write deployment record → ADLS state container
 #      - state/last_deploy_{env}.json  — last commit SHA (pointer for next run)
 #      - state/deployments_{env}.jsonl — append-only deployment history
@@ -20,15 +23,14 @@
 #   .forge.ts manifest  →  everything (schema, schedule, DQ, resources)
 #   .py business logic  →  the ONLY thing NOT re-generated from the manifest
 #
-# Incremental by default — only jobs whose .forge.ts changed since last deploy
-# are re-scaffolded and uploaded. Use --full to force all jobs.
+# Always deploys a single named job. Bulk sync is intentionally not supported —
+# every deploy must be explicit and traceable to a single manifest.
 #
 # Usage:
-#   ./scripts/sync-jobs.sh                        # changed manifests only
-#   ./scripts/sync-jobs.sh --full                 # all manifests
-#   ./scripts/sync-jobs.sh --job nyc_taxi_silver  # one job only
-#   ./scripts/sync-jobs.sh --dry-run              # preview, no changes
-#   ./scripts/sync-jobs.sh --no-git-push          # skip DAG git push (CI handles it)
+#   ./scripts/sync-jobs.sh --job nyc_taxi_bronze  # deploy one job
+#   ./scripts/sync-jobs.sh --job nyc_taxi_silver --dry-run  # preview, no changes
+#
+# --job is REQUIRED. There is no full/bulk sync mode by design.
 #
 # Requirements:
 #   - Node.js ≥ 20  (for forge generate via tsx)
@@ -52,14 +54,17 @@ DATA_REPO=""
 # ---------------------------------------------------------------------------
 JOB_FILTER=""
 DRY_RUN=false
-FULL_DEPLOY=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --job)           JOB_FILTER="$2"; shift 2 ;;
     --dry-run)       DRY_RUN=true; shift ;;
-    --full)          FULL_DEPLOY=true; shift ;;
     --data-repo)     DATA_REPO="$2"; shift 2 ;;
+    --full)
+      echo "ERROR: --full is not supported. sync-jobs.sh always deploys a single job." >&2
+      echo "       Use: sync-jobs.sh --job <dag_name>" >&2
+      exit 1
+      ;;
     -h|--help)
       sed -n '/^# Usage:/,/^# Req/p' "$0" | sed 's/^# \?//'
       exit 0
@@ -68,9 +73,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Resolve data repo — flag > env var > sibling DSEngCoreData folder
+# --job is mandatory — no bulk sync by design
+if [[ -z "${JOB_FILTER}" ]]; then
+  echo "ERROR: --job <dag_name> is required. Bulk sync is not supported." >&2
+  echo "       Example: sync-jobs.sh --job nyc_taxi_bronze" >&2
+  exit 1
+fi
+
+# Resolve data repo — flag > env var > sibling DSEngCoreData folder (Windows-aware)
 if [[ -z "$DATA_REPO" ]]; then
-  DATA_REPO="${FORGE_DATA_REPO:-$(cd "${REPO_ROOT}/../DSEngCoreData" 2>/dev/null && pwd || true)}"
+  _SIBLING_CANDIDATES=(
+    "${REPO_ROOT}/../DSEngCoreData"
+    "$(dirname "$(pwd)")/../DSEngCoreData"
+    "/d/Repos/DSEngCoreData"
+    "/c/Repos/DSEngCoreData"
+  )
+  for _candidate in "${_SIBLING_CANDIDATES[@]}"; do
+    if [[ -d "${_candidate}" ]]; then
+      DATA_REPO="$(cd "${_candidate}" && pwd)"
+      break
+    fi
+  done
+  DATA_REPO="${FORGE_DATA_REPO:-${DATA_REPO}}"
 fi
 if [[ -z "$DATA_REPO" || ! -d "$DATA_REPO" ]]; then
   echo "ERROR: data repo not found — pass --data-repo <path> or set FORGE_DATA_REPO" >&2
@@ -90,6 +114,44 @@ JOBS_BLOB_PREFIX="spark/jobs"
 DQ_BLOB_PREFIX="dq/rules"
 STATE_LAST_DEPLOY="last_deploy_${FORGE_ENV}.json"
 STATE_DEPLOY_LOG="deployments_${FORGE_ENV}.jsonl"
+
+# Portal URL for DAG ownership registration + DAG limit checks.
+# Derives the same DNS label pattern as forge-up.sh: forge-portal-{alias}-{env}
+_ALIAS_LC="$(echo "${OWNER_ALIAS}" | tr '[:upper:]' '[:lower:]')"
+_ALIAS_PREFIX="${_ALIAS_LC:+${_ALIAS_LC}-}"
+_PORTAL_URL="${FORGE_PORTAL_URL:-https://forge-portal-${_ALIAS_PREFIX}${FORGE_ENV}.northcentralus.cloudapp.azure.com}"
+
+# MS Graph Bearer token (acquired once, reused across calls)
+_BEARER_TOKEN=""
+_acquire_bearer_token() {
+  if [[ -z "${_BEARER_TOKEN}" ]]; then
+    _BEARER_TOKEN="$(az account get-access-token \
+      --resource https://graph.microsoft.com \
+      --query accessToken -o tsv 2>/dev/null || true)"
+  fi
+}
+
+# Register a deployed DAG with the portal (non-fatal — warns and continues if unreachable)
+_register_dag() {
+  local dag_id="$1"
+  local alias="$2"
+  _acquire_bearer_token
+  if [[ -z "${_BEARER_TOKEN}" ]]; then
+    warn "  Could not acquire Bearer token — skipping portal registration for ${dag_id}"
+    return 0
+  fi
+  local _resp
+  _resp="$(curl -sf -X POST "${_PORTAL_URL}/api/pipelines/register" \
+    -H "Authorization: Bearer ${_BEARER_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"dag_id\":\"${dag_id}\",\"owner_alias\":\"${alias}\"}" \
+    --max-time 10 2>/dev/null || true)"
+  if [[ -n "${_resp}" ]]; then
+    log "  ✓ Registered ${dag_id} in portal"
+  else
+    warn "  Portal registration failed for ${dag_id} (non-fatal — portal may not be reachable)"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -271,52 +333,7 @@ if [[ -n "${JOB_FILTER}" ]]; then
     echo "ERROR: no manifest found for job '${JOB_FILTER}'" >&2
     exit 1
   fi
-  log "Mode: single-job (--job ${JOB_FILTER})"
-
-elif [[ "${FULL_DEPLOY}" == "true" ]]; then
-  MANIFEST_FILES=("${ALL_MANIFEST_FILES[@]}")
-  log "Mode: full deploy (--full)"
-
-else
-  LAST_COMMIT=""
-  if ! dry; then
-    LAST_STATE="$(download_blob_text "${STATE_LAST_DEPLOY}")"
-    if [[ -n "${LAST_STATE}" ]]; then
-      LAST_COMMIT="$(printf '%s' "${LAST_STATE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('commit',''))" 2>/dev/null || true)"
-    fi
-  fi
-
-  if [[ -z "${LAST_COMMIT}" ]]; then
-    log "Mode: first run (no prior deployment state found) — deploying all manifests"
-    MANIFEST_FILES=("${ALL_MANIFEST_FILES[@]}")
-  else
-    log "Mode: incremental (last deployed commit: ${LAST_COMMIT:0:8})"
-    mapfile -t CHANGED_FORGE < <(
-      git -C "${DATA_REPO}" diff --name-only "${LAST_COMMIT}...${CURRENT_COMMIT}" \
-        -- "*/manifests/*.forge.ts" 2>/dev/null \
-      | xargs -I{} basename {} .forge.ts 2>/dev/null \
-      | sort -u
-    )
-
-    if [[ ${#CHANGED_FORGE[@]} -eq 0 ]]; then
-      log "No .forge.ts files changed since last deployment — nothing to do"
-      log "Use --full to force all, or --job <name> to target one job"
-      exit 0
-    fi
-
-    log "Changed manifests since ${LAST_COMMIT:0:8}:"
-    for name in "${CHANGED_FORGE[@]}"; do log "  - ${name}"; done
-
-    for mf in "${ALL_MANIFEST_FILES[@]}"; do
-      job_name="$(basename "${mf}" .forge.ts)"
-      for changed in "${CHANGED_FORGE[@]}"; do
-        if [[ "${job_name}" == "${changed}" ]]; then
-          MANIFEST_FILES+=("${mf}")
-          break
-        fi
-      done
-    done
-  fi
+  log "Deploying single job: ${JOB_FILTER}"
 fi
 
 log "Manifests to process: ${#MANIFEST_FILES[@]}"
@@ -402,52 +419,156 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Step 6 — Push DAGs directly to Airflow scheduler pod (dev only)
-#   For prod, DAGs are delivered via git-sync from DSEngCoreData main branch.
-#   For dev, kubectl cp is immediate — no git commit required.
+# Step 6 — Upload DAGs to ADLS and pull into the running dag-processor pod
+#
+# DAG delivery model (dev):
+#   1. Upload DAG .py → ADLS code/dags/  (durable — survives pod restarts)
+#   2. kubectl exec Python one-liner → pulls the DAG from ADLS into
+#      /opt/airflow/dags/ inside the running dag-processor pod (immediate)
+#
+# On pod restart, the dag-restore init container (values.yaml extraInitContainers)
+# downloads all code/dags/*.py from ADLS automatically — no manual sync needed.
+#
+# Prod: git-sync delivers DAGs from DSEngCoreData main branch.
 # ---------------------------------------------------------------------------
-section "Push DAGs → Airflow scheduler pod"
+section "Upload DAGs → ADLS + pull into dag-processor"
 DAG_PUSH_DONE=false
+DAG_BLOB_PREFIX="dags"
 
 if ! dry; then
   _AIRFLOW_NS="airflow"
-  # Resolve kubectl context — use ORCH_CLUSTER if set (forge-up.sh), else current context
   _KUBE_CTX="${ORCH_CLUSTER:-$(kubectl config current-context 2>/dev/null || true)}"
-  _SCHEDULER_POD=$(kubectl get pods -n "${_AIRFLOW_NS}" \
+  _DAG_PROCESSOR_POD=$(kubectl get pods -n "${_AIRFLOW_NS}" \
     --context "${_KUBE_CTX}" \
-    -l component=scheduler \
+    -l component=dag-processor \
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
 
-  if [[ -z "${_SCHEDULER_POD}" ]]; then
-    warn "Airflow scheduler pod not found — skipping DAG push (is the cluster reachable?)"
+  if [[ -z "${_DAG_PROCESSOR_POD}" ]]; then
+    warn "Airflow dag-processor pod not found — DAG uploaded to ADLS but not pulled into pod."
+    warn "The dag-restore init container will pick it up on next pod restart."
   else
-    log "Scheduler pod: ${_SCHEDULER_POD} (context: ${_KUBE_CTX})"
-    for manifest in "${MANIFEST_FILES[@]}"; do
-      project_dir="$(dirname "$(dirname "${manifest}")")"
-      dag_dir="${project_dir}/dags"
-      if [[ -d "${dag_dir}" ]]; then
-        for dag in "${dag_dir}"/*.py; do
-          [[ -f "${dag}" ]] || continue
-          # MSYS_NO_PATHCONV=1 — stops Git Bash converting /opt/... to a Windows path
-          # cd into dag dir — relative filename avoids Windows drive-letter colon ambiguity
-          # -n namespace flag instead of namespace/pod:path — avoids Windows slash mangling
-          _dag_name="$(basename "${dag}")"
-          (cd "$(dirname "${dag}")" && MSYS_NO_PATHCONV=1 kubectl cp "${_dag_name}" \
-            "${_SCHEDULER_POD}:/opt/airflow/dags/${_dag_name}" \
-            -n "${_AIRFLOW_NS}" \
-            --context "${_KUBE_CTX}" \
-            -c scheduler 2>&1) \
-            && log "  ✓ ${_dag_name}" \
-            || warn "  failed to copy ${_dag_name}"
-        done
-      fi
-    done
-    DAG_PUSH_DONE=true
-    log "  DAGs live in Airflow — no restart needed (scheduler rescans every 30s)"
+    log "DAG processor pod: ${_DAG_PROCESSOR_POD} (context: ${_KUBE_CTX})"
   fi
+
+  # -----------------------------------------------------------------------
+  # Dev DAG limit: max 5 DAGs per user.
+  # Primary: query the portal API for this user's registered DAG count.
+  # Fallback: count .py blobs in ADLS code/dags/ (shared count, conservative).
+  # -----------------------------------------------------------------------
+  _MAX_DAGS=5
+  _acquire_bearer_token
+  _MY_DAG_IDS=()
+  _MINE_COUNT=0
+  _PORTAL_REACHABLE=false
+  if [[ -n "${_BEARER_TOKEN}" ]]; then
+    _MINE_RESP="$(curl -sf "${_PORTAL_URL}/api/pipelines/mine" \
+      -H "Authorization: Bearer ${_BEARER_TOKEN}" \
+      --max-time 10 2>/dev/null || true)"
+    if [[ -n "${_MINE_RESP}" ]]; then
+      _PORTAL_REACHABLE=true
+      mapfile -t _MY_DAG_IDS < <(
+        echo "${_MINE_RESP}" | python3 -c "import sys,json; [print(x) for x in json.load(sys.stdin)]" 2>/dev/null || true
+      )
+      _MINE_COUNT=${#_MY_DAG_IDS[@]}
+      log "  Portal DAG count: ${_MINE_COUNT} DAGs owned by you"
+    fi
+  fi
+
+  if [[ "${_PORTAL_REACHABLE}" == "false" ]]; then
+    warn "  Portal unreachable — falling back to ADLS DAG blob count"
+    mapfile -t _MY_DAG_IDS < <(
+      az storage blob list \
+        --account-name "${STORAGE_ACCOUNT}" \
+        --container-name "${CODE_CONTAINER}" \
+        --prefix "${DAG_BLOB_PREFIX}/" \
+        --auth-mode login \
+        --query "[].name" -o tsv 2>/dev/null \
+        | xargs -I{} basename {} .py 2>/dev/null || true
+    )
+    _MINE_COUNT=${#_MY_DAG_IDS[@]}
+    log "  ADLS DAG blob count (fallback): ${_MINE_COUNT}"
+  fi
+
+  _NEW_DAG_NAMES=()
+  for _m in "${MANIFEST_FILES[@]}"; do
+    _jn="$(basename "${_m}" .forge.ts)"
+    _found=false
+    for _ex in "${_MY_DAG_IDS[@]}"; do
+      [[ "${_ex}" == "${_jn}_dag" || "${_ex}" == "${_jn}" ]] && _found=true && break
+    done
+    [[ "${_found}" == "false" ]] && _NEW_DAG_NAMES+=("${_jn}_dag.py")
+  done
+
+  _PROJECTED=$(( _MINE_COUNT + ${#_NEW_DAG_NAMES[@]} ))
+  if [[ ${_PROJECTED} -gt ${_MAX_DAGS} ]]; then
+    echo "" >&2
+    echo "ERROR: dev DAG limit would be exceeded." >&2
+    echo "  Your DAGs : ${_MINE_COUNT} / ${_MAX_DAGS}" >&2
+    echo "  New DAGs  : ${#_NEW_DAG_NAMES[@]}" >&2
+    echo "  Projected : ${_PROJECTED} (limit: ${_MAX_DAGS})" >&2
+    if [[ ${_MINE_COUNT} -gt 0 ]]; then
+      echo "" >&2
+      echo "  Your registered DAGs:" >&2
+      for _d in "${_MY_DAG_IDS[@]}"; do echo "    - ${_d}" >&2; done
+      echo "" >&2
+      echo "  Remove a DAG before adding more:" >&2
+      echo "    az storage blob delete --account-name ${STORAGE_ACCOUNT} --container-name code" >&2
+      echo "      --name dags/<name>_dag.py --auth-mode login" >&2
+    fi
+    echo "" >&2
+    exit 1
+  fi
+  log "  DAG slot check: ${_MINE_COUNT} existing + ${#_NEW_DAG_NAMES[@]} new = ${_PROJECTED} / ${_MAX_DAGS}"
+
+  for manifest in "${MANIFEST_FILES[@]}"; do
+    job_name="$(basename "${manifest}" .forge.ts)"
+    project_dir="$(dirname "$(dirname "${manifest}")")"
+    dag_file="${project_dir}/dags/${job_name}_dag.py"
+    if [[ ! -f "${dag_file}" ]]; then
+      warn "  DAG file not found (run forge generate first): ${dag_file}"
+      continue
+    fi
+    _dag_name="${job_name}_dag.py"
+    _dag_blob="${DAG_BLOB_PREFIX}/${_dag_name}"
+
+    # 1. Upload to ADLS — durable, survives pod restarts
+    upload_blob "${dag_file}" "${_dag_blob}"
+
+    # 2. Pull into running dag-processor pod — immediate (no restart needed)
+    if [[ -n "${_DAG_PROCESSOR_POD}" ]]; then
+      _pull_script="$(cat <<PYEOF
+import os
+from azure.storage.blob import BlobServiceClient
+from azure.identity import DefaultAzureCredential
+cred = DefaultAzureCredential()
+client = BlobServiceClient(account_url="https://${STORAGE_ACCOUNT}.blob.core.windows.net", credential=cred)
+data = client.get_blob_client("${CODE_CONTAINER}", "${_dag_blob}").download_blob().readall()
+os.makedirs("/opt/airflow/dags", exist_ok=True)
+open("/opt/airflow/dags/${_dag_name}", "wb").write(data)
+print("pulled: ${_dag_name}", flush=True)
+PYEOF
+)"
+      if kubectl exec "${_DAG_PROCESSOR_POD}" \
+          -n "${_AIRFLOW_NS}" --context "${_KUBE_CTX}" \
+          -c dag-processor \
+          -- python3 -c "${_pull_script}" 2>&1; then
+        log "  ✓ ${_dag_name} → dag-processor /opt/airflow/dags/ (pulled from ADLS)"
+      else
+        warn "  ADLS pull failed for ${_dag_name} — DAG is in ADLS; restart pod to apply"
+      fi
+    fi
+
+    _register_dag "${job_name}" "${OWNER_ALIAS}"
+  done
+  DAG_PUSH_DONE=true
+  log "  DAGs uploaded to ADLS — dag-processor rescans every 30s; init container restores on restart"
 else
-  log "  [dry-run] would kubectl cp DAGs to scheduler pod"
+  log "  [dry-run] would upload ${#MANIFEST_FILES[@]} DAG(s) to ADLS ${CODE_CONTAINER}/${DAG_BLOB_PREFIX}/"
+  for manifest in "${MANIFEST_FILES[@]}"; do
+    job_name="$(basename "${manifest}" .forge.ts)"
+    log "  [dry-run] would pull ${job_name}_dag.py into dag-processor + register in portal"
+  done
 fi
 
 # ---------------------------------------------------------------------------
@@ -467,7 +588,7 @@ LAST_DEPLOY_JSON="$(cat <<EOF
   "env": "${FORGE_ENV}",
   "jobs_deployed": [$(printf '%s\n' "${MANIFEST_FILES[@]}" | xargs -I{} basename {} .forge.ts | sort | awk '{printf "\"%s\",", $0}' | sed 's/,$//')],
   "storage_account": "${STORAGE_ACCOUNT}",
-  "mode": "$( [[ -n "${JOB_FILTER}" ]] && echo "single-job" || ([[ "${FULL_DEPLOY}" == "true" ]] && echo "full" || echo "incremental"))"
+  "mode": "single-job"
 }
 EOF
 )"
@@ -488,7 +609,10 @@ log "  Deployment ID    : ${DEPLOY_ID}"
 log "  Commit           : ${CURRENT_COMMIT:0:12}"
 log "  Data repo        : ${DATA_REPO}"
 log "  Jobs regenerated : ${#GENERATED_PY[@]}"
-log "  ADLS uploads     : $((${#GENERATED_PY[@]} + ${#GENERATED_DQ[@]}))"
+log "  ADLS uploads     : $((${#GENERATED_PY[@]} + ${#GENERATED_DQ[@]} + ${#MANIFEST_FILES[@]}))"
+log "    Spark jobs     : code/spark/jobs/"
+log "    DQ rules       : code/dq/rules/"
+log "    DAGs           : code/dags/"
 log "  SDK in image     : forge-sdk + forge-dq (rebuilt via forge-up.sh when changed)"
 log "  Storage account  : ${STORAGE_ACCOUNT}"
 log "  Environment      : ${FORGE_ENV}"

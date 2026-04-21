@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     compute_cluster_name: str = ""   # e.g. aks-forge-compute-prproddu-dev
     orch_cluster_name: str = ""      # e.g. aks-forge-orchestration-prproddu-dev
 
-    # Airflow — credentials injected by forge-up.sh (portal-api-svc KV secret → AIRFLOW_PASSWORD env)
+    # Airflow — password fetched from Key Vault at runtime via DefaultAzureCredential.
+    # Set AIRFLOW_PASSWORD env var to override for local dev only.
     airflow_url: str = "http://airflow-api-server.airflow.svc.cluster.local:8080"
     airflow_username: str = "portal-api-svc"
     airflow_password: str = ""

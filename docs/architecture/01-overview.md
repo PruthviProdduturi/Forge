@@ -144,7 +144,7 @@ Storage account `forgeadls{alias}{env}` in `rg-forge-{alias}-{env}`.
 | `bronze` | Raw ingested data, immutable source of truth | Airflow | Spark |
 | `silver` | Cleaned, schema-enforced, DQ-validated | Spark | Spark, Trino |
 | `gold` | Aggregated, consumer-ready, SLA-governed | Spark | Trino, Portal |
-| `code` | Spark job notebooks, JARs, runner scripts, and Structured Streaming checkpoints under `checkpoints/<pipeline_id>/` | CI/CD, Spark | Spark |
+| `code` | Spark driver scripts (`spark/jobs/`), DQ rule YAML files (`dq/rules/`), and Structured Streaming checkpoints (`checkpoints/<pipeline_id>/`) | CI/CD, sync-jobs.sh | Spark, ForgeDqGateOperator |
 
 Role assignments are scoped per container — not storage account scope. No ABAC conditions needed.
 
