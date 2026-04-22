@@ -154,6 +154,12 @@ function renderSparkApp(
       `        value: "{{{{ ds }}}}"`,
       `      - name: RULES_YAML`,
       `        value: "${rulesB64}"`,
+      `      - name: FORGE_PORTAL_API_URL`,
+      `        valueFrom:`,
+      `          configMapKeyRef:`,
+      `            name: forge-platform-config`,
+      `            key: portal_api_url`,
+      `            optional: true`,
     ].join("\n");
   } else {
     const effectiveParams = buildEffectiveParams(manifest);
@@ -167,7 +173,13 @@ function renderSparkApp(
         valueFrom:
           configMapKeyRef:
             name: forge-platform-config
-            key: storage_account`;
+            key: storage_account
+      - name: FORGE_PORTAL_API_URL
+        valueFrom:
+          configMapKeyRef:
+            name: forge-platform-config
+            key: portal_api_url
+            optional: true`;
     envVarsStr = envVars ? `${envVars}\n${platformEnv}` : platformEnv;
   }
 

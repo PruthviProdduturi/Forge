@@ -649,7 +649,7 @@ export default function PipelinesPage() {
     <PageLayout icon="fa-sitemap" title="Pipelines" subtitle="Browse, monitor and trigger your Forge data pipelines" heroContent={heroContent} fullHeight>
 
       {actionMsg && (
-        <div style={{ background: actionMsg.ok ? "#f0fdf4" : "#fff1f2", border: `1px solid ${actionMsg.ok ? "#86efac" : "#fca5a5"}`, borderRadius: 10, padding: "10px 16px", marginBottom: 14, color: actionMsg.ok ? "#16a34a" : "#dc2626", fontSize: 13 }}>
+        <div style={{ position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 2000, background: actionMsg.ok ? "#f0fdf4" : "#fff1f2", border: `1px solid ${actionMsg.ok ? "#86efac" : "#fca5a5"}`, borderRadius: 10, padding: "10px 20px", color: actionMsg.ok ? "#16a34a" : "#dc2626", fontSize: 13, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", whiteSpace: "nowrap" }}>
           <i className={`fas ${actionMsg.ok ? "fa-check-circle" : "fa-circle-exclamation"}`} style={{ marginRight: 8 }} />{actionMsg.msg}
         </div>
       )}
