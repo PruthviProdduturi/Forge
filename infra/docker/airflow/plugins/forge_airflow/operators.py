@@ -122,6 +122,7 @@ metadata:
   name: {app_name}-{{{{ data_interval_start.strftime('%Y-%m-%d') }}}}
   namespace: spark-jobs
 spec:
+  timeToLiveSeconds: 3600
   type: Python
   pythonVersion: "3"
   mode: cluster

@@ -50,11 +50,23 @@ class DeltaWriter:
     Args:
         spark: Active SparkSession.
         config: DQConfig instance.
+        dataset_abfss_path: Full ADLS path for the dataset
+            (e.g. ``abfss://bronze@.../Transport/.../NycTaxiBronze``).
+            When provided, DQ output is written co-located next to the data
+            at ``{dataset_abfss_path}/_dq/{output_type}/`` and the table is
+            registered in HMS under the ``_dq`` database for portal discovery.
+            When omitted, the legacy container-root ``_dq/`` path is used.
     """
 
-    def __init__(self, spark: "SparkSession", config: DQConfig) -> None:
+    def __init__(
+        self,
+        spark: "SparkSession",
+        config: DQConfig,
+        dataset_abfss_path: str | None = None,
+    ) -> None:
         self.spark = spark
         self.config = config
+        self.dataset_abfss_path = dataset_abfss_path
 
     # ------------------------------------------------------------------
     # Public write methods
@@ -85,6 +97,7 @@ class DeltaWriter:
         }
 
         self._append_rows([row], AUTO_METRICS_SCHEMA, output_path)
+        self._register_hms(dataset_path, "auto", output_path)
 
     def write_rule_results(
         self,
@@ -119,6 +132,7 @@ class DeltaWriter:
         ]
 
         self._append_rows(rows, RULE_RESULTS_SCHEMA, output_path)
+        self._register_hms(dataset_path, "rules", output_path)
 
     def write_anomaly_results(
         self,
@@ -142,6 +156,7 @@ class DeltaWriter:
             rows.append(row)
 
         self._append_rows(rows, ANOMALY_RESULTS_SCHEMA, output_path)
+        self._register_hms(dataset_path, "anomaly", output_path)
 
     # ------------------------------------------------------------------
     # Path derivation
@@ -150,17 +165,40 @@ class DeltaWriter:
     def _get_output_path(self, dataset_path: str, output_type: str) -> str:
         """Derive the full ABFS path for a DQ output table.
 
-        Args:
-            dataset_path: e.g. ``silver/orders_cleaned``
-            output_type: ``auto``, ``rules``, or ``anomaly``
+        When ``dataset_abfss_path`` is set on this writer, returns a co-located
+        path alongside the dataset (``{dataset_abfss_path}/_dq/{output_type}``).
+        Otherwise falls back to the legacy container-root path.
 
-        Returns:
-            e.g. ``abfss://silver@forgeadlsdev.dfs.core.windows.net/_dq/auto/silver_orders_cleaned``
+        Args:
+            dataset_path: logical path e.g. ``silver/orders_cleaned``
+            output_type: ``auto``, ``rules``, or ``anomaly``
         """
+        if self.dataset_abfss_path:
+            return self.config.dq_path(self.dataset_abfss_path, output_type)
         container = _container_from_path(dataset_path)
         safe_name = _safe_dataset_name(dataset_path)
         base = self.config.dq_base_path(container)
         return f"{base}/{output_type}/{safe_name}"
+
+    def _register_hms(self, dataset_path: str, output_type: str, path: str) -> None:
+        """Register the DQ Delta table in HMS under the ``_dq`` database.
+
+        This makes the table discoverable via ``SHOW TABLES FROM lakehouse._dq``
+        so the portal can query DQ summaries without knowing each dataset's path.
+        Silently skips if HMS registration fails — DQ data is already written.
+        """
+        if not self.dataset_abfss_path:
+            return
+        safe_name = _safe_dataset_name(dataset_path)
+        table = f"_dq.{safe_name}_{output_type}"
+        try:
+            self.spark.sql("CREATE DATABASE IF NOT EXISTS _dq")
+            self.spark.sql(
+                f"CREATE TABLE IF NOT EXISTS {table} USING DELTA LOCATION '{path}'"
+            )
+            logger.debug("DeltaWriter: registered HMS table %s → %s", table, path)
+        except Exception as exc:
+            logger.debug("DeltaWriter: HMS registration skipped for %s: %s", table, exc)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -172,10 +210,11 @@ class DeltaWriter:
         Uses ``mergeSchema=True`` to handle schema evolution without
         manual table maintenance.
         """
-        from pyspark.sql import Row
-
-        spark_rows = [Row(**r) for r in rows]
-        df = self.spark.createDataFrame(spark_rows, schema=schema)
+        # Build tuples in schema field order — PySpark maps by position when
+        # given a StructType schema, so order must match the schema definition.
+        field_names = [f.name for f in schema.fields]
+        ordered_rows = [tuple(r[name] for name in field_names) for r in rows]
+        df = self.spark.createDataFrame(ordered_rows, schema=schema)
 
         (
             df.write.format("delta")

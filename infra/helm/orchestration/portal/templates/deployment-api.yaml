@@ -61,6 +61,10 @@ spec:
             - name: TRINO_PORT
               value: {{ .Values.api.env.trinoPort | quote }}
             {{- end }}
+            {{- if .Values.api.env.computeHost }}
+            - name: COMPUTE_HOST
+              value: {{ .Values.api.env.computeHost | quote }}
+            {{- end }}
             {{- if .Values.api.env.sparkConnectUrl }}
             - name: SPARK_CONNECT_URL
               value: {{ .Values.api.env.sparkConnectUrl | quote }}

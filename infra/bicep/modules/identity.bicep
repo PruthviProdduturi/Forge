@@ -196,7 +196,18 @@ resource fcTrinoCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federa
   }
 }
 
-// RBAC — trino: Reader on silver, gold
+// RBAC — trino: Reader on bronze, silver, gold
+resource trinoBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idTrino.id, storageBlobDataReaderRoleId, cBronze.id)
+  scope: cBronze
+  properties: {
+    roleDefinitionId: storageBlobDataReaderRoleId
+    principalId: idTrino.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Trino — Storage Blob Data Reader on bronze'
+  }
+}
+
 resource trinoSilverReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idTrino.id, storageBlobDataReaderRoleId, cSilver.id)
   scope: cSilver

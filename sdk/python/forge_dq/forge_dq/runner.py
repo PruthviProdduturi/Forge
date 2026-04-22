@@ -88,6 +88,7 @@ class DQRunner:
         pipeline_name: str = "unknown",
         run_id: str | None = None,
         config: DQConfig | None = None,
+        dataset_abfss_path: str | None = None,
     ) -> None:
         self.spark = spark
         self.dataset = dataset
@@ -95,6 +96,7 @@ class DQRunner:
         self.pipeline_name = pipeline_name
         self.run_id = run_id or str(uuid.uuid4())
         self.config = config or get_config()
+        self.dataset_abfss_path = dataset_abfss_path
 
     def run(self, df: "DataFrame") -> DQRunReport:
         """Execute all DQ steps and return a :class:`DQRunReport`.
@@ -143,7 +145,7 @@ class DQRunner:
         try:
             from forge_dq.output.writer import DeltaWriter
 
-            writer = DeltaWriter(self.spark, self.config)
+            writer = DeltaWriter(self.spark, self.config, self.dataset_abfss_path)
             writer.write_auto_metrics(
                 dataset_path=self.dataset,
                 pipeline_name=self.pipeline_name,
@@ -175,9 +177,12 @@ class DQRunner:
                 from forge_dq.rules.builtin import RowCountDeltaRule
                 from forge_dq.output.writer import _container_from_path, _safe_dataset_name
 
-                container = _container_from_path(self.dataset)
-                safe_name = _safe_dataset_name(self.dataset)
-                metrics_path = f"{self.config.dq_base_path(container)}/auto/{safe_name}"
+                if self.dataset_abfss_path:
+                    metrics_path = self.config.dq_path(self.dataset_abfss_path, "auto")
+                else:
+                    container = _container_from_path(self.dataset)
+                    safe_name = _safe_dataset_name(self.dataset)
+                    metrics_path = f"{self.config.dq_base_path(container)}/auto/{safe_name}"
 
                 for rule in rules:
                     if isinstance(rule, RowCountDeltaRule):
@@ -217,7 +222,7 @@ class DQRunner:
         # ------------------------------------------------------------------
         if rule_results:
             try:
-                writer = DeltaWriter(self.spark, self.config)
+                writer = DeltaWriter(self.spark, self.config, self.dataset_abfss_path)
                 writer.write_rule_results(
                     dataset_path=self.dataset,
                     pipeline_name=self.pipeline_name,
@@ -252,6 +257,7 @@ class DQRunner:
                     current_metrics=profile,
                     lookback_days=lookback_days,
                     z_threshold=z_threshold,
+                    dataset_abfss_path=self.dataset_abfss_path,
                 )
         except Exception as exc:
             logger.warning(
@@ -329,12 +335,61 @@ class DQRunner:
         )
 
         # ------------------------------------------------------------------
-        # 9. Raise on critical failure (after writing all results)
+        # 9. Report summary to portal API (best-effort, non-blocking)
+        # ------------------------------------------------------------------
+        _report_to_portal(report)
+
+        # ------------------------------------------------------------------
+        # 10. Raise on critical failure (after writing all results)
         # ------------------------------------------------------------------
         if self.config.fail_on_critical and critical_failures:
             raise DQCriticalFailureError(critical_failures)
 
         return report
+
+
+# ---------------------------------------------------------------------------
+# Portal API reporting helper
+# ---------------------------------------------------------------------------
+
+
+def _report_to_portal(report: DQRunReport) -> None:
+    """POST a DQ summary to the portal API (best-effort).
+
+    The portal-api URL is read from the FORGE_PORTAL_API_URL environment variable
+    (e.g. ``http://portal-api.forge.svc.cluster.local:8080``).  If unset or
+    unreachable, the call is silently skipped — DQ results still go to ADLS Delta.
+    """
+    import json
+    import os
+    import urllib.request
+    from datetime import datetime, timezone
+
+    portal_url = os.environ.get("FORGE_PORTAL_API_URL", "").rstrip("/")
+    if not portal_url:
+        return
+    try:
+        payload = json.dumps({
+            "dataset": report.dataset,
+            "pipeline_name": report.pipeline_name,
+            "run_id": report.run_id,
+            "overall_status": report.overall_status,
+            "total_rules": len(report.rule_results),
+            "passes": sum(1 for r in report.rule_results if r.status == "PASS"),
+            "critical_failures": report.critical_failures,
+            "warnings": sum(1 for r in report.rule_results if r.status == "WARN"),
+            "run_at": datetime.now(timezone.utc).isoformat(),
+        }).encode()
+        req = urllib.request.Request(
+            f"{portal_url}/api/dq/ingest",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("DQ: reported summary to portal API for '%s'.", report.dataset)
+    except Exception as exc:
+        logger.debug("DQ: could not report to portal API (non-fatal): %s", exc)
 
 
 # ---------------------------------------------------------------------------

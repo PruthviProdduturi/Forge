@@ -33,6 +33,7 @@ def _get_connection() -> trino.dbapi.Connection:
         "catalog": settings.trino_catalog,
         "schema": settings.trino_schema,
         "http_scheme": http_scheme,
+        "user": "portal-api",  # Trino requires X-Trino-User even on HTTP (no proxy auth)
     }
     if http_scheme == "https":
         kwargs["auth"] = trino.auth.JWTAuthentication("")
@@ -112,6 +113,24 @@ def get_table_stats(catalog: str, schema: str, table: str) -> dict[str, Any]:
         "last_updated": last_updated,
         "size_bytes": None,  # Not directly available without Hive metastore DESCRIBE EXTENDED
     }
+
+
+def get_table_schema(catalog: str, schema: str, table: str) -> list[dict[str, Any]]:
+    """Return column names, types and ordinal positions for a table."""
+    try:
+        rows = query(
+            f"SELECT column_name, data_type, ordinal_position "
+            f"FROM {catalog}.information_schema.columns "
+            f"WHERE table_schema = '{schema}' AND table_name = '{table}' "
+            f"ORDER BY ordinal_position"
+        )
+        return [
+            {"name": r["column_name"], "type": r["data_type"], "position": r["ordinal_position"]}
+            for r in rows
+        ]
+    except Exception as exc:
+        log.warning("trino_schema_failed", table=f"{catalog}.{schema}.{table}", error=str(exc))
+        return []
 
 
 def get_dq_summary() -> list[dict[str, Any]]:

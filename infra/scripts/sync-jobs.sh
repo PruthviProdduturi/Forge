@@ -131,20 +131,33 @@ _acquire_bearer_token() {
   fi
 }
 
+# Derive the signed-in user's alias (UPN prefix, e.g. prproddu@tenant.com → prproddu)
+_get_user_alias() {
+  local upn
+  upn="$(az account show --query 'user.name' -o tsv 2>/dev/null || true)"
+  if [[ -n "${upn}" ]]; then
+    echo "${upn%%@*}"
+  else
+    echo ""
+  fi
+}
+
 # Register a deployed DAG with the portal (non-fatal — warns and continues if unreachable)
 _register_dag() {
   local dag_id="$1"
-  local alias="$2"
   _acquire_bearer_token
   if [[ -z "${_BEARER_TOKEN}" ]]; then
     warn "  Could not acquire Bearer token — skipping portal registration for ${dag_id}"
     return 0
   fi
+  # Use the actual signed-in user's alias, not the env alias
+  local user_alias
+  user_alias="$(_get_user_alias)"
   local _resp
   _resp="$(curl -sf -X POST "${_PORTAL_URL}/api/pipelines/register" \
     -H "Authorization: Bearer ${_BEARER_TOKEN}" \
     -H "Content-Type: application/json" \
-    -d "{\"dag_id\":\"${dag_id}\",\"owner_alias\":\"${alias}\"}" \
+    -d "{\"dag_id\":\"${dag_id}\",\"owner_alias\":\"${user_alias}\"}" \
     --max-time 10 2>/dev/null || true)"
   if [[ -n "${_resp}" ]]; then
     log "  ✓ Registered ${dag_id} in portal"
@@ -559,7 +572,7 @@ PYEOF
       fi
     fi
 
-    _register_dag "${job_name}" "${OWNER_ALIAS}"
+    _register_dag "${job_name}"
   done
   DAG_PUSH_DONE=true
   log "  DAGs uploaded to ADLS — dag-processor rescans every 30s; init container restores on restart"

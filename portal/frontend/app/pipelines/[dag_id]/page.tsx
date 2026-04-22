@@ -7,6 +7,7 @@ import { useAuth } from "../../../auth/useAuth";
 import { useForgeEnv } from "../../../hooks/useForgeEnv";
 import { apiFetch } from "../../../utils/api";
 import { PageLayout } from "../../../components/PageLayout";
+import { ForgeLoader } from "../../../components/ForgeLoader";
 
 const ACCENT = "var(--forge-primary)";
 
@@ -383,7 +384,7 @@ export default function PipelineDetailPage() {
         </Link>
       </div>
 
-      {loading && <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}><i className="fas fa-spinner fa-spin" style={{ fontSize: 20 }} /></div>}
+      {loading && <ForgeLoader text="Loading run history…" fullscreen={false} />}
       {error && <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 12, padding: "16px 20px", color: "#dc2626" }}><i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />{error}</div>}
 
       {!loading && pipeline && (
@@ -530,9 +531,7 @@ export default function PipelineDetailPage() {
                   <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 12, padding: "16px 20px", marginBottom: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8", marginBottom: 4 }}>Data Flow</div>
                     {tasksLoading ? (
-                      <div style={{ padding: "24px 0", color: "#94a3b8", fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-                        <i className="fas fa-spinner fa-spin" style={{ fontSize: 12 }} /> Loading…
-                      </div>
+                      <ForgeLoader text="Loading graph…" fullscreen={false} />
                     ) : (
                       <FlowGraph meta={{ layer, table, sourceName }} tasks={pipeline.tasks_def} instances={tasks} />
                     )}

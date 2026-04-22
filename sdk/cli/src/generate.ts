@@ -231,8 +231,9 @@ export async function generateJob(
   }
 
   // Generate content
+  const ownerAlias = (process.env["OWNER_ALIAS"] ?? "").toLowerCase() || undefined;
   const pythonContent = generatePython(manifest, existingPy, resolvedSource);
-  const { content: dagContent } = generateDag(manifest);
+  const { content: dagContent } = generateDag(manifest, ownerAlias);
   const dqContent = paths.dqRules ? generateDqYaml(manifest) : null;
 
   let allUpToDate = true;

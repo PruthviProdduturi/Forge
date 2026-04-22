@@ -93,7 +93,7 @@ def _build_spark_app(
                 f'        value: "{value}"',
             ]
 
-    # Always append platform env vars (FORGE_ENV, FORGE_STORAGE_ACCOUNT)
+    # Always append platform env vars (FORGE_ENV, FORGE_STORAGE_ACCOUNT, FORGE_PORTAL_API_URL)
     env_lines += [
         "      - name: FORGE_ENV",
         "        valueFrom:",
@@ -105,6 +105,20 @@ def _build_spark_app(
         "          configMapKeyRef:",
         "            name: forge-platform-config",
         "            key: storage_account",
+        # Alias for forge_dq SDK which reads FORGE_ADLS_ACCOUNT
+        "      - name: FORGE_ADLS_ACCOUNT",
+        "        valueFrom:",
+        "          configMapKeyRef:",
+        "            name: forge-platform-config",
+        "            key: storage_account",
+        # Portal API URL for DQ result reporting — Airflow Variable set by forge-up.sh
+        # to the portal-api internal LB IP (cross-cluster reachable via same VNet).
+        "      - name: FORGE_PORTAL_API_URL",
+        "        valueFrom:",
+        "          configMapKeyRef:",
+        "            name: forge-platform-config",
+        "            key: portal_api_url",
+        "            optional: true",
     ]
     env_block = "\n".join(env_lines)
 
@@ -122,6 +136,7 @@ metadata:
   name: {app_name}-{{{{ data_interval_start.strftime('%Y-%m-%d') }}}}
   namespace: spark-jobs
 spec:
+  timeToLiveSeconds: 3600
   type: Python
   pythonVersion: "3"
   mode: cluster

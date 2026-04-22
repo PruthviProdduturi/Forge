@@ -9,7 +9,7 @@ azure-identity==1.17.1
 azure-mgmt-costmanagement==4.0.0
 azure-mgmt-containerservice==31.0.0
 azure-keyvault-secrets==4.8.0
-azure-storage-blob==12.22.0
+azure-storage-blob[aio]==12.22.0
 azure-kusto-data==4.4.1
 kubernetes==30.1.0
 azure-purview-catalog==1.0.0b4

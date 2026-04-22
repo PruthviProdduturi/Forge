@@ -100,7 +100,7 @@ export default function LineagePage() {
     setLineageData(null);
     try {
       const data = await apiFetch<LineageData>(
-        `/api/lineage/${encodeURIComponent(entity.qualified_name || entity.id)}`,
+        `/api/lineage/${entity.qualified_name || entity.id}`,
         getToken
       );
       setLineageData(data);

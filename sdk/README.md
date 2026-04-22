@@ -42,22 +42,69 @@ Install: `cd sdk/cli && npm install && npm run build && npm link`
 
 Full CLI reference: `sdk/cli/README.md`
 
-## Deploying a pipeline
+## End-to-end: create → generate → deploy → run
 
-Always deploy a single named job — bulk sync is not supported by design:
+### 1. Create or edit the manifest
 
 ```bash
-# Deploy (or redeploy) one pipeline
-FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job nyc_taxi_bronze
+# Create a new manifest stub
+forge init --name my_job --layer bronze
 
-# Preview what would change without applying
-FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job nyc_taxi_bronze --dry-run
+# Edit the manifest to configure source, partition, output, resources
+code src/spark/jobs/my_job.forge.ts
 ```
 
-`sync-jobs.sh` regenerates the DAG + Spark job from the `.forge.ts` manifest, uploads
-the `.py` to ADLS (`code/spark/jobs/`), uploads the DQ rules to ADLS (`code/dq/rules/`),
-and the DAG file is picked up by Airflow git-sync within 30 seconds.
-`--job` is mandatory — there is no full/bulk sync mode.
+### 2. Generate artefacts
+
+```bash
+# Generate Python job + Airflow DAG + DQ rules YAML
+OWNER_ALIAS=DSEng forge generate --manifest src/spark/jobs/my_job.forge.ts --dir .
+
+# Check what changed (CI gate — exits 1 if stale)
+OWNER_ALIAS=DSEng forge generate --manifest src/spark/jobs/my_job.forge.ts --dir . --check
+```
+
+Generated files (committed to this repo, not auto-deployed):
+- `jobs/my_job.py` — Spark driver (business logic preserved across regen)
+- `dags/my_job_dag.py` — Airflow DAG (fully managed, do not edit)
+- `dq/my_job.yaml` — DQ rules (written once, manually curated)
+
+### 3. Deploy to Airflow + ADLS
+
+```bash
+# Upload Spark job + DQ rules to ADLS; let Airflow git-sync pick up the DAG
+OWNER_ALIAS=DSEng bash infra/scripts/sync-jobs.sh --job my_job
+
+# Preview without applying
+OWNER_ALIAS=DSEng bash infra/scripts/sync-jobs.sh --job my_job --dry-run
+```
+
+Airflow git-sync polls ADLS every 30 s — the DAG appears in the UI within ~1 minute.
+`--job` is mandatory — there is no bulk sync mode.
+
+### 4. Trigger a run
+
+Option A — Airflow UI:
+1. Open Airflow → DAGs → `my_job`
+2. Click ▶ **Trigger DAG** (top right)
+
+Option B — Forge Portal:
+1. Open the portal → **Pipelines**
+2. Find `my_job`, click **Trigger**
+
+Option C — CLI (one-off):
+```bash
+# Trigger via Airflow REST API (replace with your Airflow URL)
+curl -X POST "http://<airflow-host>/api/v1/dags/my_job/dagRuns" \
+  -H "Content-Type: application/json" \
+  -d '{"conf": {}}'
+```
+
+### 5. Monitor
+
+- **Portal → Pipelines** — live run state, task graph, logs per task
+- **Airflow UI** → DAGs → `my_job` → Graph / Grid view
+- Task logs: Portal → Pipelines → select run → click task node → Logs
 
 ## Manifest path schema
 

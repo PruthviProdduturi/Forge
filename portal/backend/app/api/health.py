@@ -44,7 +44,9 @@ async def _check_spark_connect() -> bool | None:
     than 'Unreachable'.
     """
     import asyncio
-    host = settings.trino_host  # compute public host (same LB as Trino)
+    # Use the explicit compute_host (public NGINX LB hostname) for Spark Connect.
+    # trino_host may be the internal LB IP (different port, unreachable for 15002).
+    host = settings.compute_host or settings.trino_host
     if not host or ".svc.cluster.local" in host:
         return None
     try:

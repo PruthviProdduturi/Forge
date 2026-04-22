@@ -45,22 +45,27 @@ class SPCDetector:
         current_metrics: dict,
         lookback_days: int = 30,
         z_threshold: float = 3.0,
+        dataset_abfss_path: str | None = None,
     ) -> list[dict]:
         """Detect metric anomalies for *dataset_path*.
 
         Args:
-            dataset_path: e.g. ``silver/orders_cleaned``
+            dataset_path: logical path e.g. ``silver/orders_cleaned``
             current_metrics: The profile dict returned by :class:`~forge_dq.profiler.AutoProfiler`.
             lookback_days: How many calendar days of history to include.
             z_threshold: Z-score magnitude above which a metric is flagged.
+            dataset_abfss_path: Full ADLS path for co-located history reads.
 
         Returns:
             List of anomaly dicts compatible with ``ANOMALY_RESULTS_SCHEMA``.
             Returns an empty list if there is insufficient history.
         """
-        container = _container_from_path(dataset_path)
-        safe_name = _safe_dataset_name(dataset_path)
-        metrics_path = f"{self.config.dq_base_path(container)}/auto/{safe_name}"
+        if dataset_abfss_path:
+            metrics_path = self.config.dq_path(dataset_abfss_path, "auto")
+        else:
+            container = _container_from_path(dataset_path)
+            safe_name = _safe_dataset_name(dataset_path)
+            metrics_path = f"{self.config.dq_base_path(container)}/auto/{safe_name}"
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 

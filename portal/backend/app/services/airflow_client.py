@@ -144,13 +144,18 @@ async def get_task_instances(dag_id: str, run_id: str) -> list[dict[str, Any]]:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-async def trigger_dag(dag_id: str, conf: dict[str, Any] | None = None) -> dict[str, Any]:
+async def trigger_dag(
+    dag_id: str,
+    conf: dict[str, Any] | None = None,
+    logical_date: str | None = None,
+) -> dict[str, Any]:
+    """Trigger a DAG run, optionally for a specific logical_date (restate)."""
     token = await _get_jwt()
     async with _airflow_client(token) as client:
-        now = datetime.now(timezone.utc)
+        ts = logical_date or datetime.now(timezone.utc).isoformat()
         body: dict[str, Any] = {
-            "dag_run_id": f"manual__{now.isoformat()}",
-            "logical_date": now.isoformat(),
+            "dag_run_id": f"restate__{ts}" if logical_date else f"manual__{datetime.now(timezone.utc).isoformat()}",
+            "logical_date": ts,
             "conf": conf or {},
         }
         resp = await client.post(f"/api/v2/dags/{dag_id}/dagRuns", json=body)
@@ -194,6 +199,40 @@ async def set_dag_paused(dag_id: str, is_paused: bool) -> dict[str, Any]:
         return resp.json()
 
 
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=4))
+async def delete_dag_run(dag_id: str, run_id: str) -> None:
+    """Hard-delete a specific DAG run and all its task instances."""
+    token = await _get_jwt()
+    async with _airflow_client(token) as client:
+        resp = await client.delete(f"/api/v2/dags/{dag_id}/dagRuns/{run_id}")
+        if resp.status_code not in (200, 204, 404):
+            resp.raise_for_status()
+
+
+async def patch_task_instance_state(dag_id: str, run_id: str, task_id: str, new_state: str) -> None:
+    """Set a specific task instance to a given state (e.g. 'success' to skip sensors)."""
+    token = await _get_jwt()
+    async with _airflow_client(token) as client:
+        resp = await client.patch(
+            f"/api/v2/dags/{dag_id}/dagRuns/{run_id}/taskInstances/{task_id}",
+            json={"state": new_state},
+        )
+        # 404 = task not yet scheduled (too soon), ignore
+        if resp.status_code not in (200, 404):
+            resp.raise_for_status()
+
+
+async def get_dag_runs_for_date(dag_id: str, logical_date: str) -> list[dict[str, Any]]:
+    """Return all existing DAG runs for a specific logical_date (ISO string)."""
+    token = await _get_jwt()
+    async with _airflow_client(token) as client:
+        params = {"logical_date_gte": logical_date, "logical_date_lte": logical_date, "limit": 25}
+        resp = await client.get(f"/api/v2/dags/{dag_id}/dagRuns", params=params)
+        if resp.status_code == 200:
+            return resp.json().get("dag_runs", [])
+        return []
+
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
 async def delete_dag(dag_id: str) -> None:
     """Delete a DAG from Airflow (dev only). Removes the DAG definition and all its runs."""
@@ -203,38 +242,103 @@ async def delete_dag(dag_id: str) -> None:
         resp.raise_for_status()
 
 
-@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=4))
+def _parse_log_text(text: str) -> str:
+    """Parse NDJSON, JSON {content:}, or plain-text log content into a readable string."""
+    import json as _json
+
+    text = text.strip()
+    if not text:
+        return "(no log output)"
+
+    lines: list[str] = []
+    first_line = text.splitlines()[0].strip()
+    if first_line.startswith("{"):
+        for raw_line in text.splitlines():
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                obj = _json.loads(raw_line)
+                if "event" in obj:
+                    ts = obj.get("timestamp", "")
+                    level = obj.get("level", "").upper()
+                    event = obj.get("event", "")
+                    lines.append(f"[{ts}] {level} {event}" if ts else event)
+                elif "content" in obj:
+                    lines.append(obj["content"])
+                else:
+                    lines.append(raw_line)
+            except _json.JSONDecodeError:
+                lines.append(raw_line)
+    else:
+        lines = text.splitlines()
+
+    return "\n".join(lines)
+
+
+async def _read_log_from_adls(dag_id: str, run_id: str, task_id: str, attempt: int) -> str | None:
+    """Fast path: read task logs directly from ADLS, bypassing Airflow's slow multi-source fetching.
+
+    Airflow's WasbTaskHandler writes logs to:
+      container=airflow-logs, blob=airflow-logs/dag_id={}/run_id={}/task_id={}/attempt={}.log
+    Returns None if the blob doesn't exist yet (task still running) or on any error.
+    """
+    if not settings.adls_account:
+        return None
+    try:
+        from azure.identity.aio import DefaultAzureCredential as _AsyncCred
+        from azure.storage.blob.aio import BlobServiceClient
+
+        blob_path = f"airflow-logs/dag_id={dag_id}/run_id={run_id}/task_id={task_id}/attempt={attempt}.log"
+        account_url = f"https://{settings.adls_account}.blob.core.windows.net"
+        async with _AsyncCred() as cred:
+            async with BlobServiceClient(account_url, credential=cred) as client:
+                blob_client = client.get_blob_client(container="airflow-logs", blob=blob_path)
+                download = await blob_client.download_blob()
+                raw = await download.readall()
+                return _parse_log_text(raw.decode("utf-8", errors="replace"))
+    except Exception as exc:
+        log.debug("adls_log_read_miss", dag_id=dag_id, task_id=task_id, attempt=attempt, error=str(exc))
+        return None
+
+
 async def get_task_logs(dag_id: str, run_id: str, task_id: str, attempt: int = 1) -> str:
     """Fetch raw task logs for a specific task instance attempt.
 
-    Airflow 3.x log API returns application/x-ndjson (newline-delimited JSON).
-    Each line is {"event": "...", "timestamp": "...", "level": "..."}.
-    We extract the event fields and join them into a plain-text log string.
+    Fast path: reads directly from ADLS blob (milliseconds).
+    Fallback: Airflow REST API (slow — tries ADLS then dead worker pod).
     """
-    import json as _json
+    from urllib.parse import quote
 
-    token = await _get_jwt()
-    async with _airflow_client(token) as client:
-        resp = await client.get(
-            f"/api/v2/dags/{dag_id}/dagRuns/{run_id}/taskInstances/{task_id}/logs/{attempt}",
-            headers={"Accept": "application/x-ndjson"},
-        )
-        resp.raise_for_status()
+    # Fast path — direct ADLS read (no Airflow involvement, no TCP timeouts)
+    adls_text = await _read_log_from_adls(dag_id, run_id, task_id, attempt)
+    if adls_text is not None:
+        return adls_text
 
-    lines: list[str] = []
-    for raw_line in resp.text.splitlines():
-        raw_line = raw_line.strip()
-        if not raw_line:
-            continue
-        try:
-            obj = _json.loads(raw_line)
-            ts = obj.get("timestamp", "")
-            level = obj.get("level", "").upper()
-            event = obj.get("event", raw_line)
-            lines.append(f"[{ts}] {level} {event}" if ts else event)
-        except _json.JSONDecodeError:
-            lines.append(raw_line)
-    return "\n".join(lines)
+    # Fallback — Airflow REST API (task still running, logs not flushed to ADLS yet)
+    # Short timeout: if Airflow is slow (dead worker pod fallback), fail fast.
+    encoded_run_id = quote(run_id, safe="")
+    try:
+        token = await _get_jwt()
+        async with httpx.AsyncClient(
+            base_url=settings.airflow_url,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            timeout=10.0,
+        ) as client:
+            resp = await client.get(
+                f"/api/v2/dags/{dag_id}/dagRuns/{encoded_run_id}/taskInstances/{task_id}/logs/{attempt}",
+                headers={"Accept": "application/x-ndjson"},
+            )
+            if resp.status_code in (404, 500):
+                return "(no logs yet — task may still be starting up)"
+            if not resp.is_success:
+                return f"(Airflow returned HTTP {resp.status_code} — logs may not be available yet)"
+            text = resp.text.strip()
+        return _parse_log_text(text)
+    except httpx.TimeoutException:
+        return "(no logs yet — task is still running, try again in a moment)"
+    except Exception as exc:
+        raise RuntimeError(f"Failed to fetch logs: {exc}") from exc
 
 
 async def ping() -> bool:

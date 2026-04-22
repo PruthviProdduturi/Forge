@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from datetime import datetime
 
 from pyspark.sql import functions as F
 
@@ -53,7 +54,6 @@ class ForgeDqGate(ForgeJob):
                 )
             else:
                 # Silver/gold use __date = DD_MM_YYYY_HH
-                from datetime import datetime
                 _dt = datetime.strptime(PARTITION_DATE, "%Y-%m-%d")
                 _date_key = f"{_dt.day:02d}_{_dt.month:02d}_{_dt.year}_{0:02d}"
                 df = df.filter(F.col("__date") == F.lit(_date_key))
@@ -76,12 +76,32 @@ class ForgeDqGate(ForgeJob):
             except Exception as exc:
                 self.log.warning("dq_gate: could not read RULES_PATH %s — rule checks skipped: %s", RULES_PATH, exc)
 
+        # Resolve the dataset's ADLS path from HMS so DQ output is written
+        # co-located next to the data (alongside _tracker/).
+        dataset_abfss_path: str | None = None
+        try:
+            from pyspark.sql.functions import col as _col
+            loc_row = (
+                self.spark.sql(f"DESCRIBE EXTENDED {TABLE}")
+                .filter(_col("col_name") == "Location")
+                .first()
+            )
+            if loc_row:
+                dataset_abfss_path = loc_row["data_type"]
+                self.log.info("dq_gate resolved dataset path: %s", dataset_abfss_path)
+        except Exception as exc:
+            self.log.warning(
+                "dq_gate: could not resolve ADLS path for %s — using legacy path: %s",
+                TABLE, exc,
+            )
+
         table_slug = TABLE.split(".")[-1] if "." in TABLE else TABLE
         runner = DQRunner(
             self.spark,
             dataset=f"{LAYER}/{table_slug}",
             rules_path=rules_path,
             pipeline_name=f"{TABLE}_dq_gate",
+            dataset_abfss_path=dataset_abfss_path,
         )
         report = runner.run(df)
 

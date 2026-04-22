@@ -1,0 +1,20 @@
+{{- /*
+Internal LoadBalancer for portal-api — allows Spark pods on the compute cluster
+to POST DQ results to /api/dq/ingest without going through the auth proxy.
+Both clusters share the same VNet so the ILB IP is directly routable.
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: portal-api-internal
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    app: portal-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP

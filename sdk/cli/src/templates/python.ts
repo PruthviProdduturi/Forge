@@ -95,7 +95,8 @@ function adlsPath(name: string, version: number, path: ForgeJobManifest["output"
 /** Derive the HMS/Trino table name from the manifest. */
 function deriveTable(manifest: ForgeJobManifest): string {
   if (manifest.output.table) return manifest.output.table;
-  const slug = manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // Use output.name (the asset identifier) not path.assetName (the folder key shared across layers).
+  const slug = manifest.output.name.toLowerCase().replace(/[^a-z0-9]/g, "");
   return `${manifest.layer}.${slug}`;
 }
 

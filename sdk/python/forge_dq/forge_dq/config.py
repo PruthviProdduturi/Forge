@@ -39,11 +39,28 @@ class DQConfig:
     def dq_base_path(self, container: str) -> str:
         """Return the ABFS base path for DQ output tables in the given container.
 
+        Legacy fallback — used when the dataset ADLS path is unknown.
+        Prefer :meth:`dq_path` for co-located output.
+
         Example:
             config.dq_base_path("silver")
             # → "abfss://silver@forgeadlsdev.dfs.core.windows.net/_dq"
         """
         return f"abfss://{container}@{self.adls_account}.dfs.core.windows.net/_dq"
+
+    def dq_path(self, dataset_abfss_path: str, output_type: str) -> str:
+        """Return the co-located DQ output path for a dataset.
+
+        Stores DQ output alongside the data, next to ``_tracker/``.
+
+        Example:
+            config.dq_path(
+                "abfss://bronze@forgeadlsdev.dfs.core.windows.net/Transport/.../NycTaxiBronze",
+                "auto"
+            )
+            # → "abfss://bronze@.../Transport/.../NycTaxiBronze/_dq/auto"
+        """
+        return f"{dataset_abfss_path.rstrip('/')}/_dq/{output_type}"
 
 
 # Module-level singleton — lazily initialised on first import.

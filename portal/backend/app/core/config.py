@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     trino_catalog: str = "lakehouse"
     trino_schema: str = "default"
 
+    # Compute cluster public hostname — used for Spark Connect health check (port 15002).
+    # Set to the external NGINX LB hostname (e.g. forge-compute-dseng-dev.northcentralus.cloudapp.azure.com).
+    compute_host: str = ""
+
     # Spark Connect — HTTP REST endpoint for health checks
     spark_connect_url: str = "http://spark-connect.spark.svc.cluster.local:4040"
 

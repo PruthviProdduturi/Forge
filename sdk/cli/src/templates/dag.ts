@@ -131,12 +131,13 @@ function renderSparkApp(
     ? `"abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/spark/jobs/forge_dq_gate.py"`
     : `"abfss://code@{_STORAGE_ACCOUNT}.dfs.core.windows.net/spark/jobs/${manifest.name}.py"`;
 
-  // Derive table name for DQ gate env vars
-  const table =
-    manifest.output.table ??
-    `${manifest.layer}.${manifest.output.path.assetName
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "")}`;
+  // Derive table name for DQ gate env vars.
+  // Prefer output.name (e.g. "NycTaxiTrips") which the Spark job uses to register the HMS table,
+  // falling back to output.path.assetName for legacy manifests without an explicit output.name.
+  const _outputSlug = (manifest.output.name ?? manifest.output.path.assetName)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  const table = manifest.output.table ?? `${manifest.layer}.${_outputSlug}`;
 
   // Env vars differ by task type
   let envVarsStr: string;
@@ -259,7 +260,7 @@ ${adaptiveConf}
  *
  * Returns the file content and the target subfolder (ingestion | transformation).
  */
-export function generateDag(manifest: ForgeJobManifest): {
+export function generateDag(manifest: ForgeJobManifest, ownerAlias?: string): {
   content: string;
   folder: string;
 } {
@@ -279,11 +280,13 @@ export function generateDag(manifest: ForgeJobManifest): {
     folder,
     ...manifest.name.split("_").slice(0, 2),
     ...(manifest.tags ?? []),
+    `source:${manifest.source.name}`,  // portal uses this to label the source node in the task graph
   ];
   // Deduplicate
   const tags = [...new Set(allTags)];
   const tagsRepr = tags.map((t) => `"${t}"`).join(", ");
 
+  const dagOwner = ownerAlias ?? "data-engineering";
   const retries = manifest.retries ?? 2;
   const retryDelayMins = manifest.retryDelayMinutes ?? (manifest.layer === "bronze" ? 5 : 10);
   const retryDelay = `timedelta(minutes=${retryDelayMins})`;
@@ -333,8 +336,10 @@ export function generateDag(manifest: ForgeJobManifest): {
     ? `Triggered by: ${upstreamDagId} (ExternalTaskSensor — same logical date)\n`
     : "";
 
-  const table = manifest.output.table ??
-    `${manifest.layer}.${manifest.output.path.assetName.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+  const _outputSlug2 = (manifest.output.name ?? manifest.output.path.assetName)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  const table = manifest.output.table ?? `${manifest.layer}.${_outputSlug2}`;
 
   // Parse startDate from manifest or default to 2024-01-01
   const startDateStr = manifest.startDate ?? "2024-01-01";
@@ -392,7 +397,7 @@ ${sensorImport}from forge_airflow import ForgeSparkOperator${hasDq ? ", ForgeDqG
 # Default task arguments
 # ---------------------------------------------------------------------------
 default_args = {
-    "owner": "data-engineering",
+    "owner": "${dagOwner}",
     "depends_on_past": False,
     "retries": ${retries},
     "retry_delay": ${retryDelay},

@@ -8,7 +8,10 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.auth import get_current_user
+from app.core.config import get_settings
 from app.services import trino_client
+
+settings = get_settings()
 
 log = structlog.get_logger(__name__)
 
@@ -37,7 +40,7 @@ def _build_dataset_entry(
         "row_count": stats.get("row_count"),
         "last_updated": stats.get("last_updated"),
         "size_bytes": stats.get("size_bytes"),
-        "has_dq": name in dq_datasets,
+        "has_dq": f"{layer}/{name}" in dq_datasets,
     }
 
 
@@ -91,3 +94,24 @@ async def list_datasets_by_layer(
     if layer not in valid_layers:
         raise HTTPException(status_code=400, detail=f"Layer must be one of: {valid_layers}")
     return await _fetch_datasets(layer)
+
+
+@router.get("/{layer}/{name}/schema")
+async def get_dataset_schema(
+    layer: str, name: str, current_user: CurrentUser
+) -> dict[str, Any]:
+    """Return column schema + stats for a single dataset."""
+    valid_layers = {"bronze", "silver", "gold"}
+    if layer not in valid_layers:
+        raise HTTPException(status_code=400, detail=f"Layer must be one of: {valid_layers}")
+
+    columns, stats = await asyncio.gather(
+        asyncio.to_thread(trino_client.get_table_schema, settings.trino_catalog, layer, name),
+        asyncio.to_thread(trino_client.get_table_stats, settings.trino_catalog, layer, name),
+        return_exceptions=True,
+    )
+
+    return {
+        "columns": columns if isinstance(columns, list) else [],
+        "stats": stats if isinstance(stats, dict) else {"row_count": None, "last_updated": None, "size_bytes": None},
+    }

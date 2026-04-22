@@ -33,6 +33,14 @@
 #   --skip-imports          Skip third-party image and Helm chart imports in Phase 5
 #                           (saves ~3-5 min when git-sync, spark-operator images and
 #                            spark-operator/airflow/trino charts are already in ACR)
+#
+# Shortcut aliases (combine multiple skip flags):
+#   --orch-only             Rebuild images + deploy orch cluster only (Airflow, Portal)
+#                           Equivalent to: --skip-infra --skip-secrets --skip-imports --skip-compute
+#   --compute-only          Rebuild images + deploy compute cluster only (Spark, Trino, HMS)
+#                           Equivalent to: --skip-infra --skip-secrets --skip-imports --skip-orch
+#   --redeploy              Rebuild all images + deploy both clusters, skip slow infra/secrets/imports
+#                           Equivalent to: --skip-infra --skip-secrets --skip-imports
 #   --run-test              After deploy: seed raw data, trigger all pipelines
 #                           once (bronze → silver → gold), verify tables in Trino
 #   --test-date <date>      Partition date for test run (default: 2023-01-15)
@@ -102,6 +110,10 @@ while [[ $# -gt 0 ]]; do
     --skip-secrets)      SKIP_SECRETS=true;      shift ;;
     --publish-packages)  PUBLISH_PACKAGES=true;  shift ;;
     --location)          LOCATION_ARG="$2";      shift 2 ;;
+    # Shortcut aliases — expand to their constituent skip flags
+    --orch-only)    SKIP_INFRA=true; SKIP_SECRETS=true; SKIP_IMPORTS=true; SKIP_COMPUTE=true; shift ;;
+    --compute-only) SKIP_INFRA=true; SKIP_SECRETS=true; SKIP_IMPORTS=true; SKIP_ORCH=true;    shift ;;
+    --redeploy)     SKIP_INFRA=true; SKIP_SECRETS=true; SKIP_IMPORTS=true;                    shift ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
@@ -167,6 +179,8 @@ else
   _SUB_SUFFIX="${_SUB_SUFFIX:0:8}"       # first 8 chars
   ACR="forgeacr${_SUB_SUFFIX}"
 fi
+# ACR names and login servers are always lowercase — normalize to avoid Helm OCI auth mismatches
+ACR="${ACR,,}"
 ACR_RG="rg-forge-acr${ALIAS:+-${ALIAS}}"
 RESOURCE_GROUP="rg-forge-${_A}${ENV}"
 COMPUTE_CLUSTER="aks-forge-compute-${_A}${ENV}"
@@ -729,8 +743,6 @@ echo "━━━ [5/8] Build and push images to ACR (parallel) ━━━━━━
 echo "  Opening ACR public access..."
 az acr update --name "$ACR" --public-network-enabled true --default-action Allow --output none
 _ACR_OPENED=true
-# Wait for firewall rule to propagate before attempting login
-sleep 10
 
 _close_acr() {
   if [[ "${_ACR_OPENED:-false}" == "true" ]]; then
@@ -759,11 +771,22 @@ HMS_TAG="${HMS_TAG:-1.0}"
 # ---------------------------------------------------------------------------
 
 # Helm OCI login — required for helm push and helm upgrade --install from ACR.
-echo "  Authenticating Helm with ACR..."
-ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null)
-echo "$ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" \
-  --username "00000000-0000-0000-0000-000000000000" \
-  --password-stdin
+echo "  Authenticating Helm with ACR (retrying until firewall propagates)..."
+_helm_login_ok=false
+for _attempt in 1 2 3 4 5 6; do
+  sleep 10
+  ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null)
+  if [[ ${#ACR_TOKEN} -ge 50 ]] && echo "$ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" \
+      --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null; then
+    _helm_login_ok=true
+    break
+  fi
+  echo "    Attempt ${_attempt}/6 failed — ACR firewall still propagating, retrying..."
+done
+if [[ "$_helm_login_ok" != "true" ]]; then
+  echo "ERROR: Helm ACR login failed after 60s — check ACR firewall / az login." >&2
+  exit 1
+fi
 echo "  Helm ACR login done."
 
 # Third-party container images + Helm charts — idempotent imports into ACR.
@@ -889,15 +912,25 @@ else
     _BUILD_PIDS+=($!)
   }
 
-  _queue_build "spark-operator"   "spark-operator-controller" "2.5.0" "${REPO_ROOT}/infra/docker/spark-operator/Dockerfile"   "${REPO_ROOT}/infra/docker/spark-operator/"
-  _queue_build "spark"            "spark"            "$SPARK_TAG"   "${REPO_ROOT}/infra/docker/spark/Dockerfile"             "${REPO_ROOT}/"
-  _queue_build "trino"            "trino"            "$TRINO_TAG"   "${REPO_ROOT}/infra/docker/trino/Dockerfile"             "${REPO_ROOT}/infra/docker/trino/"
-  _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/"
-  _queue_build "hive-metastore"   "hive-metastore"   "$HMS_TAG"     "${REPO_ROOT}/infra/docker/hive-metastore/Dockerfile"   "${REPO_ROOT}/infra/docker/hive-metastore/"
-  _queue_build "trino-auth-proxy"  "trino-auth-proxy"  "1.2"      "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile"  "${REPO_ROOT}/infra/docker/trino-auth-proxy/"
-  _queue_build "portal-auth-proxy" "portal-auth-proxy" "1.0"      "${REPO_ROOT}/infra/docker/portal-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/portal-auth-proxy/"
-  _queue_build "portal-api"        "portal-api"        "$API_TAG"  "${REPO_ROOT}/infra/docker/portal-api/Dockerfile"        "${REPO_ROOT}/portal/backend/"
-  _queue_build "portal-web"        "portal-web"        "$WEB_TAG"  "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"        "${REPO_ROOT}/portal/frontend/"
+  # Compute images — only built when compute cluster will be deployed
+  if [[ "$SKIP_COMPUTE" != "true" ]]; then
+    _queue_build "spark-operator"   "spark-operator-controller" "2.5.0" "${REPO_ROOT}/infra/docker/spark-operator/Dockerfile"   "${REPO_ROOT}/infra/docker/spark-operator/"
+    _queue_build "spark"            "spark"            "$SPARK_TAG"   "${REPO_ROOT}/infra/docker/spark/Dockerfile"             "${REPO_ROOT}/"
+    _queue_build "trino"            "trino"            "$TRINO_TAG"   "${REPO_ROOT}/infra/docker/trino/Dockerfile"             "${REPO_ROOT}/infra/docker/trino/"
+    _queue_build "hive-metastore"   "hive-metastore"   "$HMS_TAG"     "${REPO_ROOT}/infra/docker/hive-metastore/Dockerfile"   "${REPO_ROOT}/infra/docker/hive-metastore/"
+    _queue_build "trino-auth-proxy"  "trino-auth-proxy"  "1.2"      "${REPO_ROOT}/infra/docker/trino-auth-proxy/Dockerfile"  "${REPO_ROOT}/infra/docker/trino-auth-proxy/"
+  else
+    echo "  Skipped : compute images (spark, trino, hive-metastore, trino-auth-proxy) — --skip-compute"
+  fi
+  # Orch images — only built when orch cluster will be deployed
+  if [[ "$SKIP_ORCH" != "true" ]]; then
+    _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/"
+    _queue_build "portal-auth-proxy" "portal-auth-proxy" "1.0"      "${REPO_ROOT}/infra/docker/portal-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/portal-auth-proxy/"
+    _queue_build "portal-api"        "portal-api"        "$API_TAG"  "${REPO_ROOT}/infra/docker/portal-api/Dockerfile"        "${REPO_ROOT}/portal/backend/"
+    _queue_build "portal-web"        "portal-web"        "$WEB_TAG"  "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"        "${REPO_ROOT}/portal/frontend/"
+  else
+    echo "  Skipped : orch images (airflow, portal-api, portal-web, portal-auth-proxy) — --skip-orch"
+  fi
 
   echo "  Waiting for ${#_BUILD_PIDS[@]} builds to complete..."
   _BUILD_FAILED=()
@@ -946,14 +979,8 @@ else
     exit 1
   fi
 
-  # Restore ACR to private-only after all builds complete (S360 compliance)
-  if [[ -n "$_ACR_RESTORE_PUBLIC" ]]; then
-    echo "  Disabling ACR public access (S360 restore)..."
-    az acr update --name "$ACR" --resource-group "$ACR_RG" \
-      --public-network-enabled false --default-action Deny --output none 2>/dev/null \
-      && echo "  ✓ ACR restored to private" \
-      || echo "  WARN: could not restore ACR — run: az acr update --name ${ACR} --public-network-enabled false --default-action Deny"
-  fi
+  # ACR stays open through Helm OCI pulls (cert-manager chart).
+  # The final close happens at phase 8 (line ~2373) after all Helm deploys complete.
 fi
 echo ""
 
@@ -1048,12 +1075,10 @@ else
   echo "    Done"
 
   echo "  [6.0.5] cert-manager + Let's Encrypt issuer (compute)..."
-  _ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>&1)
-  if [[ ${#_ACR_TOKEN} -lt 50 ]]; then
-    echo "ERROR: ACR login failed (token length=${#_ACR_TOKEN}). Check ACR firewall / az login." >&2
-    exit 1
-  fi
-  echo "$_ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin
+  # Re-login before pulling the OCI chart — token may have expired during image builds.
+  # Safe to do here when orch subshell is not running (--compute-only / --skip-orch).
+  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
+    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
   helm upgrade --install cert-manager \
     "oci://${ACR}.azurecr.io/helm/cert-manager" \
     --version "v1.17.1" \
@@ -1106,6 +1131,7 @@ else
   kubectl create configmap forge-platform-config \
     --from-literal=env="$ENV" \
     --from-literal=storage_account="${ADLS_ACCOUNT}" \
+    --from-literal=portal_api_url="" \
     -n spark-jobs --context "$COMPUTE_CLUSTER" \
     --dry-run=client -o yaml | kubectl apply --context "$COMPUTE_CLUSTER" -f - 2>&1 | grep -v "^$" || true
 
@@ -1160,7 +1186,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods", "services", "configmaps", "persistentvolumeclaims"]
-    verbs: ["create", "get", "list", "watch", "delete", "patch", "update"]
+    verbs: ["create", "get", "list", "watch", "delete", "deletecollection", "patch", "update"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get", "list"]
@@ -1278,6 +1304,11 @@ SPARK_SUBMITTER_RBAC
     --set "image.tag=${TRINO_TAG}" \
     $TRINO_WI_ARG \
     --wait --timeout 10m
+
+  # Internal LB for Trino — gives the portal-api a cross-cluster HTTP endpoint
+  # (no auth required; both clusters share the same VNet).
+  echo "  [6.4b] Trino internal LoadBalancer..."
+  kubectl apply --context "$COMPUTE_CLUSTER" -f "${REPO_ROOT}/infra/helm/compute/trino/trino-internal-lb.yaml"
   echo "    Done"
 
   echo "  [6.5] Trino Auth Proxy..."
@@ -1537,7 +1568,7 @@ metadata:
   name: portal-pg-setup
   namespace: airflow
 spec:
-  ttlSecondsAfterFinished: 120
+  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
@@ -1614,15 +1645,23 @@ spec:
                   sys.exit(1)
 PORTALPGJOB
 
+      # NotFound = job finished + TTL-cleaned (ttlSecondsAfterFinished) → treat as success
       kubectl wait job/portal-pg-setup \
         -n airflow \
         --context "$ORCH_CLUSTER" \
         --for=condition=complete \
-        --timeout=5m \
+        --timeout=5m 2>&1 \
+        | grep -v "^$" \
         && echo "    Portal DB setup done" \
-        || { echo "    ERROR: portal-pg-setup job failed — portal-api will crash without DB access."; \
-             echo "    Logs: kubectl logs -n airflow job/portal-pg-setup --context ${ORCH_CLUSTER}"; \
-             exit 1; }
+        || {
+          if ! kubectl get job/portal-pg-setup -n airflow --context "$ORCH_CLUSTER" &>/dev/null; then
+            echo "    Portal DB setup done (job TTL-cleaned after completion)"
+          else
+            echo "    ERROR: portal-pg-setup job failed — portal-api will crash without DB access."
+            echo "    Logs: kubectl logs -n airflow job/portal-pg-setup --context ${ORCH_CLUSTER}"
+            exit 1
+          fi
+        }
     fi
 
     # Step 2b: Token-init Job — inject AAD token into airflow-db-credentials
@@ -1818,12 +1857,10 @@ MIGJOB
   echo "    Done"
 
   echo "  [7.2] cert-manager + Let's Encrypt issuer..."
-  _ACR_TOKEN=$(az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>&1)
-  if [[ ${#_ACR_TOKEN} -lt 50 ]]; then
-    echo "ERROR: ACR login failed (token length=${#_ACR_TOKEN}). Check ACR firewall / az login." >&2
-    exit 1
-  fi
-  echo "$_ACR_TOKEN" | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin
+  # Re-login before pulling the OCI chart — token may have expired during image builds.
+  # Safe to do here when compute subshell is not running (--orch-only / --skip-compute).
+  az acr login --name "$ACR" --expose-token --output tsv --query accessToken 2>/dev/null \
+    | helm registry login "${ACR}.azurecr.io" --username "00000000-0000-0000-0000-000000000000" --password-stdin 2>/dev/null || true
   helm upgrade --install cert-manager \
     "oci://${ACR}.azurecr.io/helm/cert-manager" \
     --version "v1.17.1" \
@@ -1880,6 +1917,7 @@ AIRFLOW_POD_RBAC
   # exists when the dag-processor pod first starts. Use dry-run+apply for idempotency.
   kubectl create configmap forge-platform-config \
     --from-literal=FORGE_STORAGE_ACCOUNT="${ADLS_ACCOUNT}" \
+    ${AIRFLOW_WI_CLIENT_ID:+--from-literal=AZURE_CLIENT_ID="${AIRFLOW_WI_CLIENT_ID}"} \
     -n airflow --context "$ORCH_CLUSTER" \
     --dry-run=client -o yaml \
     | kubectl apply -f - --context "$ORCH_CLUSTER" 2>&1 | grep -v "^$" || true
@@ -1931,7 +1969,7 @@ AIRFLOW_POD_RBAC
     --set "images.gitSync.tag=v4.4.2" \
     --set "ingress.apiServer.host=${AIRFLOW_PUBLIC_HOST}" \
     ${AIRFLOW_WI_CLIENT_ID:+--set "serviceAccount.annotations.azure\.workload\.identity/client-id=${AIRFLOW_WI_CLIENT_ID}"} \
-    ${AIRFLOW_WI_CLIENT_ID:+--set "env[100].name=AZURE_CLIENT_ID" --set "env[100].value=${AIRFLOW_WI_CLIENT_ID}"} \
+    ${AIRFLOW_WI_CLIENT_ID:+--set "env[9].name=AZURE_CLIENT_ID" --set "env[9].value=${AIRFLOW_WI_CLIENT_ID}"} \
     --set "dagProcessor.extraInitContainers[0].image=${ACR}.azurecr.io/airflow:${AIRFLOW_TAG}" \
     --wait --timeout 20m
 
@@ -1987,6 +2025,18 @@ AIRFLOW_POD_RBAC
       -n portal --context "$ORCH_CLUSTER"
   fi
 
+  # Resolve Trino internal LB IP (cross-cluster HTTP, no auth; same VNet).
+  # Falls back to the public HTTPS endpoint if ILB not yet provisioned.
+  TRINO_INTERNAL_IP=$(kubectl get svc trino-internal -n trino \
+    --context "$COMPUTE_CLUSTER" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+  if [[ -n "$TRINO_INTERNAL_IP" ]]; then
+    TRINO_HOST_ARG="$TRINO_INTERNAL_IP"
+    TRINO_PORT_ARG="8080"
+  else
+    TRINO_HOST_ARG="$COMPUTE_PUBLIC_HOST"
+    TRINO_PORT_ARG="443"
+  fi
+
   helm upgrade --install forge-portal \
     "${REPO_ROOT}/infra/helm/orchestration/portal" \
     --namespace portal --create-namespace \
@@ -2011,8 +2061,9 @@ AIRFLOW_POD_RBAC
     --set "api.env.ownerAlias=${ALIAS}" \
     --set "api.env.computeClusterName=${COMPUTE_CLUSTER}" \
     --set "api.env.orchClusterName=${ORCH_CLUSTER}" \
-    --set "api.env.trinoHost=${COMPUTE_PUBLIC_HOST}" \
-    --set "api.env.trinoPort=443" \
+    --set "api.env.trinoHost=${TRINO_HOST_ARG}" \
+    --set "api.env.trinoPort=${TRINO_PORT_ARG}" \
+    --set "api.env.computeHost=${COMPUTE_PUBLIC_HOST}" \
     --set "api.env.airflowUsername=portal-api-svc" \
     --set "api.env.keyVaultUrl=https://${KV_NAME}.vault.azure.net/" \
     --set "ingress.host=${PUBLIC_HOST}" \
@@ -2027,6 +2078,27 @@ AIRFLOW_POD_RBAC
     -n portal --context "$ORCH_CLUSTER" 2>/dev/null || true
   kubectl rollout status deployment/portal-web deployment/portal-api deployment/portal-auth-proxy \
     -n portal --context "$ORCH_CLUSTER" --timeout=3m 2>/dev/null || true
+
+  # Patch forge-platform-config on the compute cluster with the portal-api internal LB IP.
+  # Spark DQ gate pods read FORGE_PORTAL_API_URL from this ConfigMap to POST results cross-cluster.
+  PORTAL_INTERNAL_IP=""
+  for i in $(seq 1 12); do
+    PORTAL_INTERNAL_IP=$(kubectl get svc portal-api-internal -n portal \
+      --context "$ORCH_CLUSTER" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    [[ -n "$PORTAL_INTERNAL_IP" ]] && break
+    echo "    Waiting for portal-api internal LB IP (${i}/12)..."
+    sleep 10
+  done
+  if [[ -n "$PORTAL_INTERNAL_IP" ]]; then
+    PORTAL_URL="http://${PORTAL_INTERNAL_IP}:8080"
+    kubectl patch configmap forge-platform-config -n spark-jobs \
+      --context "$COMPUTE_CLUSTER" \
+      --type merge \
+      -p "{\"data\":{\"portal_api_url\":\"${PORTAL_URL}\"}}" 2>/dev/null || true
+    echo "    forge-platform-config.portal_api_url = ${PORTAL_URL}"
+  else
+    echo "    WARNING: portal-api internal LB IP not assigned — ConfigMap not patched"
+  fi
   echo "    Done"
 
   # ── Token refresh CronJob ─────────────────────────────────────────────────

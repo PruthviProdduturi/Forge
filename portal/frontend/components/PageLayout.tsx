@@ -10,6 +10,12 @@ interface PageLayoutProps {
   /** Optional stat pills / controls rendered inside the hero below the subtitle */
   heroContent?: ReactNode;
   children: ReactNode;
+  /**
+   * When true the page outer div uses height:100% + flex-column so the content
+   * area fills exactly the remaining viewport (no whole-page scroll).
+   * Each child is responsible for its own overflow/scroll.
+   */
+  fullHeight?: boolean;
 }
 
 /**
@@ -21,9 +27,9 @@ interface PageLayoutProps {
  *     {content}
  *   </PageLayout>
  */
-export function PageLayout({ icon, title, subtitle, heroContent, children }: PageLayoutProps) {
+export function PageLayout({ icon, title, subtitle, heroContent, children, fullHeight }: PageLayoutProps) {
   return (
-    <div style={{ minHeight: "100%" }}>
+    <div style={fullHeight ? { display: "flex", flexDirection: "column", height: "100%" } : { minHeight: "100%" }}>
       {/* ── Hero ── */}
       <div style={{
         background: "linear-gradient(135deg, var(--forge-primary) 0%, var(--forge-dark) 100%)",
@@ -61,7 +67,9 @@ export function PageLayout({ icon, title, subtitle, heroContent, children }: Pag
       </div>
 
       {/* ── Content ── */}
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
+      <div style={fullHeight
+        ? { flex: 1, overflow: "hidden", maxWidth: 1400, width: "100%", margin: "0 auto", padding: "16px 1.5rem 24px", boxSizing: "border-box" }
+        : { maxWidth: 1400, margin: "0 auto", padding: "28px 1.5rem 60px" }}>
         {children}
       </div>
     </div>

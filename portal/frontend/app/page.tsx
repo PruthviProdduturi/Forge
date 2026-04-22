@@ -326,10 +326,10 @@ export default function HomePage() {
                   <div style={{ padding: "20px 16px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                       <i className="fas fa-shield-halved" style={{ color: "#cbd5e1", fontSize: 15 }} />
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>No DQ rules yet</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: "#94a3b8" }}>No DQ results yet</span>
                     </div>
                     <p style={{ margin: 0, fontSize: 12, color: "#94a3b8", lineHeight: 1.5 }}>
-                      Configure quality rules in the <Link href="/dq" style={{ color: "var(--forge-primary)", fontWeight: 600, textDecoration: "none" }}>Quality</Link> page to monitor datasets.
+                      DQ rules run as pipeline steps. Results appear here after your first pipeline completes.
                     </p>
                   </div>
                 ) : dqHealthy ? (

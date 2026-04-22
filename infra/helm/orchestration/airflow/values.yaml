@@ -143,7 +143,7 @@ scheduler:
   replicas: 1
   waitForMigrations:
     enabled: false
-  podLabels:
+  labels:
     azure.workload.identity/use: "true"
   resources:
     requests:
@@ -161,7 +161,7 @@ triggerer:
   replicas: 1
   waitForMigrations:
     enabled: false
-  podLabels:
+  labels:
     azure.workload.identity/use: "true"
 
 # ---------------------------------------------------------------------------
@@ -172,8 +172,13 @@ dagProcessor:
   replicas: 1
   waitForMigrations:
     enabled: false
-  podLabels:
+  labels:
     azure.workload.identity/use: "true"
+  # Use the main 'airflow' SA — it has the federated identity credential registered in AAD.
+  # The auto-created airflow-dag-processor SA has no federation record and WI auth fails.
+  serviceAccount:
+    create: false
+    name: airflow
   # DAGs are stored in ADLS (code/dags/*.py) and restored here on pod start.
   # The emptyDir is shared between the dag-restore init container and the dag-processor.
   # sync-jobs.sh uploads DAGs to ADLS; this init container pulls them on every pod restart.
@@ -232,8 +237,12 @@ dagProcessor:
 apiServer:
   waitForMigrations:
     enabled: false
-  serviceAccountName: airflow  # use main SA — airflow-api-server SA has no federated identity credential
-  podLabels:
+  # Use the main 'airflow' SA which has the federated identity credential for workload identity.
+  # The auto-created airflow-api-server SA has no federated credential.
+  serviceAccount:
+    create: false
+    name: airflow
+  labels:
     azure.workload.identity/use: "true"
 
 # ---------------------------------------------------------------------------
@@ -379,6 +388,10 @@ env:
   # a secondary tenant endpoint when public access is disabled, so we allow all tenants.
   - name: AIRFLOW_CONN_AZURE_BLOB_STORAGE_LOG
     value: '{"conn_type": "wasb", "extra": {"account_name": "forgeadlsdsengdev", "additionally_allowed_tenants": "*"}}'
+  # Belt-and-suspenders: set at pod level so DefaultAzureCredential also allows any tenant
+  # when the WasbHook creates credentials outside the connection context.
+  - name: AZURE_ADDITIONALLY_ALLOWED_TENANTS
+    value: "*"
 extraEnv: |
   - name: AIRFLOW__WEBSERVER__OAUTH_CLIENT_ID
     valueFrom:
@@ -453,6 +466,8 @@ podTemplate: |
             value: "wasb://airflow-logs/"
           - name: AIRFLOW_CONN_AZURE_BLOB_STORAGE_LOG
             value: '{"conn_type": "wasb", "extra": {"account_name": "forgeadlsdsengdev", "additionally_allowed_tenants": "*"}}'
+          - name: AZURE_ADDITIONALLY_ALLOWED_TENANTS
+            value: "*"
           # Explicit AZURE_CLIENT_ID — AKS workload identity webhook injects AZURE_FEDERATED_TOKEN_FILE
           # and AZURE_TENANT_ID but not always AZURE_CLIENT_ID. Set explicitly so DefaultAzureCredential
           # uses WorkloadIdentityCredential for ADLS log uploads.

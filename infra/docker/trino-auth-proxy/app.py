@@ -57,15 +57,23 @@ SCOPES           = ["User.Read"]  # MSAL adds openid/profile/email automatically
 MANAGED_IDENTITY_CLIENT_ID = os.environ["MANAGED_IDENTITY_CLIENT_ID"]
 IMDS_URL = "http://169.254.169.254/metadata/identity/oauth2/token"
 
-# JWKS client for Bearer token validation (Trino CLI with --access-token)
+# JWKS client for Bearer token validation (Trino CLI with --access-token).
+# Using the /common/ endpoint so tokens for any resource (Graph, management, app registrations)
+# can be validated — the tenant-specific endpoint misses signing keys used by some resources.
 _JWKS_CLIENT = PyJWKClient(
-    f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys",
+    "https://login.microsoftonline.com/common/discovery/v2.0/keys",
     cache_keys=True,
 )
 
 
 def user_from_bearer(token: str):
-    """Validate an Azure AD Bearer token; return user email or None."""
+    """Validate an Azure AD Bearer token; return user email or None.
+
+    Two-path validation:
+    1. JWT decode via JWKS — works for app-registration tokens (az account get-access-token --resource <CLIENT_ID>)
+    2. Graph /me fallback — works for Graph tokens (az account get-access-token --resource https://graph.microsoft.com)
+    """
+    # Path 1: local JWT validation (fast, no outbound call)
     try:
         key = _JWKS_CLIENT.get_signing_key_from_jwt(token)
         claims = pyjwt.decode(
@@ -73,12 +81,35 @@ def user_from_bearer(token: str):
             options={"verify_aud": False},
         )
         if TENANT_ID not in claims.get("iss", ""):
+            log.warning("Bearer token rejected: issuer mismatch (iss=%s)", claims.get("iss"))
             return None
         email = claims.get("preferred_username") or claims.get("upn", "")
         if email.lower().endswith(f"@{ALLOWED_DOMAIN}"):
+            log.info("Bearer token accepted via JWT validation: %s", email)
             return email
+        log.warning("Bearer token rejected: email %s not in allowed domain", email)
+        return None
     except Exception as e:
-        log.warning("Bearer token rejected: %s", e)
+        log.info("JWT validation failed (%s) — trying Graph /me fallback", e)
+
+    # Path 2: Graph API validation (for Graph-audience tokens)
+    try:
+        resp = req_lib.get(
+            "https://graph.microsoft.com/v1.0/me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            log.warning("Graph /me returned %s — token rejected", resp.status_code)
+            return None
+        data = resp.json()
+        email = data.get("userPrincipalName", "")
+        if email.lower().endswith(f"@{ALLOWED_DOMAIN}"):
+            log.info("Bearer token accepted via Graph /me: %s", email)
+            return email
+        log.warning("Graph /me: UPN %s not in allowed domain", email)
+    except Exception as e:
+        log.warning("Graph /me fallback failed: %s", e)
     return None
 
 

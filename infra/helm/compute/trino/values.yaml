@@ -39,6 +39,9 @@ coordinator:
       operator: Equal
       value: trino
       effect: NoSchedule
+  # Required for AKS workload identity webhook to inject the OIDC token into the pod.
+  labels:
+    azure.workload.identity/use: "true"
   # Trino runs plain HTTP internally — TLS and OAuth2 are handled by trino-auth-proxy.
 
 # ----------------------------------------------------------------------------
@@ -63,6 +66,9 @@ worker:
       operator: Equal
       value: trino
       effect: NoSchedule
+  # Required for AKS workload identity webhook to inject the OIDC token into the pod.
+  labels:
+    azure.workload.identity/use: "true"
 
 # ----------------------------------------------------------------------------
 # Autoscaling
@@ -98,10 +104,6 @@ serviceAccount:
   create: false    # created by identity Bicep module
   name: trino
   annotations: {}  # azure.workload.identity/client-id set at deploy time
-
-# Pod labels required for workload identity token injection
-podLabels:
-  azure.workload.identity/use: "true"
 
 # ----------------------------------------------------------------------------
 # Additional coordinator-only config properties (server.coordinatorExtraConfig).

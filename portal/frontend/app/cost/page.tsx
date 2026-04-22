@@ -90,7 +90,7 @@ function RgCard({ rg, days }: { rg: RgCost; days: number }) {
             fontSize: 12, color: "#92400e", display: "flex", alignItems: "center", gap: 8,
           }}>
             <i className="fas fa-triangle-exclamation" />
-            {rg.error}
+            Cost data unavailable — Cost Management permissions pending
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
