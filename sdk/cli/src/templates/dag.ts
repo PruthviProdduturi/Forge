@@ -292,7 +292,8 @@ export function generateDag(manifest: ForgeJobManifest, ownerAlias?: string): {
     folder,
     ...manifest.name.split("_").slice(0, 2),
     ...(manifest.tags ?? []),
-    `source:${manifest.source.name}`,  // portal uses this to label the source node in the task graph
+    `source:${manifest.source.name}`,   // portal: labels the source node in the task graph
+    `output:${manifest.output.name ?? manifest.output.path.assetName}`,  // portal: derives display name for the output dataset
   ];
   // Deduplicate
   const tags = [...new Set(allTags)];

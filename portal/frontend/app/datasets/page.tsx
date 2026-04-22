@@ -98,14 +98,24 @@ function timeAgo(iso: string | null): string {
 function matchPipeline(pipelines: Pipeline[], d: Dataset): Pipeline | undefined {
   const nameNorm = d.name.replace(/[_-]/g, "").toLowerCase();
   return pipelines.find(p => {
+    if (!p.dag_id.toLowerCase().includes(d.layer)) return false;
     const dagNorm = p.dag_id.replace(/[_-]/g, "").toLowerCase();
-    return dagNorm.includes(nameNorm) && p.dag_id.toLowerCase().includes(d.layer);
+    // Direct: DAG name contains dataset name (e.g. nyctaxibronze in nyctaxibronze)
+    if (dagNorm.includes(nameNorm)) return true;
+    // Reverse: strip layer from DAG name to get project stem (e.g. "nyctaxi" from nyctaxisilver)
+    // then check if dataset name starts with that stem (e.g. nyctaxitrips starts with nyctaxi)
+    const dagStem = dagNorm.replace(/(bronze|silver|gold)$/, "");
+    return dagStem.length >= 4 && nameNorm.startsWith(dagStem);
   });
 }
 
 function assetName(d: Dataset, pipelines: Pipeline[]): string {
   const pipeline = matchPipeline(pipelines, d);
-  if (pipeline) return pipeline.dag_id.replace(/_?(bronze|silver|gold)$/i, "");
+  if (pipeline) {
+    const outputTag = pipeline.tags?.find((t: string) => t.startsWith("output:"));
+    if (outputTag) return outputTag.slice(7); // strip "output:" prefix → e.g. "NycTaxiBronze"
+    return pipeline.dag_id.replace(/_?(bronze|silver|gold)$/i, "").replace(/_/g, " ");
+  }
   return d.name;
 }
 
