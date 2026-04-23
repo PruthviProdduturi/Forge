@@ -65,8 +65,26 @@ def get_datasets(layer: str | None = None) -> list[dict[str, Any]]:
     for schema in schemas:
         try:
             tables = query(f"SHOW TABLES FROM {settings.trino_catalog}.{schema}")
+
+            # Filter out stale tables whose ADLS data is gone — a single batch query
+            # against information_schema.columns is O(1) per schema and only returns
+            # tables that actually have live column metadata.
+            try:
+                live_rows = query(
+                    f"SELECT DISTINCT table_name "
+                    f"FROM {settings.trino_catalog}.information_schema.columns "
+                    f"WHERE table_schema = '{schema}'"
+                )
+                live_tables = {r.get("table_name") or r.get("TABLE_NAME") or "" for r in live_rows}
+            except Exception as exc:
+                log.warning("trino_live_tables_check_failed", schema=schema, error=str(exc))
+                live_tables = None  # fall back to unfiltered list
+
             for t in tables:
                 table_name = t.get("Table") or t.get("table") or ""
+                if live_tables is not None and table_name not in live_tables:
+                    log.debug("trino_stale_table_skipped", schema=schema, table=table_name)
+                    continue
                 results.append({
                     "name": table_name,
                     "layer": schema,

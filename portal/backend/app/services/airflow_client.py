@@ -330,13 +330,13 @@ async def get_task_logs(dag_id: str, run_id: str, task_id: str, attempt: int = 1
                 headers={"Accept": "application/x-ndjson"},
             )
             if resp.status_code in (404, 500):
-                return "(no logs yet — task may still be starting up)"
+                return "(Logs not available — task logs could not be retrieved.)"
             if not resp.is_success:
                 return f"(Airflow returned HTTP {resp.status_code} — logs may not be available yet)"
             text = resp.text.strip()
         return _parse_log_text(text)
     except httpx.TimeoutException:
-        return "(no logs yet — task is still running, try again in a moment)"
+        return "(Logs not available — the task failed before writing logs. Check the Airflow UI or Spark operator logs for details.)"
     except Exception as exc:
         raise RuntimeError(f"Failed to fetch logs: {exc}") from exc
 
