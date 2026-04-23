@@ -383,17 +383,22 @@ resource fcPortalOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities
   }
 }
 
-// RBAC — portal: Reader on gold, Contributor on code
-// code Contributor allows delete_pipeline to remove DAG files, Spark job scripts,
-// and DQ rule YAMLs from ADLS when a user deletes a pipeline from the UI.
-resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idPortal.id, storageBlobDataReaderRoleId, cGold.id)
-  scope: cGold
+// RBAC — portal: Reader on airflow-logs, Contributor on code
+// airflow-logs Reader: portal-api reads task logs directly from ADLS blob
+//   (fast path in airflow_client.py get_task_logs) — no RBAC = silent miss,
+//   falls back to slow Airflow REST API which may also fail after pod eviction.
+// code Contributor: delete_pipeline removes DAG files, Spark job scripts,
+//   and DQ rule YAMLs from ADLS when a user deletes a pipeline from the UI.
+// Data containers (bronze/silver/gold): NOT needed — dataset browsing goes
+//   through Trino, DQ results through Postgres, lineage through Purview.
+resource portalAirflowLogsReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idPortal.id, storageBlobDataReaderRoleId, cAirflowLogs.id)
+  scope: cAirflowLogs
   properties: {
     roleDefinitionId: storageBlobDataReaderRoleId
     principalId: idPortal.properties.principalId
     principalType: 'ServicePrincipal'
-    description: 'Portal — Storage Blob Data Reader on gold'
+    description: 'Portal — Storage Blob Data Reader on airflow-logs (task log display)'
   }
 }
 

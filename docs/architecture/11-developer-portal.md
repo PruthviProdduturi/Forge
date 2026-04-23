@@ -190,7 +190,7 @@ The `portal-api` managed identity (`id-forge-portal-{alias}-{env}`) requires:
 
 | Resource | Permission | Purpose |
 |----------|------------|---------|
-| ADLS `gold` container | Storage Blob Data Reader | Dataset browsing |
+| ADLS `airflow-logs` container | Storage Blob Data Reader | Task log display — fast path reads logs directly from ADLS before falling back to Airflow REST API |
 | ADLS `code` container | Storage Blob Data Contributor | Delete DAG/job/DQ files when a pipeline is deleted |
 | Azure Key Vault | Key Vault Secrets Officer | Read + write auth-config secrets from Settings UI |
 | Compute AKS cluster RG | Reader | Node pool status for platform status page |

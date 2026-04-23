@@ -42,7 +42,7 @@ Pod (annotated SA)  →  OIDC token  →  Azure AD  →  short-lived access toke
 | `id-forge-hms-{alias}-{env}` | Hive Metastore pods (compute cluster) | KV Secrets User · PostgreSQL AAD auth · No ADLS access |
 | `id-forge-airflow-{alias}-{env}` | Airflow scheduler/worker pods (orch cluster) | Storage Blob Data Contributor (airflow-logs) · Data Reader (code) · KV Secrets User |
 | `id-forge-dq-{alias}-{env}` | DQ gate Spark jobs (compute cluster) | Storage Blob Data Contributor (bronze/silver/gold) · KV Secrets User |
-| `id-forge-portal-{alias}-{env}` | Developer Portal API (orch cluster) | Storage Blob Data Reader (gold) · Storage Blob Data Contributor (code) · KV Secrets Officer |
+| `id-forge-portal-{alias}-{env}` | Developer Portal API (orch cluster) | Storage Blob Data Reader (airflow-logs) · Storage Blob Data Contributor (code) · KV Secrets Officer |
 
 Each identity has a distinct blast radius — a compromised workload cannot escalate to another workload's data or keys. See [Infrastructure Overview](01-overview.md) for the full identity inventory including AKS infrastructure identities.
 

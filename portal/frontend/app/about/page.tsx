@@ -389,6 +389,7 @@ export default function AboutPage() {
           { href: "#stack", label: "Tech Stack" },
           { href: "#architecture", label: "Architecture" },
           { href: "#start", label: "Get Started" },
+          { href: "/architecture", label: "Full Diagram ↗" },
         ].map(({ href, label }) => (
           <a
             key={href}
@@ -656,8 +657,8 @@ export default function AboutPage() {
           <FeatureCard
             icon="fa-calendar-check"
             color="#017cee"
-            title="Airflow 3.1"
-            body="KubernetesExecutor for isolated task pods. DAGs go live in 30 seconds via git-sync — no deployment pipeline needed."
+            title="Airflow 3.1.8"
+            body="KubernetesExecutor for isolated task pods. DAG files are deployed to ADLS and picked up by Airflow automatically — no manual upload."
           />
           <FeatureCard
             icon="fa-triangle-exclamation"
@@ -687,7 +688,7 @@ export default function AboutPage() {
             icon="fa-layer-group"
             color="#003366"
             title="Delta Lake Default"
-            body="Delta Lake 4.0 as the default table format. Apache Iceberg 1.6.1 available as opt-in for specific workloads and external consumers."
+            body="Delta Lake 4.1.0 as the default table format. Apache Iceberg 1.10.1 available as opt-in for specific workloads and external consumers."
           />
         </div>
       </Section>
@@ -719,11 +720,11 @@ export default function AboutPage() {
             Core data stack
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <ChartPill icon="fa-bolt" label="Spark 4.1" color="#e25a1c" />
-            <ChartPill icon="fa-layer-group" label="Delta Lake 4.0" color="#003366" />
-            <ChartPill icon="fa-snowflake" label="Iceberg 1.6.1" color="#2874A6" />
+            <ChartPill icon="fa-bolt" label="Spark 4.1.1" color="#e25a1c" />
+            <ChartPill icon="fa-layer-group" label="Delta Lake 4.1.0" color="#003366" />
+            <ChartPill icon="fa-snowflake" label="Iceberg 1.10.1" color="#2874A6" />
             <ChartPill icon="fa-table" label="Trino 480" color="#dd00a1" />
-            <ChartPill icon="fa-calendar-check" label="Airflow 3.1" color="#017cee" />
+            <ChartPill icon="fa-calendar-check" label="Airflow 3.1.8" color="#017cee" />
           </div>
         </div>
 
@@ -765,7 +766,7 @@ export default function AboutPage() {
             Hosted on Azure
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <ChartPill icon="fa-dharmachakra" label="AKS 1.29" color="#326ce5" />
+            <ChartPill icon="fa-dharmachakra" label="AKS 1.32" color="#326ce5" />
             <ChartPill icon="fa-hard-drive" label="ADLS Gen2" color="#0078d4" />
             <ChartPill icon="fa-key" label="Azure Key Vault" color="#0078d4" />
             <ChartPill icon="fa-box" label="Container Registry" color="#0078d4" />
@@ -830,10 +831,10 @@ export default function AboutPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
                 {[
-                  { label: "Spark Operator 2.5", color: "#e25a1c", icon: "fa-bolt" },
-                  { label: "Spark Connect (gRPC)", color: "#f97316", icon: "fa-plug" },
+                  { label: "Spark Operator 2.5.0", color: "#e25a1c", icon: "fa-bolt" },
+                  { label: "Spark Connect (gRPC 15002)", color: "#f97316", icon: "fa-plug" },
                   { label: "Trino 480", color: "#dd00a1", icon: "fa-table-columns" },
-                  { label: "Hive Metastore 4.0", color: "#b45309", icon: "fa-sitemap" },
+                  { label: "Hive Metastore 4.0.0", color: "#b45309", icon: "fa-sitemap" },
                 ].map(c => (
                   <div key={c.label} style={{
                     display: "flex", alignItems: "center", gap: 7,
@@ -874,10 +875,10 @@ export default function AboutPage() {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
                 {[
-                  { label: "Airflow 3.1 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check" },
-                  { label: "Microsoft Purview (OpenLineage)", color: "#0078d4", icon: "fa-share-nodes" },
+                  { label: "Airflow 3.1.8 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check" },
+                  { label: "OpenLineage → Microsoft Purview", color: "#0078d4", icon: "fa-share-nodes" },
                   { label: "Azure Monitor + Managed Grafana", color: "#e6522c", icon: "fa-chart-line" },
-                  { label: "Developer Portal (auth-proxy + api + web)", color: "#059669", icon: "fa-window-maximize" },
+                  { label: "Developer Portal (FastAPI + Next.js)", color: "#059669", icon: "fa-window-maximize" },
                 ].map(c => (
                   <div key={c.label} style={{
                     display: "flex", alignItems: "center", gap: 7,
@@ -924,13 +925,14 @@ export default function AboutPage() {
                 { label: "bronze/", color: "#b45309", tag: "Raw · 2yr" },
                 { label: "silver/", color: "#0284c7", tag: "Delta · 2yr" },
                 { label: "gold/", color: "#059669", tag: "Delta · 2yr" },
-                { label: "sandbox/", color: "#7c3aed", tag: "30-day TTL" },
-                { label: "code/", color: "#64748b", tag: "Job artifacts" },
+                { label: "code/", color: "#64748b", tag: "DAGs · artifacts" },
+                { label: "airflow-logs/", color: "#475569", tag: "Task logs" },
               ].map((z, i) => (
                 <React.Fragment key={z.label}>
-                  {i > 0 && i < 4 && (
+                  {i > 0 && i < 3 && (
                     <i className="fas fa-arrow-right" style={{ color: "#cbd5e1", fontSize: 10, flexShrink: 0 }} />
                   )}
+                  {i === 3 && <span style={{ color: "#e2e8f0", margin: "0 4px" }}>·</span>}
                   {i === 4 && <span style={{ color: "#e2e8f0", margin: "0 4px" }}>·</span>}
                   <div style={{
                     padding: "4px 10px", borderRadius: 6,
@@ -1028,8 +1030,8 @@ export default function AboutPage() {
           }}>
             <i className="fas fa-calendar-check" style={{ color: "#017cee", fontSize: 13, flexShrink: 0 }} />
             <div style={{ fontSize: 12, color: "#334155" }}>
-              <strong>Airflow</strong> orchestrates every Bronze → Silver → Gold transition via DAGs.
-              Each task runs as an isolated Kubernetes pod (KubernetesExecutor). DAG changes go live in ~30 seconds via git-sync.
+              <strong>Airflow 3.1.8</strong> orchestrates every Bronze → Silver → Gold transition via DAGs.
+              Each task runs as an isolated Kubernetes pod (KubernetesExecutor). DAG files are deployed to ADLS code/ container via sync-jobs.sh and picked up by Airflow automatically.
             </div>
           </div>
         </div>
@@ -1090,8 +1092,8 @@ export default function AboutPage() {
               }}
             >
               {[
-                "Spark Operator 2.5",
-                "Spark Connect server",
+                "Spark Operator 2.5.0",
+                "Spark Connect server (gRPC 15002)",
                 "Trino 480 (coordinator + workers)",
               ].map((item) => (
                 <li
@@ -1171,10 +1173,10 @@ export default function AboutPage() {
               }}
             >
               {[
-                "Airflow 3.1 (KubernetesExecutor)",
-                "Microsoft Purview (lineage)",
+                "Airflow 3.1.8 (KubernetesExecutor)",
+                "OpenLineage → Microsoft Purview (external SaaS)",
                 "Azure Monitor + Managed Grafana",
-                "Forge Developer Portal (auth-proxy + api + web)",
+                "Developer Portal (FastAPI + Next.js)",
               ].map((item) => (
                 <li
                   key={item}
@@ -1224,6 +1226,27 @@ export default function AboutPage() {
             Workload Identity throughout — zero long-lived credentials.
           </span>
         </div>
+
+        <div style={{ textAlign: "center", marginTop: 32 }}>
+          <Link
+            href="/architecture"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "11px 22px",
+              borderRadius: 8,
+              background: primaryColor,
+              color: "#fff",
+              fontWeight: 700,
+              fontSize: 14,
+              textDecoration: "none",
+            }}
+          >
+            <i className="fas fa-diagram-project" aria-hidden="true" />
+            Full Architecture Diagram
+          </Link>
+        </div>
       </Section>
 
       {/* ── 6. Get Started ───────────────────────────────────────────────────── */}
@@ -1250,10 +1273,12 @@ export default function AboutPage() {
             <StepCard
               number={1}
               title="Provision Infrastructure"
-              code={`az deployment sub create \\
-  --location australiaeast \\
-  --template-file infra/main.bicep \\
-  --parameters @infra/params.json`}
+              code={`bash infra/scripts/forge-up.sh \\
+  --env dev \\
+  --alias <your-alias>
+
+# Full infra + secrets + K8s deploy
+# (add --redeploy to skip infra on iterations)`}
             />
             <StepCard
               number={2}
@@ -1265,8 +1290,8 @@ forge init --name my_pipeline --layer bronze
 forge generate --job my_pipeline \\
   --manifest-dir src/manifests --dir .
 
-# 3. Deploy (DAG live in ~30 s via git-sync)
-FORGE_ENV="dev" OWNER_ALIAS="DSEng" \\
+# 3. Deploy DAG to ADLS — Airflow picks it up
+FORGE_ENV="dev" OWNER_ALIAS="<your-alias>" \\
   bash infra/scripts/sync-jobs.sh \\
   --job my_pipeline`}
             />
