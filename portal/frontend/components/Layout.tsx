@@ -29,13 +29,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: "/datasources",   label: "Sources",        icon: "fa-plug" },
-  { href: "/pipelines",     label: "Pipelines",      icon: "fa-sitemap" },
-  { href: "/datasets",      label: "Datasets",       icon: "fa-database" },
-  { href: "/lineage",       label: "Lineage",        icon: "fa-share-nodes" },
-  { href: "/dq",            label: "Quality",        icon: "fa-shield-halved" },
-  { href: "/cost",          label: "Cost",           icon: "fa-coins" },
-  { href: "/architecture",  label: "Architecture",   icon: "fa-diagram-project" },
+  { href: "/datasources", label: "Sources",   icon: "fa-plug" },
+  { href: "/pipelines",   label: "Pipelines", icon: "fa-sitemap" },
+  { href: "/datasets",    label: "Datasets",  icon: "fa-database" },
+  { href: "/lineage",     label: "Lineage",   icon: "fa-share-nodes" },
+  { href: "/dq",          label: "Quality",   icon: "fa-shield-halved" },
+  { href: "/cost",        label: "Cost",      icon: "fa-coins" },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -132,15 +131,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <i className="fas fa-rotate" aria-hidden="true" />
           </button>
 
-          {/* About */}
-          <Link
-            href="/about"
-            className={`header-icon-btn${isActive("/about") ? " header-btn-active" : ""}`}
-            title="About Forge"
-            aria-label="About Forge"
-          >
-            <i className="fas fa-circle-info" aria-hidden="true" />
-          </Link>
+          {/* About dropdown */}
+          <div className="header-dropdown header-dropdown-right">
+            <button
+              className={`header-icon-btn${isActive("/about") || isActive("/architecture") ? " header-btn-active" : ""}`}
+              title="About"
+              aria-label="About"
+              type="button"
+            >
+              <i className="fas fa-circle-info" aria-hidden="true" />
+            </button>
+            <div className="header-dropdown-menu" role="menu">
+              <Link href="/about" role="menuitem"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}>
+                <i className="fas fa-circle-info" aria-hidden="true" />
+                About Forge
+              </Link>
+              <Link href="/architecture" role="menuitem"
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", fontSize: 13, color: "#374151", textDecoration: "none" }}>
+                <i className="fas fa-diagram-project" aria-hidden="true" />
+                Architecture
+              </Link>
+            </div>
+          </div>
 
           {/* Gear — app settings */}
           <div className="header-dropdown header-dropdown-right">

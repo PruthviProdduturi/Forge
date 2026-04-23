@@ -389,7 +389,6 @@ export default function AboutPage() {
           { href: "#stack", label: "Tech Stack" },
           { href: "#architecture", label: "Architecture" },
           { href: "#start", label: "Get Started" },
-          { href: "/architecture", label: "Full Diagram ↗" },
         ].map(({ href, label }) => (
           <a
             key={href}
@@ -1227,26 +1226,6 @@ export default function AboutPage() {
           </span>
         </div>
 
-        <div style={{ textAlign: "center", marginTop: 32 }}>
-          <Link
-            href="/architecture"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "11px 22px",
-              borderRadius: 8,
-              background: primaryColor,
-              color: "#fff",
-              fontWeight: 700,
-              fontSize: 14,
-              textDecoration: "none",
-            }}
-          >
-            <i className="fas fa-diagram-project" aria-hidden="true" />
-            Full Architecture Diagram
-          </Link>
-        </div>
       </Section>
 
       {/* ── 6. Get Started ───────────────────────────────────────────────────── */}
