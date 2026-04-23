@@ -113,10 +113,12 @@ async def get_dag(dag_id: str) -> dict[str, Any]:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-async def get_dag_runs(dag_id: str, limit: int = 10) -> list[dict[str, Any]]:
+async def get_dag_runs(dag_id: str, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]:
     token = await _get_jwt()
     async with _airflow_client(token) as client:
-        params = {"limit": limit, "order_by": "-start_date"}
+        params: dict[str, Any] = {"limit": limit, "order_by": "-start_date"}
+        if offset:
+            params["offset"] = offset
         resp = await client.get(f"/api/v2/dags/{dag_id}/dagRuns", params=params)
         resp.raise_for_status()
         return resp.json().get("dag_runs", [])
@@ -336,7 +338,7 @@ async def get_task_logs(dag_id: str, run_id: str, task_id: str, attempt: int = 1
             text = resp.text.strip()
         return _parse_log_text(text)
     except httpx.TimeoutException:
-        return "(Logs not available — the task failed before writing logs. Check the Airflow UI or Spark operator logs for details.)"
+        return "(Logs not yet available — the task may still be running. Refresh in a few seconds to check again.)"
     except Exception as exc:
         raise RuntimeError(f"Failed to fetch logs: {exc}") from exc
 

@@ -927,7 +927,7 @@ else
     _queue_build "airflow"          "airflow"          "$AIRFLOW_TAG" "${REPO_ROOT}/infra/docker/airflow/Dockerfile"           "${REPO_ROOT}/"
     _queue_build "portal-auth-proxy" "portal-auth-proxy" "1.0"      "${REPO_ROOT}/infra/docker/portal-auth-proxy/Dockerfile" "${REPO_ROOT}/infra/docker/portal-auth-proxy/"
     _queue_build "portal-api"        "portal-api"        "$API_TAG"  "${REPO_ROOT}/infra/docker/portal-api/Dockerfile"        "${REPO_ROOT}/portal/backend/"
-    _queue_build "portal-web"        "portal-web"        "$WEB_TAG"  "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"        "${REPO_ROOT}/portal/frontend/"
+    _queue_build "portal-web"        "portal-web"        "$WEB_TAG"  "${REPO_ROOT}/infra/docker/portal-web/Dockerfile"        "${REPO_ROOT}"
   else
     echo "  Skipped : orch images (airflow, portal-api, portal-web, portal-auth-proxy) — --skip-orch"
   fi
@@ -2003,6 +2003,15 @@ AIRFLOW_POD_RBAC
       --firstname Portal --lastname API \
     || echo "  WARN: portal-api-svc user creation failed — re-run deploy to retry."
   echo "    Done"
+
+  # Sync spark_image Airflow variable to the ACR tag that was just built.
+  # This keeps the variable in step with SPARK_TAG so deploys never leave it stale.
+  kubectl exec -n airflow --context "$ORCH_CLUSTER" \
+    deploy/airflow-api-server -- \
+    airflow variables set spark_image "${ACR}.azurecr.io/spark:${SPARK_TAG}" \
+    2>/dev/null \
+    && echo "  ✓ spark_image variable → ${ACR}.azurecr.io/spark:${SPARK_TAG}" \
+    || echo "  WARN: spark_image variable update failed — update manually"
 
   echo "  [7.5] Portal..."
   # portal-api service account must exist before the Deployment.

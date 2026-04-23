@@ -22,6 +22,7 @@ Deep-dive into how each part of the platform is designed. Read in order for the 
 | 12 | [`12-end-to-end-flow.md`](./architecture/12-end-to-end-flow.md) | Full system map, Bronze→Silver→Gold flow, DAG lifecycle, observability during a run |
 | 13 | [`13-restatement.md`](./architecture/13-restatement.md) | Partition restatement, backfill, Restatement Registry, safety guards, SDK usage |
 | 14 | [`14-environment-promotion.md`](./architecture/14-environment-promotion.md) | Dev vs prod, Spark Connect vs Spark Operator, PR→CI→dev→prod promotion flow, rollback |
+| 15 | [`15-metastore.md`](./architecture/15-metastore.md) | Hive Metastore setup, HMS namespace, Derby fallback, Spark enableHiveSupport integration |
 
 ---
 
@@ -55,6 +56,8 @@ Incident response guides for on-call engineers.
 
 | Runbook | Covers |
 |---------|--------|
+| [`05-create-pipeline.md`](./runbooks/05-create-pipeline.md) | **Create a new pipeline** — manifest → generate → sync → dev test → PR |
+| [`04-post-deploy-verification.md`](./runbooks/04-post-deploy-verification.md) | 8-step checklist after forge-up.sh: pod health, ADLS, Trino, Airflow, smoke test, portal |
 | [`01-airflow-down.md`](./runbooks/01-airflow-down.md) | Scheduler crash, DB connectivity, git-sync failures, SparkKubernetesOperator failures |
 | [`02-dq-failure.md`](./runbooks/02-dq-failure.md) | DQ critical failures blocking pipeline, threshold calibration, emergency bypass procedure |
 | [`03-adls-connectivity.md`](./runbooks/03-adls-connectivity.md) | 403 errors, missing role assignments, workload identity issues, storage firewall |

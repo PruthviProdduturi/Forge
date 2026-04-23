@@ -196,7 +196,7 @@ async def list_mine(current_user: CurrentUser) -> list[str]:
     try:
         await _ensure_deployments_table(conn)
         rows = await conn.fetch(
-            "SELECT dag_id FROM pipeline_deployments WHERE owner_email = $1", email
+            "SELECT dag_id FROM pipeline_deployments WHERE owner_email = $1 AND deleted_at IS NULL", email
         )
         if rows:
             return [r["dag_id"] for r in rows]
@@ -229,7 +229,7 @@ async def count_mine(current_user: CurrentUser) -> dict[str, int]:
     try:
         await _ensure_deployments_table(conn)
         row = await conn.fetchrow(
-            "SELECT COUNT(*) as count FROM pipeline_deployments WHERE owner_email = $1", email
+            "SELECT COUNT(*) as count FROM pipeline_deployments WHERE owner_email = $1 AND deleted_at IS NULL", email
         )
         return {"count": int(row["count"])}
     except Exception as exc:
@@ -426,29 +426,8 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
 
     warnings: list[str] = []
 
-    # 1. Airflow — cancel active runs, then delete DAG + run history
-    try:
-        # Cancel any running/queued runs first (Airflow rejects delete while runs are active)
-        try:
-            active_runs = await airflow_client.get_dag_runs(dag_id, limit=50)
-            for run in active_runs:
-                if run.get("state") in ("running", "queued"):
-                    run_id = run.get("dag_run_id", "")
-                    if run_id:
-                        try:
-                            await airflow_client.cancel_dag_run(dag_id, run_id)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        await airflow_client.delete_dag(dag_id)
-    except Exception as exc:
-        log.error("delete_pipeline_airflow_failed", dag_id=dag_id, error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not delete DAG from Airflow") from exc
-
-    # 2. Postgres — soft-delete so the pipeline is hidden immediately even if ADLS
-    # deletion fails (e.g. RBAC not yet applied). Re-registering via sync-jobs clears
-    # deleted_at and makes the pipeline visible again.
+    # 1. Postgres — soft-delete immediately so any page refresh won't show it
+    # while the slower Airflow cleanup runs below.
     conn = await _pg_connect()
     if conn is not None:
         try:
@@ -462,6 +441,50 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
             log.warning("pg_delete_pipeline_failed", dag_id=dag_id, error=str(exc))
         finally:
             await conn.close()
+
+    # 2. Airflow — pause first (stops scheduler + retries), cancel active runs,
+    # delete all run history, then delete DAG definition.
+    # Pause prevents the scheduler from creating new runs or retrying active ones
+    # while we're cleaning up, which avoids new SparkApplications being spawned.
+    try:
+        # 2a. Pause the DAG immediately to stop new runs and retries
+        try:
+            await airflow_client.set_dag_paused(dag_id, True)
+        except Exception:
+            pass  # DAG may not exist yet — continue with cleanup
+
+        # 2b. Fetch all runs (paginate: Airflow default page size is 100)
+        all_runs: list[dict] = []
+        offset = 0
+        while True:
+            page = await airflow_client.get_dag_runs(dag_id, limit=100, offset=offset)
+            if not page:
+                break
+            all_runs.extend(page)
+            if len(page) < 100:
+                break
+            offset += 100
+
+        # 2c. Cancel active runs first, then delete all
+        active_states = {"running", "queued", "up_for_retry"}
+        for run in all_runs:
+            run_id = run.get("dag_run_id", "")
+            if not run_id:
+                continue
+            if run.get("state") in active_states:
+                try:
+                    await airflow_client.cancel_dag_run(dag_id, run_id)
+                except Exception:
+                    pass
+            try:
+                await airflow_client.delete_dag_run(dag_id, run_id)
+            except Exception:
+                pass
+
+        await airflow_client.delete_dag(dag_id)
+    except Exception as exc:
+        log.error("delete_pipeline_airflow_failed", dag_id=dag_id, error=str(exc))
+        raise HTTPException(status_code=502, detail="Could not delete DAG from Airflow") from exc
 
     # 3. ADLS — best-effort deletion of DAG file, Spark job, DQ rules
     adls_cleaned: list[str] = []

@@ -572,6 +572,25 @@ PYEOF
       fi
     fi
 
+    # 3. Patch airflow-task-dags ConfigMap — task pods mount this at /opt/airflow/dags
+    #    Must stay in sync with ADLS so task pods execute the correct DAG version.
+    if ! dry; then
+      _all_dag_files=()
+      for _df in "${project_dir}"/dags/*_dag.py; do
+        [[ -f "${_df}" ]] && _all_dag_files+=("--from-file=$(basename "${_df}")=${_df}")
+      done
+      if [[ ${#_all_dag_files[@]} -gt 0 ]]; then
+        kubectl create configmap airflow-task-dags \
+          "${_all_dag_files[@]}" \
+          -n "${_AIRFLOW_NS}" \
+          --context "${_KUBE_CTX}" \
+          --dry-run=client -o yaml \
+          | kubectl apply --context "${_KUBE_CTX}" -f - 2>&1 \
+          && log "  ✓ airflow-task-dags ConfigMap updated (task pods will use new DAG on next run)" \
+          || warn "  ConfigMap update failed — task pods may use stale DAG until next full deploy"
+      fi
+    fi
+
     _register_dag "${job_name}"
   done
   DAG_PUSH_DONE=true

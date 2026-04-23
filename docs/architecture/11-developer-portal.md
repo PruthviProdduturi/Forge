@@ -59,7 +59,7 @@ The Developer Portal is **not** a business intelligence tool, a chart builder, a
 The portal consists of three independently deployed pods:
 
 - **`portal-auth-proxy`** — Flask reverse proxy that handles Azure AD OAuth2. Sits in front of both `portal-web` and `portal-api`. Uses an IMDS managed identity token as `client_assertion` for MSAL `ConfidentialClientApplication` (same pattern as `trino-auth-proxy` on the compute cluster). After AAD login, injects `X-User-Email`, `X-User-Name`, and `X-User-Roles` headers into all upstream requests. Manages session cookies.
-- **`portal-web`** — Next.js 14 frontend, App Router, all pages are `"use client"` components, custom `useAuth` hook for auth state. User identity comes from proxy-injected headers, not from MSAL browser tokens.
+- **`portal-web`** — Next.js 15 frontend, App Router, all pages are `"use client"` components, custom `useAuth` hook for auth state. User identity comes from proxy-injected headers, not from MSAL browser tokens.
 - **`portal-api`** — FastAPI backend, Python 3.11, structlog for structured logging, pydantic-settings for configuration. Reads user identity from the `X-User-*` headers injected by the auth proxy.
 
 All three pods run on the **`workerpool`** node pool of the `forge-orchestration` AKS cluster in the `portal` namespace.
@@ -333,7 +333,7 @@ The `null` state is important for cross-cluster networking: Trino and Spark Conn
   "platform": {
     "airflow_host": "airflow-webserver.airflow.svc.cluster.local",
     "trino_host": "10.1.4.20",
-    "adls_account": "forgeadlsprproddudev",
+    "adls_account": "forgeadls{alias}dev",
     "purview_endpoint": "",
     "resource_group": "rg-forge-dev"
   },
@@ -386,7 +386,7 @@ Cost data is expensive to fetch and changes slowly. The backend uses in-memory s
 | `COMPUTE_RG` | Override compute RG name (auto-derived if blank) |
 | `ORCH_RG` | Override orchestration RG name (auto-derived if blank) |
 | `SUBSCRIPTION_ID` | Azure subscription ID |
-| `OWNER_ALIAS` | Used for RG name derivation (e.g. `prproddu`) |
+| `OWNER_ALIAS` | Used for RG name derivation (e.g. `{alias}`) |
 | `FORGE_ENV` | Used for RG name derivation (e.g. `dev`) |
 
 ---
@@ -526,6 +526,8 @@ All traffic enters via `portal-auth-proxy`. The proxy routes `/api/*` upstream t
 | `ORCH_RG` | Orchestration AKS managed RG (auto-derived if blank) |
 | `KEY_VAULT_URL` | Key Vault URL for auth config secrets |
 | `AZURE_CLIENT_ID` | Managed identity client ID for workload identity |
+| `AZURE_TENANT_ID` | Azure AD tenant ID |
+| `AZURE_ADDITIONALLY_ALLOWED_TENANTS` | Set to `*` to allow cross-tenant credential use (required for reading ADLS logs when storage challenges route through the AME internal tenant) |
 
 ### Deployment
 
@@ -603,7 +605,7 @@ When these are set to `.svc.cluster.local` DNS names (the default for intra-clus
               ▼                                              ▼
 ┌─────────────────────────┐                   ┌──────────────────────────┐
 │  portal-api (pod ×2)    │                   │  portal-web (pod ×2)     │
-│  FastAPI / Python 3.11  │                   │  Next.js 14              │
+│  FastAPI / Python 3.11  │                   │  Next.js 15              │
 │  port 8080              │                   │  port 3001               │
 │  structlog              │                   │  useAuth → GET /api/     │
 │  pydantic-settings      │                   │    auth/me (session check)│

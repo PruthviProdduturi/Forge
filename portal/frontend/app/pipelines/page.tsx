@@ -436,7 +436,13 @@ export default function PipelinesPage() {
         `/api/pipelines/${selectedDagId}/runs/${encodeURIComponent(selectedRun.dag_run_id)}/tasks/${task_id}/logs?attempt=${tryNum}`,
         getToken
       );
-      setLogsContent(res.logs);
+      const taskState = tasks.find(t => t.task_id === task_id)?.state;
+      const isTerminal = taskState === "failed" || taskState === "success" || taskState === "skipped";
+      // Replace the "may still be running" placeholder for tasks that have already finished
+      const logs = isTerminal && res.logs.includes("may still be running")
+        ? "(Logs not available — the task has finished but logs could not be retrieved. Check ADLS or Airflow UI.)"
+        : res.logs;
+      setLogsContent(logs);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setLogsContent(`Failed to load logs:\n${msg}`);
@@ -481,15 +487,15 @@ export default function PipelinesPage() {
   }
 
   async function handleDelete(dag_id: string) {
-    setDeleting(dag_id); setDeleteConfirm(null);
-    try {
-      await apiFetch(`/api/pipelines/${dag_id}`, getToken, { method: "DELETE" });
-      flash(true, `Pipeline "${dag_id}" deleted`);
-      setSelectedDagId(null);
-      setPipelines(prev => prev.filter(p => p.dag_id !== dag_id));
-      setMyDagIds(prev => prev.filter(id => id !== dag_id));
-    } catch (e: unknown) { flash(false, e instanceof Error ? e.message : "Delete failed"); }
-    finally { setDeleting(null); }
+    setDeleteConfirm(null);
+    // Optimistic: remove from UI immediately
+    setSelectedDagId(null);
+    setPipelines(prev => prev.filter(p => p.dag_id !== dag_id));
+    setMyDagIds(prev => prev.filter(id => id !== dag_id));
+    flash(true, `Pipeline "${dag_id}" deleted`);
+    // Background: backend cleanup (deletes all run history + DAG)
+    apiFetch(`/api/pipelines/${dag_id}`, getToken, { method: "DELETE" })
+      .catch(() => flash(false, `Background cleanup failed for "${dag_id}" — check Airflow`));
   }
 
   async function handlePause(dag_id: string, isPaused: boolean) {
@@ -575,7 +581,7 @@ export default function PipelinesPage() {
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
       {[
         { label: "Total",  value: loading ? "—" : pipelines.length, icon: "fa-layer-group" },
-        { label: "Mine",   value: loading ? "—" : myDagIds.length,  icon: "fa-user" },
+        { label: "Mine",   value: loading ? "—" : pipelines.filter(p => myDagIds.includes(p.dag_id)).length,  icon: "fa-user" },
         { label: "Active", value: loading ? "—" : pipelines.filter(p => p.is_active && !p.is_paused).length, icon: "fa-circle-play" },
         { label: "Paused", value: loading ? "—" : pipelines.filter(p => p.is_paused).length, icon: "fa-pause-circle" },
         { label: "Failed", value: loading ? "—" : pipelines.filter(p => p.last_run_state === "failed").length, icon: "fa-circle-xmark" },
