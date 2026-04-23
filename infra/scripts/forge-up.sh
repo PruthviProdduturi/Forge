@@ -2082,11 +2082,11 @@ AIRFLOW_POD_RBAC
   # Patch forge-platform-config on the compute cluster with the portal-api internal LB IP.
   # Spark DQ gate pods read FORGE_PORTAL_API_URL from this ConfigMap to POST results cross-cluster.
   PORTAL_INTERNAL_IP=""
-  for i in $(seq 1 12); do
+  for i in $(seq 1 30); do
     PORTAL_INTERNAL_IP=$(kubectl get svc portal-api-internal -n portal \
       --context "$ORCH_CLUSTER" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
     [[ -n "$PORTAL_INTERNAL_IP" ]] && break
-    echo "    Waiting for portal-api internal LB IP (${i}/12)..."
+    echo "    Waiting for portal-api internal LB IP (${i}/30)..."
     sleep 10
   done
   if [[ -n "$PORTAL_INTERNAL_IP" ]]; then

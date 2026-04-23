@@ -200,6 +200,8 @@ resource fcTrinoCompute 'Microsoft.ManagedIdentity/userAssignedIdentities/federa
 }
 
 // RBAC — trino: Reader on bronze, silver, gold
+// Engineers query all three layers interactively via Trino; bronze is included
+// so raw-layer tables (e.g. bronze.nyctaxibronze) are accessible for inspection.
 resource trinoBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idTrino.id, storageBlobDataReaderRoleId, cBronze.id)
   scope: cBronze
@@ -474,6 +476,17 @@ resource kvDqSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     principalId: idDq.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'DQ — Key Vault Secrets User'
+  }
+}
+
+resource kvHmsSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (keyVaultId != '') {
+  name: guid(idHms.id, kvSecretsUserRoleId, keyVaultId)
+  scope: keyVaultRef
+  properties: {
+    roleDefinitionId: kvSecretsUserRoleId
+    principalId: idHms.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'HMS — Key Vault Secrets User'
   }
 }
 

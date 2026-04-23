@@ -179,9 +179,22 @@ Roles are Azure AD App Roles registered on the portal application registration:
 
 | Role | Portal Permissions |
 |------|-------------------|
-| `Admin` | All read + write; platform auth configuration management |
+| `Admin` | All read + write; platform auth configuration management; pipeline delete |
+| `Editor` | Trigger/rerun/restart pipelines; pipeline delete |
 | `Engineer` | Standard read access to health, cost, status |
 | `Viewer` | Read-only on all sections |
+
+### Portal Workload Identity Permissions
+
+The `portal-api` managed identity (`id-forge-portal-{alias}-{env}`) requires:
+
+| Resource | Permission | Purpose |
+|----------|------------|---------|
+| ADLS `gold` container | Storage Blob Data Reader | Dataset browsing |
+| ADLS `code` container | Storage Blob Data Contributor | Delete DAG/job/DQ files when a pipeline is deleted |
+| Azure Key Vault | Key Vault Secrets Officer | Read + write auth-config secrets from Settings UI |
+| Compute AKS cluster RG | Reader | Node pool status for platform status page |
+| Compute + Orch MC_ RGs | Cost Management Reader | Cost attribution view |
 
 Unauthenticated requests return `401 Unauthorized`. Authenticated requests from users without the required role return `403 Forbidden`.
 
@@ -210,10 +223,16 @@ Unauthenticated requests return `401 Unauthorized`. Authenticated requests from 
 
 | Method | Path | Description | Auth Required |
 |--------|------|-------------|---------------|
-| GET | `/api/pipelines` | List all Airflow DAGs with last-run status | Yes |
+| GET | `/api/pipelines` | List all Airflow DAGs with last-run status (excludes soft-deleted) | Yes |
 | GET | `/api/pipelines/{dag_id}` | Single DAG detail | Yes |
 | GET | `/api/pipelines/{dag_id}/runs` | Run history for a DAG | Yes |
 | POST | `/api/pipelines/{dag_id}/trigger` | Trigger a DAG run | Yes |
+| POST | `/api/pipelines/{dag_id}/rerun` | Cancel active run and trigger a new one | Editor+ |
+| POST | `/api/pipelines/{dag_id}/restart` | Delete run history and trigger fresh run | Editor+ |
+| DELETE | `/api/pipelines/{dag_id}` | Delete pipeline — removes from Airflow, ADLS (DAG/job/DQ files), and marks soft-deleted in DB | Admin/Editor |
+| POST | `/api/pipelines/register` | Register a deployment (called by sync-jobs.sh — clears soft-delete flag) | Yes |
+
+> **Pipeline delete behaviour:** The portal soft-deletes the pipeline immediately in Postgres (`deleted_at` timestamp), hiding it from the list before the ADLS file removal completes. Re-running `sync-jobs.sh` for the same DAG clears `deleted_at` and makes the pipeline visible again. ADLS file deletion requires the portal MI to have `Storage Blob Data Contributor` on the `code` container (provisioned via Bicep).
 
 #### Datasets
 
