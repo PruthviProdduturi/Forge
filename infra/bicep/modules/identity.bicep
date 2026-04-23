@@ -87,7 +87,10 @@ resource cCode 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-0
   name: 'code'
 }
 
-// No separate checkpoints container — checkpoints live at code/checkpoints/<pipeline_id>/
+resource cAirflowLogs 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' existing = {
+  parent: blobService
+  name: 'airflow-logs'
+}
 // Spark already has Contributor on code, which covers the checkpoints prefix.
 
 resource keyVaultRef 'Microsoft.KeyVault/vaults@2023-07-01' existing = if (keyVaultId != '') {
@@ -260,7 +263,7 @@ resource fcAirflowOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentitie
   }
 }
 
-// RBAC — airflow: Reader on code
+// RBAC — airflow: Reader on code, Contributor on airflow-logs (task log writes)
 resource airflowCodeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idAirflow.id, storageBlobDataReaderRoleId, cCode.id)
   scope: cCode
@@ -269,6 +272,17 @@ resource airflowCodeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' 
     principalId: idAirflow.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Airflow — Storage Blob Data Reader on code'
+  }
+}
+
+resource airflowLogsContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idAirflow.id, storageBlobDataContributorRoleId, cAirflowLogs.id)
+  scope: cAirflowLogs
+  properties: {
+    roleDefinitionId: storageBlobDataContributorRoleId
+    principalId: idAirflow.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Airflow — Storage Blob Data Contributor on airflow-logs (task log writes)'
   }
 }
 
@@ -302,7 +316,19 @@ resource fcDqOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities/fed
   }
 }
 
-// RBAC — dq: Contributor on silver; Reader on bronze, gold
+// RBAC — dq: Contributor on bronze, silver, gold
+// DQRunner writes _dq/ output co-located with data in each layer's container.
+resource dqBronzeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idDq.id, storageBlobDataContributorRoleId, cBronze.id)
+  scope: cBronze
+  properties: {
+    roleDefinitionId: storageBlobDataContributorRoleId
+    principalId: idDq.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'DQ — Storage Blob Data Contributor on bronze (writes _dq/ output)'
+  }
+}
+
 resource dqSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idDq.id, storageBlobDataContributorRoleId, cSilver.id)
   scope: cSilver
@@ -310,29 +336,18 @@ resource dqSilverContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idDq.properties.principalId
     principalType: 'ServicePrincipal'
-    description: 'DQ — Storage Blob Data Contributor on silver'
+    description: 'DQ — Storage Blob Data Contributor on silver (writes _dq/ output)'
   }
 }
 
-resource dqBronzeReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idDq.id, storageBlobDataReaderRoleId, cBronze.id)
-  scope: cBronze
-  properties: {
-    roleDefinitionId: storageBlobDataReaderRoleId
-    principalId: idDq.properties.principalId
-    principalType: 'ServicePrincipal'
-    description: 'DQ — Storage Blob Data Reader on bronze'
-  }
-}
-
-resource dqGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(idDq.id, storageBlobDataReaderRoleId, cGold.id)
+resource dqGoldContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idDq.id, storageBlobDataContributorRoleId, cGold.id)
   scope: cGold
   properties: {
-    roleDefinitionId: storageBlobDataReaderRoleId
+    roleDefinitionId: storageBlobDataContributorRoleId
     principalId: idDq.properties.principalId
     principalType: 'ServicePrincipal'
-    description: 'DQ — Storage Blob Data Reader on gold'
+    description: 'DQ — Storage Blob Data Contributor on gold (writes _dq/ output)'
   }
 }
 
@@ -366,7 +381,9 @@ resource fcPortalOrchestration 'Microsoft.ManagedIdentity/userAssignedIdentities
   }
 }
 
-// RBAC — portal: Reader on gold
+// RBAC — portal: Reader on gold, Contributor on code
+// code Contributor allows delete_pipeline to remove DAG files, Spark job scripts,
+// and DQ rule YAMLs from ADLS when a user deletes a pipeline from the UI.
 resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(idPortal.id, storageBlobDataReaderRoleId, cGold.id)
   scope: cGold
@@ -375,6 +392,17 @@ resource portalGoldReader 'Microsoft.Authorization/roleAssignments@2022-04-01' =
     principalId: idPortal.properties.principalId
     principalType: 'ServicePrincipal'
     description: 'Portal — Storage Blob Data Reader on gold'
+  }
+}
+
+resource portalCodeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(idPortal.id, storageBlobDataContributorRoleId, cCode.id)
+  scope: cCode
+  properties: {
+    roleDefinitionId: storageBlobDataContributorRoleId
+    principalId: idPortal.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Portal — Storage Blob Data Contributor on code (delete DAG/job/DQ files when pipeline is deleted)'
   }
 }
 

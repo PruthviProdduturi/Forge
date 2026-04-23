@@ -73,8 +73,14 @@ async def _ensure_deployments_table(conn: Any) -> None:
             dag_id       TEXT PRIMARY KEY,
             owner_email  TEXT NOT NULL,
             owner_alias  TEXT NOT NULL DEFAULT '',
-            deployed_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+            deployed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+            deleted_at   TIMESTAMPTZ
         )
+    """)
+    # Add deleted_at if upgrading from older schema
+    await conn.execute("""
+        ALTER TABLE pipeline_deployments
+        ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
     """)
 
 
@@ -109,12 +115,31 @@ def _summarise_dag(dag: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str,
 
 @router.get("")
 async def list_pipelines(current_user: CurrentUser) -> list[dict[str, Any]]:
-    """List all DAGs with their last run state."""
+    """List all DAGs with their last run state, excluding soft-deleted pipelines."""
     try:
         dags = await airflow_client.get_dags(limit=100, only_active=False)
     except Exception as exc:
         log.error("list_pipelines_failed", error=str(exc))
         raise HTTPException(status_code=502, detail="Could not reach Airflow") from exc
+
+    # Exclude any DAGs the user has deleted from the portal.
+    # These remain in Airflow/ADLS until the next full deploy applies the RBAC-enabled
+    # ADLS deletion, but we hide them immediately via the DB soft-delete flag.
+    deleted_ids: set[str] = set()
+    conn = await _pg_connect()
+    if conn is not None:
+        try:
+            await _ensure_deployments_table(conn)
+            rows = await conn.fetch(
+                "SELECT dag_id FROM pipeline_deployments WHERE deleted_at IS NOT NULL"
+            )
+            deleted_ids = {r["dag_id"] for r in rows}
+        except Exception as exc:
+            log.warning("pg_deleted_ids_failed", error=str(exc))
+        finally:
+            await conn.close()
+
+    active_dags = [d for d in dags if d.get("dag_id", "") not in deleted_ids]
 
     async def _fetch_run(dag: dict[str, Any]) -> dict[str, Any]:
         dag_id = dag.get("dag_id", "")
@@ -124,7 +149,7 @@ async def list_pipelines(current_user: CurrentUser) -> list[dict[str, Any]]:
             runs = []
         return _summarise_dag(dag, runs)
 
-    results = await asyncio.gather(*[_fetch_run(d) for d in dags])
+    results = await asyncio.gather(*[_fetch_run(d) for d in active_dags])
     return list(results)
 
 
@@ -140,12 +165,13 @@ async def register_pipeline(body: RegisterRequest, current_user: CurrentUser) ->
         try:
             await _ensure_deployments_table(conn)
             await conn.execute("""
-                INSERT INTO pipeline_deployments (dag_id, owner_email, owner_alias, deployed_at)
-                VALUES ($1, $2, $3, now())
+                INSERT INTO pipeline_deployments (dag_id, owner_email, owner_alias, deployed_at, deleted_at)
+                VALUES ($1, $2, $3, now(), NULL)
                 ON CONFLICT (dag_id) DO UPDATE
                   SET owner_email = EXCLUDED.owner_email,
                       owner_alias = EXCLUDED.owner_alias,
-                      deployed_at = now()
+                      deployed_at = now(),
+                      deleted_at  = NULL
             """, body.dag_id, email, alias)
             log.info("pipeline_registered", dag_id=body.dag_id, owner=email)
         except Exception as exc:
@@ -420,11 +446,18 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
         log.error("delete_pipeline_airflow_failed", dag_id=dag_id, error=str(exc))
         raise HTTPException(status_code=502, detail="Could not delete DAG from Airflow") from exc
 
-    # 2. Postgres — remove ownership record
+    # 2. Postgres — soft-delete so the pipeline is hidden immediately even if ADLS
+    # deletion fails (e.g. RBAC not yet applied). Re-registering via sync-jobs clears
+    # deleted_at and makes the pipeline visible again.
     conn = await _pg_connect()
     if conn is not None:
         try:
-            await conn.execute("DELETE FROM pipeline_deployments WHERE dag_id = $1", dag_id)
+            await _ensure_deployments_table(conn)
+            await conn.execute("""
+                INSERT INTO pipeline_deployments (dag_id, owner_email, owner_alias, deleted_at)
+                VALUES ($1, '', '', now())
+                ON CONFLICT (dag_id) DO UPDATE SET deleted_at = now()
+            """, dag_id)
         except Exception as exc:
             log.warning("pg_delete_pipeline_failed", dag_id=dag_id, error=str(exc))
         finally:

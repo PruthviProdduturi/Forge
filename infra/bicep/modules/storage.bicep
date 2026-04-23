@@ -159,6 +159,30 @@ resource containerCode 'Microsoft.Storage/storageAccounts/blobServices/container
     }
   }
 }
+resource containerAirflowLogs 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' = {
+  parent: blobService
+  name: 'airflow-logs'
+  properties: {
+    publicAccess: 'None'
+    metadata: {
+      tier: 'logs'
+      description: 'Airflow task logs written by KubernetesExecutor worker pods'
+    }
+  }
+}
+
+resource containerState 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-04-01' = {
+  parent: blobService
+  name: 'state'
+  properties: {
+    publicAccess: 'None'
+    metadata: {
+      tier: 'operational'
+      description: 'Platform operational state (e.g. Spark Connect state, streaming offsets)'
+    }
+  }
+}
+
 // No separate checkpoints container — checkpoints live at code/checkpoints/<pipeline_id>/
 
 // ---------------------------------------------------------------------------
@@ -429,6 +453,8 @@ output containerIds object = {
   gold: containerGold.id
   sandbox: containerSandbox.id
   code: containerCode.id
+  airflowLogs: containerAirflowLogs.id
+  state: containerState.id
 }
 
 output privateEndpointDfsId string = pepDfs.id
