@@ -18,22 +18,32 @@ logger = logging.getLogger(__name__)
 
 
 class NotNullRule(BaseRule):
-    """Asserts that no NULL values exist in the specified columns.
+    """Asserts that no NULL values exist in the specified column(s).
+
+    Accepts either ``column`` (single string) or ``columns`` (list of strings)
+    so that YAML authors can use whichever form feels natural.
 
     Args:
         name: Rule identifier.
-        columns: List of column names to check.
+        column: Single column name to check (mutually exclusive with *columns*).
+        columns: List of column names to check (mutually exclusive with *column*).
         severity: Rule severity (default CRITICAL).
     """
 
     def __init__(
         self,
         name: str,
-        columns: list[str],
+        column: str | None = None,
+        columns: list[str] | None = None,
         severity: Severity | str = Severity.CRITICAL,
     ) -> None:
         super().__init__(name, severity)
-        self.columns = columns
+        if column is not None:
+            self.columns = [column]
+        elif columns is not None:
+            self.columns = list(columns)
+        else:
+            raise ValueError(f"Rule '{name}': must specify 'column' or 'columns'.")
 
     def evaluate(self, df: "DataFrame", spark: "SparkSession") -> RuleResult:
         from pyspark.sql import functions as F
@@ -191,6 +201,62 @@ class AcceptedValuesRule(BaseRule):
             message=f"{count} row(s) in '{self.column}' contain values not in {self.values}.",
             actual_value=f"{count} invalid",
             expected_value=str(self.values),
+            affected_rows=count,
+        )
+
+
+class RowCountRule(BaseRule):
+    """Asserts that the DataFrame row count is within [min, max].
+
+    Use this for absolute row count checks (e.g. at least 1 row).
+    For percentage-drop checks relative to prior runs, use :class:`RowCountDeltaRule`.
+
+    Args:
+        name: Rule identifier.
+        min: Minimum acceptable row count (inclusive, optional).
+        max: Maximum acceptable row count (inclusive, optional).
+        severity: Rule severity (default CRITICAL).
+    """
+
+    def __init__(
+        self,
+        name: str,
+        min: int | None = None,
+        max: int | None = None,
+        severity: Severity | str = Severity.CRITICAL,
+    ) -> None:
+        super().__init__(name, severity)
+        self.min = min
+        self.max = max
+
+    def evaluate(self, df: "DataFrame", spark: "SparkSession") -> RuleResult:
+        count = df.count()
+        violations = []
+        if self.min is not None and count < self.min:
+            violations.append(f"count {count} < min {self.min}")
+        if self.max is not None and count > self.max:
+            violations.append(f"count {count} > max {self.max}")
+
+        if not violations:
+            return RuleResult(
+                rule_name=self.name,
+                rule_type="row_count",
+                severity=self.severity,
+                status="PASS",
+                message=f"Row count {count} is within bounds [min={self.min}, max={self.max}].",
+                actual_value=str(count),
+                expected_value=f"[{self.min}, {self.max}]",
+                affected_rows=0,
+            )
+
+        return RuleResult(
+            rule_name=self.name,
+            rule_type="row_count",
+            severity=self.severity,
+            status="FAIL",
+            message=f"Row count violation: {'; '.join(violations)}.",
+            actual_value=str(count),
+            expected_value=f"[{self.min}, {self.max}]",
             affected_rows=count,
         )
 

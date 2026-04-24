@@ -16,7 +16,7 @@ Browser
 `portal-api` talks to:
 
 - **Airflow webserver** — in-cluster: `airflow-webserver.airflow.svc.cluster.local:8080`
-- **Microsoft Purview** — lineage graph via Purview Atlas REST API
+- **Airflow DAG tags** — lineage graph via source:/output: DAG tag conventions
 - **ADLS Gen2** — dataset discovery via HNS directory listing
 - **Azure Cost Management** — resource-group cost aggregation
 - **Azure Key Vault** — runtime config: auth credentials, API keys
@@ -43,7 +43,7 @@ portal/
       pipelines/page.tsx    /pipelines  Airflow DAG monitor
       datasets/page.tsx     /datasets   ADLS dataset browser
       datasources/page.tsx  /datasources  Data source registry
-      lineage/page.tsx      /lineage    Microsoft Purview lineage explorer
+      lineage/page.tsx      /lineage    Airflow DAG tag lineage explorer
       dq/page.tsx           /dq         Data quality rule monitor
       cost/page.tsx         /cost       Azure cost attribution
       observability/page.tsx /observability  Grafana / Azure Monitor links
@@ -80,8 +80,8 @@ Dockerfiles are in `infra/docker/portal-api/` and `infra/docker/portal-web/`.
 | `GET` | `/api/datasets/{layer}` | Datasets filtered by layer |
 | `GET` | `/api/dq/summary` | DQ summary across all datasets |
 | `GET` | `/api/dq/{dataset_name}` | DQ rules + results for a dataset |
-| `GET` | `/api/lineage/search?q=` | Search Purview entities |
-| `GET` | `/api/lineage/{qualified_name}` | Lineage graph for an entity |
+| `GET` | `/api/lineage/search?q=` | Search datasets (Trino HMS) |
+| `GET` | `/api/lineage/{schema}/{table}` | Lineage graph via Airflow DAG tags (BFS) |
 | `GET` | `/api/v1/datasources` | List registered data sources |
 | `POST` | `/api/v1/datasources` | Register a new data source |
 | `PUT` | `/api/v1/datasources/{id}` | Update a data source |

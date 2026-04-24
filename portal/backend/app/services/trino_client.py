@@ -6,6 +6,7 @@ from typing import Any
 import structlog
 import trino
 
+from app.core.cache import cache
 from app.core.config import get_settings
 
 log = structlog.get_logger(__name__)
@@ -59,6 +60,11 @@ def query(sql: str) -> list[dict[str, Any]]:
 
 def get_datasets(layer: str | None = None) -> list[dict[str, Any]]:
     """List tables in the relevant schema(s) of the lakehouse catalog."""
+    cache_key = f"trino:datasets:{layer or 'all'}"
+    hit, val = cache.get(cache_key)
+    if hit:
+        return val  # type: ignore[return-value]
+
     results: list[dict[str, Any]] = []
     schemas = [LAYER_SCHEMAS[layer]] if layer and layer in LAYER_SCHEMAS else list(LAYER_SCHEMAS.values())
 
@@ -94,11 +100,17 @@ def get_datasets(layer: str | None = None) -> list[dict[str, Any]]:
         except Exception as exc:
             log.warning("trino_show_tables_failed", schema=schema, error=str(exc))
 
+    cache.set(cache_key, results, ttl=60)
     return results
 
 
 def get_table_stats(catalog: str, schema: str, table: str) -> dict[str, Any]:
     """Get basic stats for a table."""
+    cache_key = f"trino:stats:{catalog}/{schema}/{table}"
+    hit, val = cache.get(cache_key)
+    if hit:
+        return val  # type: ignore[return-value]
+
     fqn = f"{catalog}.{schema}.{table}"
     try:
         count_rows = query(f"SELECT COUNT(*) AS row_count FROM {fqn}")
@@ -126,15 +138,22 @@ def get_table_stats(catalog: str, schema: str, table: str) -> dict[str, Any]:
     except Exception:
         pass
 
-    return {
+    result = {
         "row_count": row_count,
         "last_updated": last_updated,
         "size_bytes": None,  # Not directly available without Hive metastore DESCRIBE EXTENDED
     }
+    cache.set(cache_key, result, ttl=120)
+    return result
 
 
 def get_table_schema(catalog: str, schema: str, table: str) -> list[dict[str, Any]]:
     """Return column names, types and ordinal positions for a table."""
+    cache_key = f"trino:schema:{catalog}/{schema}/{table}"
+    hit, val = cache.get(cache_key)
+    if hit:
+        return val  # type: ignore[return-value]
+
     try:
         rows = query(
             f"SELECT column_name, data_type, ordinal_position "
@@ -142,36 +161,62 @@ def get_table_schema(catalog: str, schema: str, table: str) -> list[dict[str, An
             f"WHERE table_schema = '{schema}' AND table_name = '{table}' "
             f"ORDER BY ordinal_position"
         )
-        return [
+        result = [
             {"name": r["column_name"], "type": r["data_type"], "position": r["ordinal_position"]}
             for r in rows
         ]
+        cache.set(cache_key, result, ttl=300)
+        return result
     except Exception as exc:
         log.warning("trino_schema_failed", table=f"{catalog}.{schema}.{table}", error=str(exc))
         return []
 
 
 def get_dq_summary() -> list[dict[str, Any]]:
-    """Query _dq Delta tables to aggregate pass rates by dataset."""
+    """Query _dq Delta tables to aggregate pass rates by dataset.
+
+    DQ rule results are stored one-row-per-rule in ``_dq.{layer}_{slug}_rules``
+    tables (registered by DeltaWriter._register_hms with output_type="rules").
+    We group by run_id first to get per-run stats, then aggregate across runs.
+    """
+    cache_key = "trino:dq_summary"
+    hit, val = cache.get(cache_key)
+    if hit:
+        return val  # type: ignore[return-value]
+
     results: list[dict[str, Any]] = []
     try:
-        # DQ results are stored in lakehouse._dq schema
+        # DQ rule result tables are named {safe_dataset}_rules
+        # _safe_dataset_name("bronze/nyctaxibronze") → "bronze_nyctaxibronze"
         tables = query(f"SHOW TABLES FROM {settings.trino_catalog}._dq")
-        for t in tables:
-            table_name = t.get("Table") or t.get("table") or ""
-            if not table_name.endswith("_results"):
+        table_names = [t.get("Table") or t.get("table") or "" for t in tables]
+
+        rules_datasets: set[str] = set()
+
+        for table_name in table_names:
+            if not table_name.endswith("_rules"):
                 continue
-            dataset_name = table_name.replace("_results", "")
+            safe_name = table_name[:-6]  # strip "_rules"
+            # Reverse _safe_dataset_name: first "_" separates layer from slug
+            dataset_name = safe_name.replace("_", "/", 1)
+            rules_datasets.add(dataset_name)
             try:
                 rows = query(
-                    f"SELECT "
-                    f"  COUNT(*) AS total_runs, "
-                    f"  SUM(CASE WHEN status = 'PASS' THEN 1 ELSE 0 END) AS passes, "
-                    f"  SUM(CASE WHEN status = 'FAIL' AND severity = 'CRITICAL' THEN 1 ELSE 0 END) AS critical_failures, "
-                    f"  SUM(CASE WHEN status = 'WARN' THEN 1 ELSE 0 END) AS warnings, "
-                    f"  MAX(run_at) AS last_run_at, "
-                    f"  MAX_BY(status, run_at) AS last_status "
-                    f"FROM {settings.trino_catalog}._dq.{table_name}"
+                    f"WITH runs AS ("
+                    f"  SELECT run_id, MAX(run_timestamp) AS last_ts,"
+                    f"    MAX(CASE WHEN status = 'FAIL' AND upper(severity) = 'CRITICAL' THEN 1 ELSE 0 END) AS crit,"
+                    f"    MAX(CASE WHEN status = 'WARN' THEN 1 ELSE 0 END) AS warn"
+                    f"  FROM {settings.trino_catalog}._dq.{table_name}"
+                    f"  GROUP BY run_id"
+                    f")"
+                    f"SELECT"
+                    f"  COUNT(*) AS total_runs,"
+                    f"  SUM(CASE WHEN crit = 0 AND warn = 0 THEN 1 ELSE 0 END) AS passes,"
+                    f"  SUM(crit) AS critical_failures,"
+                    f"  SUM(warn) AS warnings,"
+                    f"  MAX(last_ts) AS last_run_at,"
+                    f"  MAX_BY(CASE WHEN crit > 0 THEN 'FAIL' WHEN warn > 0 THEN 'WARN' ELSE 'PASS' END, last_ts) AS last_status"
+                    f" FROM runs"
                 )
                 if rows:
                     r = rows[0]
@@ -188,9 +233,38 @@ def get_dq_summary() -> list[dict[str, Any]]:
                     })
             except Exception as exc:
                 log.warning("trino_dq_table_failed", table=table_name, error=str(exc))
+
+        # Fallback: datasets with _auto profiling but no _rules yet show as "Monitored"
+        for table_name in table_names:
+            if not table_name.endswith("_auto"):
+                continue
+            safe_name = table_name[:-5]  # strip "_auto"
+            dataset_name = safe_name.replace("_", "/", 1)
+            if dataset_name in rules_datasets:
+                continue  # already covered by _rules entry
+            try:
+                rows = query(
+                    f"SELECT COUNT(*) AS runs, MAX(run_timestamp) AS last_ts"
+                    f" FROM {settings.trino_catalog}._dq.{table_name}"
+                )
+                if rows:
+                    r = rows[0]
+                    results.append({
+                        "dataset": dataset_name,
+                        "total_runs": r.get("runs") or 0,
+                        "pass_rate": None,
+                        "last_run_at": str(r.get("last_ts") or ""),
+                        "critical_failures": 0,
+                        "warnings": 0,
+                        "last_status": "MONITORED",
+                    })
+            except Exception as exc:
+                log.warning("trino_dq_auto_fallback_failed", table=table_name, error=str(exc))
+
     except Exception as exc:
         log.error("trino_dq_summary_failed", error=str(exc))
 
+    cache.set(cache_key, results, ttl=60)
     return results
 
 

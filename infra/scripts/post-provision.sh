@@ -196,6 +196,29 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 5a. Grant portal MI Reader on compute AKS cluster
+#     Required for the portal status page to call Azure Management API
+#     (ContainerServiceClient.managed_clusters.get / agent_pools.list).
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Granting portal MI Reader on compute AKS cluster"
+
+if [[ -n "$PORTAL_MI_PRINCIPAL" ]]; then
+  READER_ROLE="acdd72a7-3385-48ef-bd42-f606fba81ae7"
+  COMPUTE_AKS_ID="/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG_COMPUTE}/providers/Microsoft.ContainerService/managedClusters/${CLUSTER_COMPUTE}"
+  MSYS_NO_PATHCONV=1 az role assignment create \
+    --role "$READER_ROLE" \
+    --assignee-object-id "$PORTAL_MI_PRINCIPAL" \
+    --assignee-principal-type ServicePrincipal \
+    --scope "$COMPUTE_AKS_ID" \
+    --output none 2>/dev/null \
+    && echo "    Granted Reader on: $CLUSTER_COMPUTE" \
+    || echo "    Already exists or skipped: $CLUSTER_COMPUTE"
+else
+  echo "    portal MI not found — skipping"
+fi
+
+# ---------------------------------------------------------------------------
 # 5. Storage Blob Data Contributor — ADLS Gen2
 #    Grants read/write access to forgeadls{alias}{env} for:
 #      - Platform admin group  → developer sync-jobs.sh (az login identity)

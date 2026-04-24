@@ -294,6 +294,9 @@ export function generateDag(manifest: ForgeJobManifest, ownerAlias?: string): {
     ...(manifest.tags ?? []),
     `source:${manifest.source.name}`,   // portal: labels the source node in the task graph
     `output:${manifest.output.name ?? manifest.output.path.assetName}`,  // portal: derives display name for the output dataset
+    `executors:${manifest.resources?.executor?.instances ?? 2}`,  // portal: executor count shown in pipeline activity card
+    `exec_cores:${manifest.resources?.executor?.cores ?? 4}`,     // portal: cores per executor
+    `exec_mem:${manifest.resources?.executor?.memory ?? "8g"}`,   // portal: memory per executor
   ];
   // Deduplicate
   const tags = [...new Set(allTags)];

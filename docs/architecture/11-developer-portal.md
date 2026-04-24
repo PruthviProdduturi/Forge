@@ -34,7 +34,7 @@ The Developer Portal is an **engineering observability tool** — not an analyti
 - A pipeline monitor showing all Airflow DAGs with run history, status, and trigger capability
 - A dataset browser for ADLS Gen2 assets across bronze, silver, and gold zones
 - A data source registry for tracking external data sources and connection health
-- A lineage explorer backed by Microsoft Purview — search entities, view upstream/downstream graphs
+- A lineage explorer driven by Airflow DAG source/output tags — search datasets, view multi-hop upstream/downstream graphs
 - A data quality monitor showing DQ rule results and pass rates across all datasets
 - A cost attribution view showing Azure spend across the compute and orchestration resource groups
 - An administrative interface for managing auth provider configuration
@@ -95,7 +95,7 @@ app/
 ├── pipelines/page.tsx        ← /pipelines       Airflow DAG monitor with run history
 ├── datasets/page.tsx         ← /datasets        ADLS Gen2 dataset browser (bronze/silver/gold)
 ├── datasources/page.tsx      ← /datasources     Data source registry (register, test, delete)
-├── lineage/page.tsx          ← /lineage         Microsoft Purview lineage explorer
+├── lineage/page.tsx          ← /lineage         Airflow DAG tag lineage explorer
 ├── dq/page.tsx               ← /dq              Data quality rule monitor
 ├── cost/page.tsx             ← /cost            Azure cost attribution (7/30/90d)
 ├── observability/page.tsx    ← /observability   Grafana and Azure Monitor links
@@ -262,8 +262,8 @@ Unauthenticated requests return `401 Unauthorized`. Authenticated requests from 
 
 | Method | Path | Description | Auth Required |
 |--------|------|-------------|---------------|
-| GET | `/api/lineage/search?q=` | Search Purview entities by name | Yes |
-| GET | `/api/lineage/{qualified_name}` | Lineage graph for an entity | Yes |
+| GET | `/api/lineage/search?q=` | Search datasets (Trino HMS) | Yes |
+| GET | `/api/lineage/{schema}/{table}` | Lineage graph via Airflow DAG tags (BFS) | Yes |
 
 #### Cost
 
@@ -334,7 +334,6 @@ The `null` state is important for cross-cluster networking: Trino and Spark Conn
     "airflow_host": "airflow-webserver.airflow.svc.cluster.local",
     "trino_host": "10.1.4.20",
     "adls_account": "forgeadls{alias}dev",
-    "purview_endpoint": "",
     "resource_group": "rg-forge-dev"
   },
   "checks": {

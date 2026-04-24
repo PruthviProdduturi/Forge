@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import DocViewer from "../DocViewer";
 
 interface Props {
@@ -15,6 +15,11 @@ export default async function DocPage({ params }: Props) {
   const filePath = join(docsRoot, ...slug) + ".md";
 
   if (!existsSync(filePath)) {
+    // If the slug is a directory (e.g. /docs/architecture), redirect to docs index
+    const dirPath = join(docsRoot, ...slug);
+    if (existsSync(dirPath)) {
+      redirect("/docs");
+    }
     notFound();
   }
 

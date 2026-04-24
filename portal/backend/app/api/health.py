@@ -148,8 +148,8 @@ async def health_check() -> dict[str, Any]:
         "platform": {
             "airflow_host": airflow_host,
             "trino_host": settings.trino_host,
+            "compute_host": settings.compute_host,
             "adls_account": settings.adls_account,
-            "purview_endpoint": settings.purview_endpoint,
             "resource_group": settings.resource_group,
             "subscription_id": settings.subscription_id,
         },

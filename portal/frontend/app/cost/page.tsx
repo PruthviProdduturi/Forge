@@ -87,10 +87,13 @@ function RgCard({ rg, days }: { rg: RgCost; days: number }) {
           <div style={{
             padding: "10px 14px", borderRadius: 9,
             background: "#fef9f0", border: "1px solid #fcd34d",
-            fontSize: 12, color: "#92400e", display: "flex", alignItems: "center", gap: 8,
+            fontSize: 12, color: "#92400e", display: "flex", alignItems: "flex-start", gap: 8,
           }}>
-            <i className="fas fa-triangle-exclamation" />
-            Cost data unavailable — Cost Management permissions pending
+            <i className="fas fa-triangle-exclamation" style={{ marginTop: 1, flexShrink: 0 }} />
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 2 }}>Cost data unavailable</div>
+              <div style={{ opacity: 0.8, wordBreak: "break-word" as const }}>{rg.error}</div>
+            </div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>

@@ -43,6 +43,8 @@ spec:
               value: {{ .Values.api.env.azureTenantId | quote }}
             - name: AZURE_CLIENT_ID
               value: {{ .Values.api.env.azureClientId | quote }}
+            - name: AZURE_ADDITIONALLY_ALLOWED_TENANTS
+              value: "*"
             - name: AIRFLOW_URL
               value: {{ .Values.api.env.airflowUrl | quote }}
             {{- if .Values.api.env.airflowUsername }}

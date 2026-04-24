@@ -168,6 +168,51 @@ async def _compute_workload_probes() -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Clear failed pods endpoint
+# ---------------------------------------------------------------------------
+
+@router.delete("/clear-failed")
+async def clear_failed_pods() -> dict[str, Any]:
+    """Delete all Failed-phase pods in orchestration namespaces.
+
+    Requires the portal service account to have pod/delete RBAC in these
+    namespaces (add ``delete`` to the forge-portal-reader ClusterRole verbs).
+    """
+    try:
+        from kubernetes import client as k8s_client, config as k8s_config  # type: ignore
+
+        k8s_config.load_incluster_config()
+        v1 = k8s_client.CoreV1Api()
+
+        namespaces = ["airflow", "portal", "dq", "monitoring"]
+        deleted = 0
+        affected: list[str] = []
+
+        for ns in namespaces:
+            try:
+                pods = v1.list_namespaced_pod(namespace=ns, timeout_seconds=5)
+                for p in pods.items:
+                    if p.status.phase == "Failed":
+                        v1.delete_namespaced_pod(
+                            name=p.metadata.name,
+                            namespace=ns,
+                            grace_period_seconds=0,
+                        )
+                        deleted += 1
+                        if ns not in affected:
+                            affected.append(ns)
+            except Exception as exc:
+                log.warning("clear_failed_pods_ns_error", ns=ns, error=str(exc))
+
+        log.info("cleared_failed_pods", deleted=deleted)
+        return {"deleted": deleted, "namespaces": affected}
+
+    except Exception as exc:
+        log.warning("clear_failed_pods_failed", error=str(exc))
+        return {"deleted": 0, "namespaces": [], "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Main endpoint
 # ---------------------------------------------------------------------------
 

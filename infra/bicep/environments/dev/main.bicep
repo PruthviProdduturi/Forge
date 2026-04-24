@@ -335,6 +335,7 @@ module identity '../../modules/identity.bicep' = {
     storageAccountId: storage.outputs.storageAccountId
     // Key Vault ID is empty here; KV role assignments are managed in keyvault.bicep.
     keyVaultId: ''
+    computeAksClusterId: computeCluster.outputs.clusterId
     namespaces: {
       spark:   { namespace: 'spark-system',   serviceAccountName: 'spark' }
       trino:   { namespace: 'trino',          serviceAccountName: 'trino' }

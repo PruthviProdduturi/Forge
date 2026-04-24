@@ -11,11 +11,11 @@ const ACCENT = "var(--forge-primary)";
 interface DQSummary {
   dataset: string;
   total_runs: number;
-  pass_rate: number;
+  pass_rate: number | null;
   last_run_at: string;
   critical_failures: number;
   warnings: number;
-  last_status: "PASS" | "FAIL" | "WARN";
+  last_status: "PASS" | "FAIL" | "WARN" | "MONITORED";
 }
 
 function timeAgo(iso: string | null): string {
@@ -29,11 +29,12 @@ function timeAgo(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function StatusBadge({ status }: { status: "PASS" | "FAIL" | "WARN" }) {
-  const styles = {
-    PASS: { bg: "#dcfce7", color: "#16a34a" },
-    FAIL: { bg: "#fee2e2", color: "#dc2626" },
-    WARN: { bg: "#fef9c3", color: "#ca8a04" },
+function StatusBadge({ status }: { status: DQSummary["last_status"] }) {
+  const styles: Record<string, { bg: string; color: string }> = {
+    PASS:      { bg: "#dcfce7", color: "#16a34a" },
+    FAIL:      { bg: "#fee2e2", color: "#dc2626" },
+    WARN:      { bg: "#fef9c3", color: "#ca8a04" },
+    MONITORED: { bg: "#f1f5f9", color: "#64748b" },
   };
   const s = styles[status] ?? { bg: "#f1f5f9", color: "#64748b" };
   return (
@@ -46,7 +47,10 @@ function StatusBadge({ status }: { status: "PASS" | "FAIL" | "WARN" }) {
   );
 }
 
-function PassRateBar({ rate }: { rate: number }) {
+function PassRateBar({ rate }: { rate: number | null }) {
+  if (rate === null) {
+    return <span style={{ fontSize: 12, color: "#94a3b8" }}>Rules pending</span>;
+  }
   const pct = Math.round(rate * 100);
   const color = pct >= 95 ? "#22c55e" : pct >= 80 ? "#f59e0b" : "#ef4444";
   return (
@@ -75,18 +79,19 @@ export default function DataQualityPage() {
   }, [getToken]);
 
   const totalDatasets = summary.length;
-  const overallPassRate = summary.length
-    ? summary.reduce((acc, d) => acc + d.pass_rate, 0) / summary.length
+  const ratedSummary   = summary.filter(d => d.pass_rate !== null);
+  const overallPassRate = ratedSummary.length
+    ? ratedSummary.reduce((acc, d) => acc + (d.pass_rate as number), 0) / ratedSummary.length
     : 0;
   const criticalCount = summary.filter(d => d.critical_failures > 0).length;
 
   const heroContent = (
     <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
       {[
-        { label: "Monitored", value: loading ? "—" : totalDatasets, icon: "fa-database" },
-        { label: "Pass Rate", value: loading ? "—" : `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle" },
-        { label: "Critical", value: loading ? "—" : criticalCount, icon: "fa-circle-xmark" },
-        { label: "Warnings", value: loading ? "—" : summary.filter(d => d.warnings > 0).length, icon: "fa-triangle-exclamation" },
+        { label: "Monitored", value: loading || !summary.length ? "—" : totalDatasets, icon: "fa-database" },
+        { label: "Pass Rate", value: loading || !ratedSummary.length ? "—" : `${Math.round(overallPassRate * 100)}%`, icon: "fa-check-circle" },
+        { label: "Critical", value: loading || !summary.length ? "—" : criticalCount, icon: "fa-circle-xmark" },
+        { label: "Warnings", value: loading || !summary.length ? "—" : summary.filter(d => d.warnings > 0).length, icon: "fa-triangle-exclamation" },
       ].map(s => (
         <div key={s.label} style={{
           background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
@@ -120,8 +125,17 @@ export default function DataQualityPage() {
 
         {!loading && !error && (<>
         {summary.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "60px 0", color: "#94a3b8" }}>
-            No DQ data available yet
+          <div style={{ textAlign: "center", padding: "64px 24px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 56, height: 56, borderRadius: 16, background: "#f8fafc", border: "1px solid #e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 4 }}>
+              <i className="fas fa-shield-halved" style={{ fontSize: 24, color: "#cbd5e1" }} />
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: "#64748b" }}>No DQ results yet</div>
+            <div style={{ fontSize: 13, color: "#94a3b8", maxWidth: 360, lineHeight: 1.6 }}>
+              DQ results appear here after a pipeline with a <code style={{ background: "#f1f5f9", padding: "1px 6px", borderRadius: 4, fontSize: 12 }}>dq.rules</code> path in its manifest runs successfully.
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 4 }}>
+              Add DQ rules to your pipeline manifest → sync → trigger a run.
+            </div>
           </div>
         ) : (<>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>

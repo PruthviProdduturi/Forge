@@ -43,7 +43,7 @@ interface Dataset {
 interface DQSummary {
   dataset: string;
   total_runs: number;
-  pass_rate: number;
+  pass_rate: number | null;
   last_run_at: string;
   critical_failures: number;
   warnings: number;
@@ -316,10 +316,12 @@ export default function DatasetsPage() {
                           <div style={{ width: "100%", minWidth: 0 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                               <DQBadge status={dq.last_status} />
-                              <span style={{ fontSize: 11, fontWeight: 700, color: "#334155" }}>{Math.round(dq.pass_rate * 100)}%</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#334155" }}>
+                                {dq.pass_rate !== null ? `${Math.round(dq.pass_rate * 100)}%` : "—"}
+                              </span>
                             </div>
                             <div style={{ height: 3, borderRadius: 2, background: "#f1f5f9", overflow: "hidden" }}>
-                              <div style={{ height: "100%", width: `${Math.round(dq.pass_rate * 100)}%`, borderRadius: 2, background: dq.last_status === "PASS" ? "#22c55e" : dq.last_status === "WARN" ? "#f59e0b" : "#ef4444" }} />
+                              <div style={{ height: "100%", width: dq.pass_rate !== null ? `${Math.round(dq.pass_rate * 100)}%` : "0%", borderRadius: 2, background: dq.last_status === "PASS" ? "#22c55e" : dq.last_status === "WARN" ? "#f59e0b" : "#94a3b8" }} />
                             </div>
                           </div>
                         ) : d.has_dq ? (
@@ -449,10 +451,12 @@ export default function DatasetsPage() {
                       {dq.warnings > 0 && <span style={{ fontSize: 10, color: "#a16207" }}>{dq.warnings}W</span>}
                       {dq.critical_failures > 0 && <span style={{ fontSize: 10, color: "#dc2626" }}>{dq.critical_failures}C</span>}
                     </div>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>{Math.round(dq.pass_rate * 100)}%</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>
+                      {dq.pass_rate !== null ? `${Math.round(dq.pass_rate * 100)}%` : "—"}
+                    </span>
                   </div>
                   <div style={{ height: 4, borderRadius: 2, background: "#f1f5f9", overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${Math.round(dq.pass_rate * 100)}%`, borderRadius: 2, background: dq.last_status === "PASS" ? "#22c55e" : dq.last_status === "WARN" ? "#f59e0b" : "#ef4444" }} />
+                    <div style={{ height: "100%", width: dq.pass_rate !== null ? `${Math.round(dq.pass_rate * 100)}%` : "0%", borderRadius: 2, background: dq.last_status === "PASS" ? "#22c55e" : dq.last_status === "WARN" ? "#f59e0b" : "#94a3b8" }} />
                   </div>
                 </div>
               )}

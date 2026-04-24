@@ -22,6 +22,7 @@ from azure.identity import DefaultAzureCredential
 from azure.keyvault.secrets import SecretClient
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.core.cache import cache
 from app.core.config import get_settings
 
 log = structlog.get_logger(__name__)
@@ -93,6 +94,11 @@ def _airflow_client(token: str) -> httpx.AsyncClient:
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
 async def get_dags(limit: int = 100, only_active: bool = True) -> list[dict[str, Any]]:
+    cache_key = f"airflow:dags:{limit}:{only_active}"
+    hit, val = cache.get(cache_key)
+    if hit:
+        return val  # type: ignore[return-value]
+
     token = await _get_jwt()
     async with _airflow_client(token) as client:
         params: dict[str, Any] = {"limit": limit}
@@ -100,7 +106,9 @@ async def get_dags(limit: int = 100, only_active: bool = True) -> list[dict[str,
             params["paused"] = False
         resp = await client.get("/api/v2/dags", params=params)
         resp.raise_for_status()
-        return resp.json().get("dags", [])
+        result = resp.json().get("dags", [])
+    cache.set(cache_key, result, ttl=30)
+    return result
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))

@@ -34,6 +34,7 @@ from forge_dq.rules.builtin import (
     CustomSQLRule,
     NotNullRule,
     RowCountDeltaRule,
+    RowCountRule,
     UniqueKeyRule,
     ValueRangeRule,
 )
@@ -44,9 +45,13 @@ _RULE_REGISTRY: dict[str, type[BaseRule]] = {
     "not_null": NotNullRule,
     "value_range": ValueRangeRule,
     "accepted_values": AcceptedValuesRule,
+    "row_count": RowCountRule,
     "row_count_delta": RowCountDeltaRule,
     "unique_key": UniqueKeyRule,
     "custom_sql": CustomSQLRule,
+    # Aliases for common YAML variations
+    "min_value": ValueRangeRule,
+    "max_value": ValueRangeRule,
 }
 
 # Keys consumed at the top level of each rule entry that are NOT passed to

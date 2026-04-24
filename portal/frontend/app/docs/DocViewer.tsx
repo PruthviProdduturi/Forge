@@ -6,7 +6,40 @@ import { useTheme } from "../../contexts/ThemeContext";
 
 // ─── Inline markdown renderer ────────────────────────────────────────────────
 
-function renderInline(text: string): { __html: string } {
+// Resolve a markdown link href to a portal URL.
+// - External links (http/https) pass through unchanged.
+// - Anchor-only links (#) pass through unchanged.
+// - Internal .md links: strip extension, resolve relative to basePath (e.g. /docs/architecture).
+function resolveHref(href: string, basePath: string): string {
+  if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("#")) {
+    return href;
+  }
+  // Separate anchor from path
+  const anchorIdx = href.indexOf("#");
+  const anchor = anchorIdx >= 0 ? href.slice(anchorIdx) : "";
+  let path = anchorIdx >= 0 ? href.slice(0, anchorIdx) : href;
+
+  // Strip .md extension
+  path = path.replace(/\.md$/, "");
+
+  if (path.startsWith("/")) {
+    return path + anchor;
+  }
+
+  // Resolve relative path against basePath
+  const baseParts = basePath.replace(/^\//, "").split("/").filter(Boolean);
+  const pathParts = path.split("/");
+  const resolved = [...baseParts];
+
+  for (const part of pathParts) {
+    if (part === "..") resolved.pop();
+    else if (part !== "." && part !== "") resolved.push(part);
+  }
+
+  return "/" + resolved.join("/") + anchor;
+}
+
+function renderInline(text: string, basePath = ""): { __html: string } {
   const html = text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -14,7 +47,10 @@ function renderInline(text: string): { __html: string } {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" style="color:inherit;text-decoration:underline">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
+      const resolved = resolveHref(href, basePath);
+      return `<a href="${resolved}" style="color:inherit;text-decoration:underline">${label}</a>`;
+    });
   return { __html: html };
 }
 
@@ -165,7 +201,7 @@ function parseBlocks(md: string): Block[] {
 
 // ─── Block renderer ───────────────────────────────────────────────────────────
 
-function renderBlock(block: Block, idx: number, primaryColor: string): React.ReactNode {
+function renderBlock(block: Block, idx: number, primaryColor: string, basePath = ""): React.ReactNode {
   switch (block.type) {
     case "heading": {
       const sizes: Record<number, string> = {
@@ -213,7 +249,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
               lineHeight: 1.3,
               letterSpacing: block.level <= 2 ? "-0.02em" : undefined,
             }}
-            dangerouslySetInnerHTML={renderInline(block.text)}
+            dangerouslySetInnerHTML={renderInline(block.text, basePath)}
           />
         </div>
       );
@@ -280,7 +316,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
             <div
               key={j}
               style={{ color: "#475569", fontStyle: "italic", lineHeight: 1.7, fontSize: 14.5 }}
-              dangerouslySetInnerHTML={renderInline(line)}
+              dangerouslySetInnerHTML={renderInline(line, basePath)}
             />
           ))}
         </div>
@@ -299,7 +335,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
           }}
         >
           {block.items.map((item, j) => (
-            <li key={j} dangerouslySetInnerHTML={renderInline(item)} />
+            <li key={j} dangerouslySetInnerHTML={renderInline(item, basePath)} />
           ))}
         </ul>
       );
@@ -317,7 +353,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
           }}
         >
           {block.items.map((item, j) => (
-            <li key={j} dangerouslySetInnerHTML={renderInline(item)} />
+            <li key={j} dangerouslySetInnerHTML={renderInline(item, basePath)} />
           ))}
         </ol>
       );
@@ -348,7 +384,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
                       color: "#0f172a",
                       whiteSpace: "nowrap",
                     }}
-                    dangerouslySetInnerHTML={renderInline(h)}
+                    dangerouslySetInnerHTML={renderInline(h, basePath)}
                   />
                 ))}
               </tr>
@@ -366,7 +402,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
                     <td
                       key={k}
                       style={{ padding: "9px 14px", color: "#334155", lineHeight: 1.6 }}
-                      dangerouslySetInnerHTML={renderInline(cell)}
+                      dangerouslySetInnerHTML={renderInline(cell, basePath)}
                     />
                   ))}
                 </tr>
@@ -389,7 +425,7 @@ function renderBlock(block: Block, idx: number, primaryColor: string): React.Rea
         <p
           key={idx}
           style={{ margin: "0.6rem 0", lineHeight: 1.85, color: "#334155", fontSize: 14.5 }}
-          dangerouslySetInnerHTML={renderInline(block.text)}
+          dangerouslySetInnerHTML={renderInline(block.text, basePath)}
         />
       );
 
@@ -425,6 +461,10 @@ export default function DocViewer({ content, slug }: DocViewerProps) {
   const { primaryColor } = useTheme();
   const blocks = React.useMemo(() => parseBlocks(content), [content]);
   const toc = React.useMemo(() => extractToc(blocks), [blocks]);
+
+  // Base path for resolving relative .md links within this doc
+  // e.g. slug=["architecture","01-overview"] → "/docs/architecture"
+  const basePath = "/docs/" + slug.slice(0, -1).join("/");
 
   // Breadcrumb
   const crumbs = slug.map((part, i) => ({
@@ -524,7 +564,7 @@ export default function DocViewer({ content, slug }: DocViewerProps) {
             main strong { color: #0f172a; }
             main a { color: ${primaryColor}; }
           `}</style>
-          {blocks.map((block, idx) => renderBlock(block, idx, primaryColor))}
+          {blocks.map((block, idx) => renderBlock(block, idx, primaryColor, basePath))}
         </main>
 
         {/* TOC sidebar */}

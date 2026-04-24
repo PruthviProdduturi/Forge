@@ -733,6 +733,28 @@ fi  # end SKIP_SECRETS else block
 fi  # end phases 1–4 (skipped when --build-only)
 
 # ---------------------------------------------------------------------------
+# Cost Management Reader — idempotent, runs on every orch deploy.
+# Portal-api calls Azure Cost Management SDK scoped to the AKS node RGs.
+# Placed outside the secrets block so --skip-infra / --orch-only stays authorised.
+# ---------------------------------------------------------------------------
+if [[ "$SKIP_ORCH" != "true" ]]; then
+  _CM_PORTAL_MI=$(az identity show --resource-group "$RESOURCE_GROUP" \
+    --name "id-forge-portal-${_A}${ENV}" --query principalId -o tsv 2>/dev/null || echo "")
+  if [[ -n "$_CM_PORTAL_MI" ]]; then
+    _COST_READER_ROLE="72fafb9e-0641-4937-9268-a91bfd8191a3"
+    for _COST_RG in "rg-mc-compute-${_A}${ENV}" "rg-mc-orch-${_A}${ENV}"; do
+      MSYS_NO_PATHCONV=1 az role assignment create \
+        --role "${_COST_READER_ROLE}" \
+        --assignee-object-id "${_CM_PORTAL_MI}" \
+        --assignee-principal-type ServicePrincipal \
+        --scope "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${_COST_RG}" \
+        --output none 2>/dev/null || true
+      echo "    Portal MI → Cost Management Reader on ${_COST_RG}"
+    done
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Phase 5 — Build and push Docker images to ACR
 # Builds all custom images. Skippable with --skip-build if already in ACR.
 # ---------------------------------------------------------------------------

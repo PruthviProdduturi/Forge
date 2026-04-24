@@ -8,8 +8,8 @@ interface PlatformInfo {
   platform: {
     airflow_host: string;
     trino_host: string;
+    compute_host: string;
     adls_account: string;
-    purview_endpoint: string;
     resource_group: string;
     subscription_id: string;
   };
@@ -96,11 +96,10 @@ export function SettingsModal({ onClose, platformInfo }: SettingsModalProps) {
   const p = platformInfo?.platform;
   const subId = p?.subscription_id;
 
-  const trinoUrl = p?.trino_host ? `https://${p.trino_host}` : null;
+  const trinoUrl = p?.compute_host ? `https://${p.compute_host}` : null;
   const adlsUrl = subId && p?.adls_account && p?.resource_group
     ? `https://portal.azure.com/#resource/subscriptions/${subId}/resourceGroups/${p.resource_group}/providers/Microsoft.Storage/storageAccounts/${p.adls_account}/overview`
     : null;
-  const purviewUrl = p?.purview_endpoint || null;
   const rgUrl = subId && p?.resource_group
     ? `https://portal.azure.com/#resource/subscriptions/${subId}/resourceGroups/${p.resource_group}/overview`
     : null;
@@ -156,9 +155,8 @@ export function SettingsModal({ onClose, platformInfo }: SettingsModalProps) {
                 </div>
                 <PlatformRow label="Environment" value={(platformInfo.env ?? "dev").toUpperCase()} highlight={platformInfo.env === "prod" ? "red" : "green"} />
                 <PlatformRow label="Airflow" value={p?.airflow_host ?? "—"} mono />
-                <PlatformRow label="Trino" value={p?.trino_host ?? "—"} mono href={trinoUrl ?? undefined} />
+                <PlatformRow label="Trino" value={p?.compute_host ?? "—"} mono href={trinoUrl ?? undefined} />
                 <PlatformRow label="ADLS" value={p?.adls_account ?? "—"} mono href={adlsUrl ?? undefined} />
-                <PlatformRow label="Purview" value={(p?.purview_endpoint ?? "").replace("https://", "") || "—"} mono href={purviewUrl ?? undefined} />
                 <PlatformRow label="Resource Group" value={p?.resource_group ?? "—"} href={rgUrl ?? undefined} />
               </div>
             ) : (

@@ -42,9 +42,6 @@ class Settings(BaseSettings):
     # Spark Connect — HTTP REST endpoint for health checks
     spark_connect_url: str = "http://spark-connect.spark.svc.cluster.local:4040"
 
-    # Purview
-    purview_endpoint: str = "https://purview-forge-dev.purview.azure.com"
-
     # Postgres — portal database for user preferences.
     # pg_host: FQDN of the Azure PostgreSQL Flexible Server.
     # pg_user: name of the portal-api managed identity (the Postgres AAD user).

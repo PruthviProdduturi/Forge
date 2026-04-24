@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.auth import get_current_user
+from app.core.cache import cache
 from app.core.config import get_settings
 
 log = structlog.get_logger(__name__)
@@ -97,45 +98,56 @@ class DQIngestRequest(BaseModel):
 
 @router.get("/summary")
 async def get_dq_summary(current_user: CurrentUser) -> list[dict[str, Any]]:
-    """Return DQ pass rate and critical failures per dataset (from Postgres)."""
+    """Return DQ pass rate and critical failures per dataset.
+
+    Primary source: Postgres (populated by DQ gate via FORGE_PORTAL_API_URL).
+    Fallback: Trino _dq Delta tables (populated by every DQ run, regardless of portal URL).
+    """
     conn = await _pg_connect()
-    if conn is None:
-        return []
+    if conn is not None:
+        try:
+            await _ensure_table(conn)
+            rows = await conn.fetch("""
+                SELECT
+                    dataset,
+                    COUNT(*)                                                     AS total_runs,
+                    SUM(CASE WHEN overall_status = 'PASS' THEN 1 ELSE 0 END)    AS passes,
+                    SUM(CASE WHEN critical_failures <> '' THEN 1 ELSE 0 END)     AS critical_failures,
+                    SUM(warnings)                                                AS warnings,
+                    MAX(run_at)                                                  AS last_run_at,
+                    (ARRAY_AGG(overall_status ORDER BY run_at DESC))[1]          AS last_status
+                FROM dq_results
+                GROUP BY dataset
+                ORDER BY dataset
+            """)
+            results = []
+            for r in rows:
+                total = r["total_runs"] or 0
+                passes = r["passes"] or 0
+                last_run_at = r["last_run_at"]
+                results.append({
+                    "dataset": r["dataset"],
+                    "total_runs": total,
+                    "pass_rate": round(passes / total, 4) if total > 0 else 0.0,
+                    "last_run_at": last_run_at.isoformat() if last_run_at else "",
+                    "critical_failures": r["critical_failures"] or 0,
+                    "warnings": r["warnings"] or 0,
+                    "last_status": r["last_status"] or "PASS",
+                })
+            if results:
+                return results
+        except Exception as exc:
+            log.error("dq_summary_pg_failed", error=str(exc))
+        finally:
+            await conn.close()
+
+    # Postgres unavailable or empty — fall back to Trino _dq Delta tables
     try:
-        await _ensure_table(conn)
-        rows = await conn.fetch("""
-            SELECT
-                dataset,
-                COUNT(*)                                                     AS total_runs,
-                SUM(CASE WHEN overall_status = 'PASS' THEN 1 ELSE 0 END)    AS passes,
-                SUM(CASE WHEN critical_failures <> '' THEN 1 ELSE 0 END)     AS critical_failures,
-                SUM(warnings)                                                AS warnings,
-                MAX(run_at)                                                  AS last_run_at,
-                (ARRAY_AGG(overall_status ORDER BY run_at DESC))[1]          AS last_status
-            FROM dq_results
-            GROUP BY dataset
-            ORDER BY dataset
-        """)
-        results = []
-        for r in rows:
-            total = r["total_runs"] or 0
-            passes = r["passes"] or 0
-            last_run_at = r["last_run_at"]
-            results.append({
-                "dataset": r["dataset"],
-                "total_runs": total,
-                "pass_rate": round(passes / total, 4) if total > 0 else 0.0,
-                "last_run_at": last_run_at.isoformat() if last_run_at else "",
-                "critical_failures": r["critical_failures"] or 0,
-                "warnings": r["warnings"] or 0,
-                "last_status": r["last_status"] or "PASS",
-            })
-        return results
+        from app.services import trino_client
+        return await asyncio.to_thread(trino_client.get_dq_summary)
     except Exception as exc:
-        log.error("dq_summary_failed", error=str(exc))
+        log.error("dq_summary_trino_fallback_failed", error=str(exc))
         return []
-    finally:
-        await conn.close()
 
 
 @router.get("/{safe_dataset_name}")
@@ -185,6 +197,8 @@ async def ingest_dq_result(body: DQIngestRequest) -> dict[str, str]:
         """, body.dataset, body.pipeline_name, body.run_id, body.overall_status,
             body.total_rules, body.passes, critical_str, body.warnings, run_at)
         log.info("dq_ingest_ok", dataset=body.dataset, status=body.overall_status)
+        # Invalidate DQ summary caches so next read reflects the new result
+        cache.delete_prefix("trino:dq_summary")
         return {"status": "ok"}
     except Exception as exc:
         log.error("dq_ingest_failed", error=str(exc))

@@ -23,6 +23,9 @@ param storageAccountId string
 @description('Resource ID of the Key Vault. Empty string skips Key Vault role assignments.')
 param keyVaultId string = ''
 
+@description('Resource ID of the compute AKS cluster. Grants portal MI Reader so the status page can query cluster/node-pool state.')
+param computeAksClusterId string = ''
+
 @description('Kubernetes namespace and service account mappings for each workload.')
 param namespaces object = {
   // spark-system: Spark Connect driver deployment namespace (interactive queries)
@@ -50,6 +53,7 @@ var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authori
 var storageBlobDataReaderRoleId      = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
 var kvSecretsUserRoleId              = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
 var kvSecretsOfficerRoleId           = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
+var readerRoleId                     = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
 
 // ---------------------------------------------------------------------------
 // Existing resource references
@@ -411,6 +415,24 @@ resource portalCodeContrib 'Microsoft.Authorization/roleAssignments@2022-04-01' 
     principalType: 'ServicePrincipal'
     description: 'Portal — Storage Blob Data Contributor on code (delete DAG/job/DQ files when pipeline is deleted)'
   }
+}
+
+// Reader on compute AKS cluster — allows portal status page to query node pool state
+// via Azure Management API (ContainerServiceClient.managed_clusters.get).
+resource portalComputeAksReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (computeAksClusterId != '') {
+  name: guid(idPortal.id, readerRoleId, computeAksClusterId)
+  scope: existingComputeAks
+  properties: {
+    roleDefinitionId: readerRoleId
+    principalId: idPortal.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Portal — Reader on compute AKS cluster (status page node pool queries)'
+  }
+}
+
+resource existingComputeAks 'Microsoft.ContainerService/managedClusters@2024-05-01' existing = if (computeAksClusterId != '') {
+  name: last(split(computeAksClusterId, '/'))!
+  scope: resourceGroup(split(computeAksClusterId, '/')[2], split(computeAksClusterId, '/')[4])
 }
 
 

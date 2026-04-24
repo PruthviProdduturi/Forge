@@ -40,7 +40,7 @@ function Section({
       id={id}
       style={{
         background: bg,
-        padding: "80px 0",
+        padding: "52px 0",
         ...style,
       }}
     >
@@ -74,7 +74,7 @@ function SectionLabel({
         letterSpacing: "0.09em",
         textTransform: "uppercase",
         color: light ? "#e8f0fb" : c,
-        marginBottom: 16,
+        marginBottom: 10,
       }}
     >
       {text}
@@ -100,7 +100,7 @@ function SectionHeading({
         lineHeight: 1.2,
         letterSpacing: "-0.02em",
         textAlign: center ? "center" : undefined,
-        marginBottom: 12,
+        marginBottom: 8,
       }}
     >
       {children}
@@ -135,11 +135,13 @@ function SectionSub({
 
 function FeatureCard({
   icon,
+  logo,
   color,
   title,
   body,
 }: {
   icon: string;
+  logo?: string;
   color: string;
   title: string;
   body: string;
@@ -171,7 +173,10 @@ function FeatureCard({
           flexShrink: 0,
         }}
       >
-        <i className={`fas ${icon}`} style={{ color, fontSize: 17 }} aria-hidden="true" />
+        {logo
+          ? <img src={logo} width={20} height={20} alt="" aria-hidden="true" style={{ display: "block" }} />
+          : <i className={`fas ${icon}`} style={{ color, fontSize: 17 }} aria-hidden="true" />
+        }
       </div>
       <div>
         <div
@@ -194,10 +199,12 @@ function FeatureCard({
 
 function ChartPill({
   icon,
+  logo,
   label,
   color,
 }: {
   icon?: string;
+  logo?: string;
   label: string;
   color: string;
 }) {
@@ -217,7 +224,10 @@ function ChartPill({
         whiteSpace: "nowrap",
       }}
     >
-      {icon && <i className={`fas ${icon}`} style={{ fontSize: 11 }} aria-hidden="true" />}
+      {logo
+        ? <img src={logo} width={13} height={13} alt="" aria-hidden="true" style={{ display: "block" }} />
+        : icon && <i className={`fas ${icon}`} style={{ fontSize: 11 }} aria-hidden="true" />
+      }
       {label}
     </div>
   );
@@ -384,11 +394,13 @@ export default function AboutPage() {
         }}
       >
         {[
-          { href: "#medallion", label: "Medallion" },
-          { href: "#capabilities", label: "Capabilities" },
-          { href: "#stack", label: "Tech Stack" },
           { href: "#architecture", label: "Architecture" },
-          { href: "#start", label: "Get Started" },
+          { href: "#medallion",  label: "Medallion" },
+          { href: "#capabilities", label: "Capabilities" },
+          { href: "#stack",      label: "Tech Stack" },
+          { href: "#journeys",   label: "User Journeys" },
+          { href: "#identity",   label: "Identity & RBAC" },
+          { href: "#start",      label: "Get Started" },
         ].map(({ href, label }) => (
           <a
             key={href}
@@ -423,20 +435,20 @@ export default function AboutPage() {
       <section
         style={{
           background: `linear-gradient(135deg, ${primaryColor} 0%, #0f1e2e 100%)`,
-          padding: "96px 1.5rem 80px",
+          padding: "56px 1.5rem 48px",
           textAlign: "center",
         }}
       >
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
-            <ForgeLogo size={96} animate="none" showName={true} color="#fff" />
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
+            <ForgeLogo size={80} animate="none" showName={true} color="#fff" />
           </div>
           <h1
             style={{
-              fontSize: "clamp(1.2rem, 3vw, 1.65rem)",
+              fontSize: "clamp(1.1rem, 3vw, 1.5rem)",
               fontWeight: 700,
               color: "rgba(255,255,255,0.92)",
-              marginBottom: 12,
+              marginBottom: 8,
               letterSpacing: "-0.01em",
             }}
           >
@@ -444,10 +456,10 @@ export default function AboutPage() {
           </h1>
           <p
             style={{
-              fontSize: "1.05rem",
+              fontSize: "1rem",
               color: "rgba(255,255,255,0.65)",
-              marginBottom: 36,
-              lineHeight: 1.7,
+              marginBottom: 24,
+              lineHeight: 1.65,
             }}
           >
             Scalable compute. Reliable orchestration. Governed analytics.
@@ -507,9 +519,385 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* ── 2. Medallion Architecture ────────────────────────────────────────── */}
+      {/* ── 2. Architecture ──────────────────────────────────────────────────── */}
+      <Section
+        id="architecture"
+        bg="linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)"
+      >
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <SectionLabel text="Architecture" color={primaryColor} />
+          <SectionHeading center>Platform Architecture</SectionHeading>
+          <SectionSub center>
+            Dual AKS clusters on Azure CNI Overlay. Workload Identity (OIDC) on every pod. All data plane services behind private endpoints.
+          </SectionSub>
+        </div>
+
+        {/* ── Platform architecture card (native React — mirrors architecture.html) ── */}
+        <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 14, overflow: "hidden", marginBottom: 28, boxShadow: "0 4px 24px rgba(15,23,42,0.07)" }}>
+
+          {/* Card body */}
+          <div style={{ padding: 22 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+              {/* Identity band */}
+              <div style={{ borderRadius: 8, padding: "11px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", background: "#eff6ff", border: "1.5px dashed #0078d4" }}>
+                <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1.5px", textTransform: "uppercase", color: "#0078d4", minWidth: 90, whiteSpace: "nowrap" }}>Azure AD · Identity</span>
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  {["🔐 Workload Identity · OIDC Federation", "👥 AAD Groups → AKS RBAC", "id-forge-spark", "id-forge-trino", "id-forge-airflow", "id-forge-hms", "id-forge-dq", "id-forge-portal"].map(chip => (
+                    <span key={chip} style={{ borderRadius: 20, padding: "3px 9px", fontSize: 10, fontWeight: 500, background: "#fff", border: "1px solid #bfdbfe", color: "#1e40af", whiteSpace: "nowrap" }}>{chip}</span>
+                  ))}
+                </div>
+              </div>
+
+              {/* 7-column cluster row */}
+              <div style={{ display: "grid", gridTemplateColumns: "120px 44px 1fr 44px 1fr 44px 165px", gap: 0, alignItems: "stretch" }}>
+
+                {/* Client zone */}
+                <div style={{ borderRadius: 8, padding: 12, border: "1.5px solid #cbd5e1", background: "#fafafa", display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1.2px", textTransform: "uppercase", color: "#64748b" }}>
+                    Client<span style={{ display: "block", fontSize: 8.5, fontWeight: 400, letterSpacing: 0, textTransform: "none", opacity: 0.6, marginTop: 2 }}>External</span>
+                  </div>
+                  {[
+                    { name: "Browser",  meta: "AAD · HTTPS",      icon: "fa-globe",       color: "#0078d4" },
+                    { name: "Notebook", meta: "VS Code · Jupyter", icon: "fa-laptop-code", color: "#1d4ed8" },
+                    { name: "CLI",      meta: "kubectl · az",      icon: "fa-terminal",    color: "#374151" },
+                  ].map(s => (
+                    <div key={s.name} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 1px 2px rgba(0,0,0,.05)" }}>
+                      <div style={{ width: 26, height: 26, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: `${s.color}15` }}>
+                        <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 11 }} />
+                      </div>
+                      <div><div style={{ fontSize: 11, fontWeight: 600, color: "#1e293b" }}>{s.name}</div><div style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", marginTop: 1 }}>{s.meta}</div></div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Connector 1 */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: "0 2px" }}>
+                  <svg width="44" height="28" viewBox="0 0 44 28"><line x1="2" y1="14" x2="34" y2="14" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="3,2"/><polygon points="30,10 42,14 30,18" fill="#94a3b8"/></svg>
+                  <div style={{ fontSize: 8, color: "#374151", fontFamily: "monospace", textAlign: "center", fontWeight: 600 }}>HTTPS 443</div>
+                  <div style={{ fontSize: 8, color: "#374151", fontFamily: "monospace", textAlign: "center", marginTop: 6, fontWeight: 600 }}>gRPC 15002</div>
+                </div>
+
+                {/* Orchestration zone */}
+                <div style={{ borderRadius: 8, padding: 12, border: "1.5px solid #16a34a", background: "#f0fdf4", display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1.2px", textTransform: "uppercase", color: "#15803d" }}>
+                    AKS Orchestration<span style={{ display: "block", fontSize: 8.5, fontWeight: 400, letterSpacing: 0, textTransform: "none", opacity: 0.6, marginTop: 2 }}>aks-forge-orchestration · 10.2.0.0/16 · pods 10.101.0.0/16</span>
+                  </div>
+                  {[
+                    { name: "Portal API", meta: "portal ns · HTTPS 443",  icon: "fa-window-maximize", color: "#107c10", tag: "PUBLIC",   tagBg: "#dcfce7", tagFg: "#15803d" },
+                    { name: "Airflow",    meta: "airflow ns · HTTP 8080",  icon: "fa-calendar-check",  logo: "https://cdn.simpleicons.org/apacheairflow/017cee", color: "#017cee", tag: "PUBLIC",   tagBg: "#dcfce7", tagFg: "#15803d" },
+                    { name: "DQ Runner", meta: "dq ns · internal",         icon: "fa-shield-halved",   color: "#15803d", tag: "INTERNAL", tagBg: "#f1f5f9", tagFg: "#475569" },
+                  ].map(s => (
+                    <div key={s.name} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 1px 2px rgba(0,0,0,.05)" }}>
+                      <div style={{ width: 26, height: 26, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: `${s.color}15` }}>
+                        {"logo" in s && s.logo
+                          ? <img src={s.logo} width={14} height={14} alt="" style={{ display: "block" }} />
+                          : <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 11 }} />}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 11, fontWeight: 600, color: "#1e293b" }}>{s.name}</div><div style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", marginTop: 1 }}>{s.meta}</div></div>
+                      <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 4, whiteSpace: "nowrap", flexShrink: 0, background: s.tagBg, color: s.tagFg }}>{s.tag}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Connector 2 */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: "0 2px" }}>
+                  <svg width="44" height="28" viewBox="0 0 44 28"><line x1="2" y1="14" x2="34" y2="14" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="3,2"/><polygon points="30,10 42,14 30,18" fill="#94a3b8"/></svg>
+                  <div style={{ fontSize: 8, color: "#374151", fontFamily: "monospace", textAlign: "center", fontWeight: 600 }}>HTTP 8080</div>
+                  <div style={{ fontSize: 8, color: "#374151", fontFamily: "monospace", textAlign: "center", marginTop: 6, fontWeight: 600 }}>gRPC 15002</div>
+                </div>
+
+                {/* Compute zone */}
+                <div style={{ borderRadius: 8, padding: 12, border: "1.5px solid #ea580c", background: "#fff7ed", display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1.2px", textTransform: "uppercase", color: "#c2410c" }}>
+                    AKS Compute<span style={{ display: "block", fontSize: 8.5, fontWeight: 400, letterSpacing: 0, textTransform: "none", opacity: 0.6, marginTop: 2 }}>aks-forge-compute · 10.1.0.0/16 · pods 10.100.0.0/16</span>
+                  </div>
+                  {[
+                    { name: "Spark Connect",   meta: "spark-system · gRPC 15002",   icon: "fa-bolt",          color: "#e25a1c", tag: "PUBLIC",   tagBg: "#fef3c7", tagFg: "#92400e" },
+                    { name: "Spark Executors", meta: "spark-jobs · autoscale",       icon: "fa-bolt",          color: "#c2410c", tag: "DYNAMIC",  tagBg: "#f1f5f9", tagFg: "#475569" },
+                    { name: "Trino",           meta: "trino ns · HTTP 8080",         icon: "fa-table-columns", logo: "https://cdn.simpleicons.org/trino/b91c1c", color: "#b91c1c", tag: "PUBLIC",   tagBg: "#fef3c7", tagFg: "#92400e" },
+                    { name: "Hive Metastore",  meta: "hive-metastore · Thrift 9083", icon: "fa-sitemap",       color: "#7c3aed", tag: "INTERNAL", tagBg: "#f1f5f9", tagFg: "#475569" },
+                  ].map(s => (
+                    <div key={s.name} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 1px 2px rgba(0,0,0,.05)" }}>
+                      <div style={{ width: 26, height: 26, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: `${s.color}15` }}>
+                        {"logo" in s && s.logo
+                          ? <img src={s.logo} width={14} height={14} alt="" style={{ display: "block" }} />
+                          : <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 11 }} />}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 11, fontWeight: 600, color: "#1e293b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name}</div><div style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", marginTop: 1 }}>{s.meta}</div></div>
+                      <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 4, whiteSpace: "nowrap", flexShrink: 0, background: s.tagBg, color: s.tagFg }}>{s.tag}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Connector 3 */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, padding: "0 2px" }}>
+                  <svg width="44" height="28" viewBox="0 0 44 28"><line x1="2" y1="14" x2="34" y2="14" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="3,2"/><polygon points="30,10 42,14 30,18" fill="#94a3b8"/></svg>
+                  <div style={{ fontSize: 8, color: "#374151", fontFamily: "monospace", textAlign: "center", fontWeight: 600 }}>abfss://</div>
+                  <div style={{ fontSize: 8, color: "#374151", fontFamily: "monospace", textAlign: "center", marginTop: 6, fontWeight: 600 }}>PE · RBAC</div>
+                </div>
+
+                {/* Data zone */}
+                <div style={{ borderRadius: 8, padding: 12, border: "1.5px solid #0891b2", background: "#f0fdfa", display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1.2px", textTransform: "uppercase", color: "#0e7490" }}>
+                    Data & Secrets<span style={{ display: "block", fontSize: 8.5, fontWeight: 400, letterSpacing: 0, textTransform: "none", opacity: 0.6, marginTop: 2 }}>Private endpoints</span>
+                  </div>
+
+                  {/* ADLS Gen2 — special tile with layer chips */}
+                  <div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", boxShadow: "0 1px 2px rgba(0,0,0,.05)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                      <div style={{ width: 26, height: 26, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: "#0284c715" }}>
+                        <i className="fas fa-database" style={{ color: "#0284c7", fontSize: 11 }} />
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "#1e293b" }}>ADLS Gen2</div>
+                      <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 4, background: "#e0f2fe", color: "#0369a1", marginLeft: "auto", whiteSpace: "nowrap" }}>PE</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap", paddingLeft: 34 }}>
+                      {[
+                        { label: "bronze", color: "#b45309", bg: "#fef3c7" },
+                        { label: "silver", color: "#0369a1", bg: "#e0f2fe" },
+                        { label: "gold",   color: "#059669", bg: "#d1fae5" },
+                        { label: "code",   color: "#7c3aed", bg: "#ede9fe" },
+                        { label: "logs",   color: "#64748b", bg: "#f1f5f9" },
+                      ].map(c => (
+                        <span key={c.label} style={{ fontSize: 9, fontWeight: 600, padding: "1px 6px", borderRadius: 10, background: c.bg, color: c.color }}>{c.label}/</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Key Vault, PostgreSQL, ACR */}
+                  {[
+                    { name: "Key Vault",  meta: "RBAC · soft-delete · PE", icon: "fa-key",  color: "#d97706", tag: "HSM",  tagBg: "#fef3c7", tagFg: "#92400e" },
+                    { name: "PostgreSQL", meta: "HMS · portal prefs",       icon: "fa-circle-dot", color: "#6366f1", tag: "VNet", tagBg: "#ede9fe", tagFg: "#5b21b6" },
+                    { name: "ACR",        meta: "forgeacr · Defender scan", icon: "fa-box",  color: "#0078d4", tag: "PE",   tagBg: "#e0f2fe", tagFg: "#0369a1" },
+                  ].map(s => (
+                    <div key={s.name} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 8, padding: "7px 9px", display: "flex", alignItems: "center", gap: 8, boxShadow: "0 1px 2px rgba(0,0,0,.05)" }}>
+                      <div style={{ width: 26, height: 26, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: `${s.color}15` }}>
+                        <i className={`fas ${s.icon}`} style={{ color: s.color, fontSize: 11 }} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: "#1e293b" }}>{s.name}</div>
+                        <div style={{ fontSize: 9, color: "#94a3b8", fontFamily: "monospace", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.meta}</div>
+                      </div>
+                      <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 4, background: s.tagBg, color: s.tagFg, flexShrink: 0 }}>{s.tag}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Cross-zone connections */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginTop: 4 }}>
+                {[
+                  { title: "Portal → Compute",       rows: [["Portal API",      "Trino",        "HTTP 8080"]] },
+                  { title: "Airflow → Compute",       rows: [["Airflow Worker",  "Spark Connect","gRPC 15002"], ["Airflow Worker", "Trino", "HTTP 8080"]] },
+                  { title: "Compute → Metadata",      rows: [["Trino / Spark",   "HMS",          "Thrift 9083"], ["HMS", "PostgreSQL", "JDBC 5432"]] },
+                  { title: "All workloads → Secrets", rows: [["Any pod",         "Azure AD",     "OIDC"], ["Any pod", "Key Vault", "HTTPS 443 PE"]] },
+                ].map(card => (
+                  <div key={card.title} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1px", textTransform: "uppercase", color: "#94a3b8", marginBottom: 7 }}>{card.title}</div>
+                    {card.rows.map(([from, to, proto]) => (
+                      <div key={from + to} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, padding: "3px 0", borderBottom: "1px solid #f1f5f9" }}>
+                        <span style={{ fontWeight: 600, color: "#1e293b", whiteSpace: "nowrap" }}>{from}</span>
+                        <span style={{ color: "#94a3b8", fontSize: 9 }}>→</span>
+                        <span style={{ fontWeight: 600, color: "#1e293b", whiteSpace: "nowrap" }}>{to}</span>
+                        <span style={{ fontFamily: "monospace", fontSize: 9, color: "#94a3b8", marginLeft: "auto" }}>{proto}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+
+              {/* Networking band */}
+              <div style={{ borderRadius: 8, padding: "11px 16px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", background: "#f5f0ff", border: "1.5px solid #7c3aed" }}>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "1.5px", textTransform: "uppercase", color: "#7c3aed", minWidth: 90 }}>
+                  Networking
+                  <div style={{ fontSize: 8.5, fontWeight: 400, letterSpacing: 0, textTransform: "none", opacity: 0.65, marginTop: 2 }}>rg-forge-[alias]-dev · VNet 10.0.0.0/12</div>
+                </div>
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                  {["NSG Compute 10.1.0.0/16", "NSG Orchestration 10.2.0.0/16", "NSG Private Endpoints 10.3.0.0/24", "NSG AppGW 10.4.0.0/24", "Private DNS zones", "Platform Log Analytics", "Route Tables"].map(chip => (
+                    <span key={chip} style={{ borderRadius: 8, padding: "3px 9px", fontSize: 10, fontWeight: 500, background: "#fff", border: "1px solid #ddd6fe", color: "#5b21b6", whiteSpace: "nowrap" }}>{chip}</span>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+
+        {/* ── Dual-cluster design card — dashed border ── */}
+        <div style={{
+          position: "relative",
+          border: "1.5px dashed rgba(30,58,95,0.2)",
+          borderRadius: 16,
+          padding: "32px 24px 20px",
+          marginTop: 16,
+          marginBottom: 16,
+          background: "#fff",
+          boxShadow: "0 2px 20px rgba(15,23,42,0.04)",
+        }}>
+          {/* Platform label */}
+          <div style={{
+            position: "absolute", top: -11, left: 20,
+            background: "linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)",
+            padding: "0 12px", fontSize: 10, fontWeight: 800,
+            letterSpacing: "0.12em", color: primaryColor, textTransform: "uppercase",
+          }}>▲ FORGE PLATFORM</div>
+
+          {/* Cluster row: Orch | VNet Peering | Compute */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 52px 1fr", alignItems: "stretch", marginBottom: 0 }}>
+
+            {/* Orchestration cluster */}
+            <div style={{ border: "1px solid #bbf7d0", borderTop: "3px solid #16a34a", borderRadius: "10px 0 0 10px", padding: "14px 16px", background: "white" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: "#16a34a12", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <i className="fas fa-calendar-check" style={{ color: "#16a34a", fontSize: 11 }} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 12.5, color: "#0f172a" }}>Orchestration Cluster</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 9, color: "#94a3b8" }}>aks-forge-orch · 10.2.0.0/16 · systempool + workerpool (2–20)</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {[
+                  { label: "Airflow 3.1.8 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check", logo: "https://cdn.simpleicons.org/apacheairflow/017cee" },
+                  { label: "OpenLineage via Airflow DAG tags", color: "#0ea5e9", icon: "fa-share-nodes" },
+                  { label: "Azure Monitor + Managed Grafana", color: "#e6522c", icon: "fa-chart-line" },
+                  { label: "Developer Portal (FastAPI + Next.js)", color: "#059669", icon: "fa-window-maximize" },
+                ].map(c => (
+                  <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 8px", borderRadius: 6, background: `${c.color}08`, borderLeft: `3px solid ${c.color}` }}>
+                    {"logo" in c && c.logo
+                      ? <img src={c.logo} width={12} height={12} alt="" style={{ display: "block", flexShrink: 0 }} />
+                      : <i className={`fas ${c.icon}`} style={{ color: c.color, fontSize: 10, flexShrink: 0 }} />}
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: "#1e293b" }}>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* VNet Peering connector */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "white", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0", gap: 3 }}>
+              <i className="fas fa-right-left" style={{ color: "#94a3b8", fontSize: 11 }} />
+              <span style={{ fontSize: 8, color: "#94a3b8", fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>VNet<br/>Peering</span>
+            </div>
+
+            {/* Compute cluster */}
+            <div style={{ border: "1px solid #fed7aa", borderTop: "3px solid #e25a1c", borderRadius: "0 10px 10px 0", padding: "14px 16px", background: "white" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <div style={{ width: 24, height: 24, borderRadius: 6, background: "#e25a1c12", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <i className="fas fa-bolt" style={{ color: "#e25a1c", fontSize: 11 }} />
+                </div>
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 12.5, color: "#0f172a" }}>Compute Cluster</div>
+                  <div style={{ fontFamily: "monospace", fontSize: 9, color: "#94a3b8" }}>aks-forge-compute · 10.1.0.0/16 · systempool + sparkpool (0–20) + trinopool (0–10)</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                {[
+                  { label: "Spark Operator 2.5.0 + Spark Connect :15002", color: "#e25a1c", icon: "fa-bolt" },
+                  { label: "Spark Executors (spark-jobs ns · autoscale to 0)", color: "#f97316", icon: "fa-bolt" },
+                  { label: "Trino 480 (coordinator + workers :8080)", color: "#dd00a1", icon: "fa-table-columns", logo: "https://cdn.simpleicons.org/trino/dd00a1" },
+                  { label: "Hive Metastore 4.0.0 (Thrift :9083)", color: "#b45309", icon: "fa-sitemap" },
+                ].map(c => (
+                  <div key={c.label} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 8px", borderRadius: 6, background: `${c.color}08`, borderLeft: `3px solid ${c.color}` }}>
+                    {"logo" in c && c.logo
+                      ? <img src={c.logo} width={12} height={12} alt="" style={{ display: "block", flexShrink: 0 }} />
+                      : <i className={`fas ${c.icon}`} style={{ color: c.color, fontSize: 10, flexShrink: 0 }} />}
+                    <span style={{ fontSize: 11.5, fontWeight: 600, color: "#1e293b" }}>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* ── Data flow diagram ── */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8", marginBottom: 16 }}>
+            End-to-end data flow
+          </div>
+          <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 0, minWidth: 780 }}>
+              {[
+                { label: "Source", sub: "CSV · Parquet · API · DB", color: "#64748b", icon: "fa-database", detail: "External system" },
+                { label: "Bronze", sub: "Append-only ingestion", color: "#b45309", icon: "fa-inbox", detail: "Parquet / native format · Immutable" },
+                { label: "DQ Check", sub: "Schema · Content · Volume · Freshness", color: "#f59e0b", icon: "fa-shield-halved", detail: "YAML rulesets run by DQ SDK" },
+                { label: "Silver", sub: "Cleaned & validated", color: "#0284c7", icon: "fa-filter", detail: "Delta Lake · Schema enforced" },
+                { label: "DQ Gate", sub: "CRITICAL blocks", color: "#dc2626", icon: "fa-circle-stop", detail: "Pipeline halts on CRITICAL failure" },
+                { label: "Gold", sub: "Governed & aggregated", color: "#059669", icon: "fa-star", detail: "Delta Lake · SLA-governed · Optimised" },
+                { label: "Query", sub: "Trino · Portal · LoomX", color: primaryColor, icon: "fa-magnifying-glass", detail: "Federated SQL · APIs · Analytics" },
+              ].map((step, i) => (
+                <React.Fragment key={step.label}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 96, flex: 1 }}>
+                    <div style={{
+                      width: "100%", padding: "10px 8px", borderRadius: 10,
+                      background: "white", border: `1px solid ${step.color}30`,
+                      borderTop: `3px solid ${step.color}`,
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
+                    }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 7, background: `${step.color}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <i className={`fas ${step.icon}`} style={{ color: step.color, fontSize: 12 }} />
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: 12, color: "#0f172a", textAlign: "center" }}>{step.label}</div>
+                      <div style={{ fontSize: 10, color: "#64748b", textAlign: "center", lineHeight: 1.3 }}>{step.sub}</div>
+                    </div>
+                    <div style={{ fontSize: 9.5, color: "#94a3b8", textAlign: "center", marginTop: 6, lineHeight: 1.3, maxWidth: 90 }}>
+                      {step.detail}
+                    </div>
+                  </div>
+                  {i < 6 && (
+                    <div style={{ display: "flex", alignItems: "center", paddingTop: 16, flexShrink: 0, width: 24, justifyContent: "center" }}>
+                      <i className="fas fa-arrow-right" style={{ color: "#cbd5e1", fontSize: 12 }} />
+                    </div>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+          </div>
+
+          {/* Lineage strip */}
+          <div style={{
+            marginTop: 16,
+            padding: "8px 16px",
+            background: "#7c3aed08",
+            border: "1px solid #7c3aed20",
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}>
+            <i className="fas fa-share-nodes" style={{ color: "#7c3aed", fontSize: 13, flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: "#334155" }}>
+              <strong>OpenLineage</strong> events emitted at every Spark job and Airflow task execution →
+              lineage graph derived from <strong>Airflow DAG tags</strong> (source: / output:) → upstream/downstream impact analysis in the Lineage Explorer
+            </div>
+          </div>
+          {/* Airflow orchestration strip */}
+          <div style={{
+            marginTop: 8,
+            padding: "8px 16px",
+            background: "#017cee08",
+            border: "1px solid #017cee20",
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}>
+            <i className="fas fa-calendar-check" style={{ color: "#017cee", fontSize: 13, flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: "#334155" }}>
+              <strong>Airflow 3.1.8</strong> orchestrates every Bronze → Silver → Gold transition via DAGs.
+              Each task runs as an isolated Kubernetes pod (KubernetesExecutor). DAG files are deployed to ADLS code/ container via sync-jobs.sh and picked up by Airflow automatically.
+            </div>
+          </div>
+        </div>
+
+
+      </Section>
+
+      {/* ── 3. Medallion Architecture ────────────────────────────────────────── */}
       <Section id="medallion" bg="#fff">
-        <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
           <SectionLabel text="Medallion Architecture" color={primaryColor} />
           <SectionHeading center>Four layers. One truth.</SectionHeading>
           <SectionSub center>
@@ -619,12 +1007,12 @@ export default function AboutPage() {
         </p>
       </Section>
 
-      {/* ── 3. Capabilities ──────────────────────────────────────────────────── */}
+      {/* ── 4. Capabilities ──────────────────────────────────────────────────── */}
       <Section
         id="capabilities"
         bg="linear-gradient(135deg, #f0f6ff 0%, #eef2f7 100%)"
       >
-        <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
           <SectionLabel text="Capabilities" color={primaryColor} />
           <SectionHeading center>Everything your data pipelines need</SectionHeading>
           <SectionSub center>
@@ -649,12 +1037,14 @@ export default function AboutPage() {
           />
           <FeatureCard
             icon="fa-table"
+            logo="https://cdn.simpleicons.org/trino/dd00a1"
             color="#dd00a1"
             title="Trino 480"
             body="Federated SQL across Delta Lake, Iceberg, and external data sources. Scales horizontally on demand with per-query cost tracking."
           />
           <FeatureCard
             icon="fa-calendar-check"
+            logo="https://cdn.simpleicons.org/apacheairflow/017cee"
             color="#017cee"
             title="Airflow 3.1.8"
             body="KubernetesExecutor for isolated task pods. DAG files are deployed to ADLS and picked up by Airflow automatically — no manual upload."
@@ -669,7 +1059,7 @@ export default function AboutPage() {
             icon="fa-share-nodes"
             color="#7c3aed"
             title="Lineage Tracking"
-            body="OpenLineage events captured for every job. Column-level lineage and upstream/downstream impact analysis via Microsoft Purview."
+            body="OpenLineage events captured for every job. Upstream/downstream impact analysis via Airflow DAG source/output tags."
           />
           <FeatureCard
             icon="fa-chart-line"
@@ -692,9 +1082,9 @@ export default function AboutPage() {
         </div>
       </Section>
 
-      {/* ── 4. Tech Stack ────────────────────────────────────────────────────── */}
+      {/* ── 5. Tech Stack ────────────────────────────────────────────────────── */}
       <Section id="stack" bg="#fff">
-        <div style={{ textAlign: "center", marginBottom: 48 }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
           <SectionLabel text="Technology Stack" color={primaryColor} />
           <SectionHeading center>Built on best-in-class open source</SectionHeading>
           <SectionSub center>
@@ -722,8 +1112,8 @@ export default function AboutPage() {
             <ChartPill icon="fa-bolt" label="Spark 4.1.1" color="#e25a1c" />
             <ChartPill icon="fa-layer-group" label="Delta Lake 4.1.0" color="#003366" />
             <ChartPill icon="fa-snowflake" label="Iceberg 1.10.1" color="#2874A6" />
-            <ChartPill icon="fa-table" label="Trino 480" color="#dd00a1" />
-            <ChartPill icon="fa-calendar-check" label="Airflow 3.1.8" color="#017cee" />
+            <ChartPill logo="https://cdn.simpleicons.org/trino/dd00a1" label="Trino 480" color="#dd00a1" />
+            <ChartPill logo="https://cdn.simpleicons.org/apacheairflow/017cee" label="Airflow 3.1.8" color="#017cee" />
           </div>
         </div>
 
@@ -743,7 +1133,7 @@ export default function AboutPage() {
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             <ChartPill icon="fa-share-nodes" label="OpenLineage" color="#f97316" />
-            <ChartPill icon="fa-diagram-project" label="Microsoft Purview" color="#0078d4" />
+            <ChartPill icon="fa-share-nodes" label="OpenLineage" color="#0ea5e9" />
             <ChartPill icon="fa-chart-line" label="Azure Monitor" color="#e6522c" />
             <ChartPill icon="fa-chart-bar" label="Azure Managed Grafana" color="#f46800" />
             <ChartPill icon="fa-file-lines" label="Log Analytics" color="#0078d4" />
@@ -773,462 +1163,246 @@ export default function AboutPage() {
         </div>
       </Section>
 
-      {/* ── 5. Architecture ──────────────────────────────────────────────────── */}
-      <Section
-        id="architecture"
-        bg="linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)"
-      >
+
+      {/* ── 6. User Journeys ─────────────────────────────────────────────────── */}
+      <Section id="journeys" bg="#fff">
         <div style={{ marginBottom: 40 }}>
-          <SectionLabel text="Architecture" color={primaryColor} />
-          <SectionHeading>Dual-cluster design</SectionHeading>
+          <SectionLabel text="User Journeys" color={primaryColor} />
+          <SectionHeading>End-to-end flows</SectionHeading>
+          <SectionSub>Every primary use case, traced through the platform.</SectionSub>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(480px, 1fr))", gap: 18 }}>
+
+          {/* Journey 1 */}
+          {[
+            {
+              num: "1", title: "Run a SQL Query via Portal", color: "#0078d4",
+              desc: "Via Portal — no direct cluster access needed. Results back to browser.",
+              steps: [
+                { actor: "User opens Portal → Datasets or query view", detail: "Authenticates via Azure AD (MSAL loginPopup)", tag: "HTTPS 443 · Public LB · Orch cluster" },
+                { actor: "Portal API routes query to Trino Coordinator", detail: "Cross-VNet from orch subnet → compute subnet", tag: "HTTP 8080 · 10.2.x.x → 10.1.x.x" },
+                { actor: "Coordinator distributes to Worker pods", detail: "Parallel execution — CNI Overlay pod networking", tag: "Internal · pod IPs 10.100.x.x" },
+                { actor: "Workers resolve table schema via HMS", detail: "Gets table location on ADLS Gen2", tag: "Thrift 9083 · hive-metastore ns" },
+                { actor: "Workers read data from ADLS Gen2", detail: "id-forge-trino — Reader on bronze / silver / gold", tag: "abfss:// · Private Endpoint" },
+              ],
+              ok: "Results returned to browser via Portal",
+            },
+            {
+              num: "2", title: "Run a Dev Notebook", color: "#ea580c",
+              desc: "Direct Spark Connect session from VS Code or Jupyter. No Portal needed.",
+              steps: [
+                { actor: "Engineer connects from VS Code / Jupyter", detail: "forge_connect() resolves sc://{host}:15002", tag: "gRPC 15002 · Public LB · Compute cluster" },
+                { actor: "Spark Connect creates a Driver pod", detail: "Session in spark-system ns · OIDC → id-forge-spark", tag: "spark-system ns · K8s RBAC" },
+                { actor: "Driver launches Executor pods on demand", detail: "K8s Role/RoleBinding — driver creates pods in spark-jobs", tag: "spark-jobs ns · autoscale" },
+                { actor: "Executors resolve schema via HMS", detail: "Hive catalog for all table references", tag: "Thrift 9083 · internal" },
+                { actor: "Executors read / write ADLS Gen2", detail: "id-forge-spark — Contributor on all layers", tag: "abfss:// · Private Endpoint · OIDC" },
+              ],
+              ok: "DataFrame results streamed to notebook over gRPC",
+            },
+            {
+              num: "3", title: "Deploy & Schedule a Pipeline", color: "#16a34a",
+              desc: "All pipelines are manifest-driven — generated, deployed, and live in seconds.",
+              steps: [
+                { actor: "Engineer writes a .forge.ts manifest", detail: "Defines layer, schedule, DQ rules, output schema", tag: "forge generate → DAG + Spark job + DQ YAML" },
+                { actor: "CI/CD runs sync-jobs.sh", detail: "Uploads DAG + Spark job + DQ rules to ADLS code/", tag: "ADLS code/ · Airflow ADLS sync" },
+                { actor: "Airflow picks up the DAG automatically", detail: "No manual upload — DAG live within seconds", tag: "Airflow 3.1.8 · KubernetesExecutor" },
+                { actor: "Airflow Worker executes SparkKubernetesOperator", detail: "Submits SparkApplication CRD → compute cluster", tag: "SparkApplication · spark-jobs ns" },
+                { actor: "DQGateOperator runs quality checks", detail: "CRITICAL violations block pipeline progression", tag: "DQ gate · Spark · ADLS all layers" },
+              ],
+              ok: "Pipeline live — lineage tracked via Airflow DAG tags",
+            },
+            {
+              num: "4", title: "Explore Data Lineage", color: "#d97706",
+              desc: "Trace data from source to gold. Full provenance via Airflow DAG source/output tags.",
+              steps: [
+                { actor: "Engineer opens Portal → Lineage tab", detail: "Authenticates via Azure AD — no cluster access needed", tag: "HTTPS 443 · Public LB · Orch cluster" },
+                { actor: "Portal API queries Airflow DAGs for source/output tags", detail: "id-forge-portal → Airflow REST API", tag: "HTTPS · Airflow API" },
+                { actor: "BFS walk builds upstream / downstream lineage graph", detail: "source: and output: DAG tags drive the graph — no external catalog needed", tag: "Airflow DAG tags · Trino HMS" },
+                { actor: "Engineer traces data: bronze → silver → gold", detail: "Each hop links to the pipeline that produced it", tag: "Interactive graph · DAG link · timestamp" },
+              ],
+              ok: "Full data provenance — source to consumer",
+            },
+          ].map((flow) => (
+            <div key={flow.num} style={{ border: "1px solid #e2e8f0", borderRadius: 12, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+              <div style={{
+                padding: "12px 16px", borderBottom: "1px solid #e2e8f0",
+                background: `${flow.color}08`, display: "flex", alignItems: "flex-start", gap: 10,
+              }}>
+                <div style={{
+                  width: 26, height: 26, borderRadius: "50%", background: flow.color,
+                  color: "#fff", fontWeight: 800, fontSize: 12,
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1,
+                }}>
+                  {flow.num}
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: flow.color }}>{flow.title}</div>
+                  <div style={{ fontSize: 11, color: "#64748b", marginTop: 3 }}>{flow.desc}</div>
+                </div>
+              </div>
+              <div style={{ padding: 16, flex: 1 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                  {flow.steps.map((step, i) => (
+                    <div key={i} style={{ display: "flex", gap: 11, alignItems: "flex-start", position: "relative", marginTop: i > 0 ? 8 : 0 }}>
+                      {i < flow.steps.length - 1 && (
+                        <div style={{ position: "absolute", left: 13, top: 28, bottom: -4, width: 2, background: "#e2e8f0" }} />
+                      )}
+                      <div style={{
+                        width: 26, height: 26, borderRadius: "50%", border: `2px solid ${flow.color}`,
+                        background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 10, fontWeight: 700, color: flow.color, flexShrink: 0, zIndex: 1,
+                      }}>
+                        {i + 1}
+                      </div>
+                      <div style={{ paddingBottom: 4, flex: 1 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "#0f172a" }}>{step.actor}</div>
+                        <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{step.detail}</div>
+                        <span style={{
+                          display: "inline-block", fontSize: 9, fontFamily: "monospace",
+                          background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 4,
+                          padding: "1px 6px", color: "#64748b", marginTop: 4,
+                        }}>{step.tag}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ display: "flex", gap: 11, alignItems: "flex-start", marginTop: 8 }}>
+                    <div style={{
+                      width: 26, height: 26, borderRadius: "50%", border: `2px solid #16a34a`,
+                      background: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 12, color: "#16a34a", flexShrink: 0,
+                    }}>✓</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#16a34a", paddingTop: 5 }}>{flow.ok}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      {/* ── 7. Identity & RBAC ───────────────────────────────────────────────── */}
+      <Section id="identity" bg="linear-gradient(135deg, #f0f6ff 0%, #eef2f7 100%)">
+        <div style={{ marginBottom: 40 }}>
+          <SectionLabel text="Identity & RBAC" color={primaryColor} />
+          <SectionHeading>Least-privilege workload identities</SectionHeading>
           <SectionSub>
-            Compute and orchestration are separated into two independent AKS
-            clusters — each scales, upgrades, and fails independently.
+            Each workload has a dedicated Azure Managed Identity with exactly the permissions it needs.
+            No shared credentials. No long-lived secrets. OIDC federation throughout.
           </SectionSub>
         </div>
 
-        {/* ── Main platform overview diagram ── */}
-        <div style={{
-          border: `2px dashed ${primaryColor}35`,
-          borderRadius: 18,
-          padding: "20px 20px 16px",
-          background: `${primaryColor}04`,
-          marginBottom: 40,
-          position: "relative",
-        }}>
-          {/* Platform label */}
-          <div style={{
-            position: "absolute", top: -11, left: 20,
-            background: "linear-gradient(135deg, #f8faff 0%, #eef2f7 100%)",
-            padding: "0 10px", fontSize: 11, fontWeight: 800,
-            letterSpacing: "0.1em", color: primaryColor, textTransform: "uppercase",
-          }}>
-            ▲ FORGE PLATFORM
-          </div>
-
-          {/* Two clusters */}
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 48px 1fr",
-            gap: 0,
-            alignItems: "stretch",
-            marginBottom: 12,
-          }}>
-            {/* Compute cluster */}
-            <div style={{
-              border: "1px solid #e25a1c30", borderTop: "3px solid #e25a1c",
-              borderRadius: "10px 0 0 10px", padding: "14px 16px", background: "white",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <div style={{ width: 26, height: 26, borderRadius: 6, background: "#e25a1c12", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <i className="fas fa-bolt" style={{ color: "#e25a1c", fontSize: 12 }} />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Compute Cluster</div>
-                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8" }}>forge-compute</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
-                {[
-                  { label: "Spark Operator 2.5.0", color: "#e25a1c", icon: "fa-bolt" },
-                  { label: "Spark Connect (gRPC 15002)", color: "#f97316", icon: "fa-plug" },
-                  { label: "Trino 480", color: "#dd00a1", icon: "fa-table-columns" },
-                  { label: "Hive Metastore 4.0.0", color: "#b45309", icon: "fa-sitemap" },
-                ].map(c => (
-                  <div key={c.label} style={{
-                    display: "flex", alignItems: "center", gap: 7,
-                    padding: "4px 8px", borderRadius: 6, fontSize: 12,
-                    background: `${c.color}0c`, borderLeft: `3px solid ${c.color}`,
-                  }}>
-                    <i className={`fas ${c.icon}`} style={{ color: c.color, fontSize: 11, flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, color: "#1e293b" }}>{c.label}</span>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+          {[
+            {
+              id: "id-forge-spark", cluster: "Compute cluster", color: "#e25a1c",
+              icon: "fa-bolt",
+              perms: [
+                { res: "ADLS bronze", level: "Contributor", kind: "write" },
+                { res: "ADLS silver", level: "Contributor", kind: "write" },
+                { res: "ADLS gold",   level: "Contributor", kind: "write" },
+                { res: "ADLS code",   level: "Contributor", kind: "write" },
+                { res: "Key Vault",   level: "Secrets User", kind: "kv" },
+              ],
+              note: "code/ covers checkpoints/ prefix",
+            },
+            {
+              id: "id-forge-trino", cluster: "Compute cluster", color: "#b91c1c",
+              icon: "fa-table",
+              perms: [
+                { res: "ADLS bronze", level: "Reader", kind: "read" },
+                { res: "ADLS silver", level: "Reader", kind: "read" },
+                { res: "ADLS gold",   level: "Reader", kind: "read" },
+                { res: "Key Vault",   level: "Secrets User", kind: "kv" },
+              ],
+              note: "No write access to any layer",
+            },
+            {
+              id: "id-forge-hms", cluster: "Compute cluster", color: "#7c3aed",
+              icon: "fa-sitemap",
+              perms: [
+                { res: "PostgreSQL",  level: "AAD Auth", kind: "db" },
+                { res: "Key Vault",   level: "Secrets User", kind: "kv" },
+              ],
+              note: "No ADLS access — metadata only",
+            },
+            {
+              id: "id-forge-airflow", cluster: "Orch cluster", color: "#017cee",
+              icon: "fa-calendar-check",
+              perms: [
+                { res: "ADLS airflow-logs", level: "Contributor", kind: "write" },
+                { res: "ADLS code",         level: "Reader",      kind: "read" },
+                { res: "Key Vault",         level: "Secrets User", kind: "kv" },
+              ],
+              note: "No data layer (bronze/silver/gold) access",
+            },
+            {
+              id: "id-forge-dq", cluster: "Compute cluster", color: "#15803d",
+              icon: "fa-shield-halved",
+              perms: [
+                { res: "ADLS bronze", level: "Contributor", kind: "write" },
+                { res: "ADLS silver", level: "Contributor", kind: "write" },
+                { res: "ADLS gold",   level: "Contributor", kind: "write" },
+                { res: "Key Vault",   level: "Secrets User", kind: "kv" },
+              ],
+              note: "Writes _dq/ output co-located with data",
+            },
+            {
+              id: "id-forge-portal", cluster: "Orch cluster", color: "#107c10",
+              icon: "fa-window-maximize",
+              perms: [
+                { res: "ADLS airflow-logs", level: "Reader",          kind: "read" },
+                { res: "ADLS code",         level: "Contributor",     kind: "write" },
+                { res: "Key Vault",         level: "Secrets Officer", kind: "kv" },
+              ],
+              note: "Datasets via Trino · DQ via Postgres · Lineage via Airflow DAG tags",
+            },
+          ].map((wi) => {
+            const kindColor = (k: string) =>
+              k === "write" ? { bg: "#fef3c7", fg: "#92400e", label: "Contributor" } :
+              k === "read"  ? { bg: "#dbeafe", fg: "#1e40af", label: "Reader" } :
+              k === "kv"    ? { bg: "#dcfce7", fg: "#15803d", label: wi.perms.find(p => p.res === "Key Vault" && p.kind === "kv")?.level ?? "KV" } :
+                              { bg: "#f3e8ff", fg: "#6b21a8", label: "AAD Auth" };
+            return (
+              <div key={wi.id} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{
+                  padding: "9px 13px", borderBottom: "1px solid #e2e8f0",
+                  background: "#fff", display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 6, background: `${wi.color}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <i className={`fas ${wi.icon}`} style={{ color: wi.color, fontSize: 13 }} />
                   </div>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {["systempool", "sparkpool (0–20)", "trinopool (0–10)"].map(p => (
-                  <span key={p} style={{ fontSize: 9.5, color: "#64748b", background: "#f1f5f9", padding: "2px 6px", borderRadius: 4, fontFamily: "monospace", border: "1px solid #e2e8f0" }}>{p}</span>
-                ))}
-              </div>
-            </div>
-
-            {/* Middle connector */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "white", borderTop: "1px solid #e2e8f0", borderBottom: "1px solid #e2e8f0", gap: 4 }}>
-              <i className="fas fa-right-left" style={{ color: "#94a3b8", fontSize: 12 }} />
-              <div style={{ fontSize: 8, color: "#94a3b8", textAlign: "center", fontWeight: 700, lineHeight: 1.3 }}>VNet<br/>Peering</div>
-            </div>
-
-            {/* Orchestration cluster */}
-            <div style={{
-              border: "1px solid #05966930", borderTop: "3px solid #059669",
-              borderRadius: "0 10px 10px 0", padding: "14px 16px", background: "white",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-                <div style={{ width: 26, height: 26, borderRadius: 6, background: "#05996912", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <i className="fas fa-calendar-check" style={{ color: "#059669", fontSize: 12 }} />
-                </div>
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>Orchestration Cluster</div>
-                  <div style={{ fontFamily: "monospace", fontSize: 10, color: "#94a3b8" }}>forge-orchestration</div>
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 12 }}>
-                {[
-                  { label: "Airflow 3.1.8 (KubernetesExecutor)", color: "#017cee", icon: "fa-calendar-check" },
-                  { label: "OpenLineage → Microsoft Purview", color: "#0078d4", icon: "fa-share-nodes" },
-                  { label: "Azure Monitor + Managed Grafana", color: "#e6522c", icon: "fa-chart-line" },
-                  { label: "Developer Portal (FastAPI + Next.js)", color: "#059669", icon: "fa-window-maximize" },
-                ].map(c => (
-                  <div key={c.label} style={{
-                    display: "flex", alignItems: "center", gap: 7,
-                    padding: "4px 8px", borderRadius: 6, fontSize: 12,
-                    background: `${c.color}0c`, borderLeft: `3px solid ${c.color}`,
-                  }}>
-                    <i className={`fas ${c.icon}`} style={{ color: c.color, fontSize: 11, flexShrink: 0 }} />
-                    <span style={{ fontWeight: 600, color: "#1e293b" }}>{c.label}</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: wi.color, fontFamily: "monospace" }}>{wi.id}</div>
+                    <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 1 }}>{wi.cluster}</div>
                   </div>
-                ))}
+                </div>
+                {wi.perms.map((p) => {
+                  const c = kindColor(p.kind);
+                  return (
+                    <div key={p.res} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 13px", borderBottom: "1px solid #f1f5f9", fontSize: 11 }}>
+                      <span style={{ fontFamily: "monospace", fontSize: 10, color: "#334155" }}>{p.res}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: c.bg, color: c.fg }}>{p.level}</span>
+                    </div>
+                  );
+                })}
+                <div style={{ padding: "5px 13px", fontSize: 10, color: "#94a3b8", fontStyle: "italic" }}>{wi.note}</div>
               </div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {["systempool", "workerpool (2–20)"].map(p => (
-                  <span key={p} style={{ fontSize: 9.5, color: "#64748b", background: "#f1f5f9", padding: "2px 6px", borderRadius: 4, fontFamily: "monospace", border: "1px solid #e2e8f0" }}>{p}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Down arrow */}
-          <div style={{ textAlign: "center", margin: "4px 0 8px", lineHeight: 1 }}>
-            <div style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <i className="fas fa-arrows-up-down" style={{ color: "#94a3b8", fontSize: 12 }} />
-              <span style={{ fontSize: 9, color: "#94a3b8", fontWeight: 700, letterSpacing: "0.05em" }}>PRIVATE ENDPOINTS</span>
-            </div>
-          </div>
-
-          {/* ADLS Gen2 */}
-          <div style={{
-            border: "1px solid #0078d430", borderTop: "3px solid #0078d4",
-            borderRadius: 10, padding: "12px 16px", background: "white",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <div style={{ width: 26, height: 26, borderRadius: 6, background: "#0078d412", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <i className="fas fa-hard-drive" style={{ color: "#0078d4", fontSize: 12 }} />
-              </div>
-              <div>
-                <span style={{ fontWeight: 800, fontSize: 13, color: "#0f172a" }}>ADLS Gen2 Lakehouse</span>
-                <span style={{ marginLeft: 8, fontSize: 10, color: "#94a3b8", fontFamily: "monospace" }}>Hierarchical Namespace · Private Endpoints</span>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              {[
-                { label: "bronze/", color: "#b45309", tag: "Raw · 2yr" },
-                { label: "silver/", color: "#0284c7", tag: "Delta · 2yr" },
-                { label: "gold/", color: "#059669", tag: "Delta · 2yr" },
-                { label: "code/", color: "#64748b", tag: "DAGs · artifacts" },
-                { label: "airflow-logs/", color: "#475569", tag: "Task logs" },
-              ].map((z, i) => (
-                <React.Fragment key={z.label}>
-                  {i > 0 && i < 3 && (
-                    <i className="fas fa-arrow-right" style={{ color: "#cbd5e1", fontSize: 10, flexShrink: 0 }} />
-                  )}
-                  {i === 3 && <span style={{ color: "#e2e8f0", margin: "0 4px" }}>·</span>}
-                  {i === 4 && <span style={{ color: "#e2e8f0", margin: "0 4px" }}>·</span>}
-                  <div style={{
-                    padding: "4px 10px", borderRadius: 6,
-                    background: `${z.color}0d`, border: `1px solid ${z.color}30`,
-                  }}>
-                    <span style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700, color: z.color }}>{z.label}</span>
-                    <span style={{ fontSize: 10, color: "#64748b", marginLeft: 5 }}>{z.tag}</span>
-                  </div>
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-
-          {/* Security footer */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, padding: "8px 12px", background: "rgba(15,23,42,0.04)", borderRadius: 8 }}>
-            <i className="fas fa-lock" style={{ color: "#64748b", fontSize: 11 }} />
-            <span style={{ fontSize: 11.5, color: "#64748b" }}>
-              All cluster API servers private · Portal and Trino served over HTTPS via ingress-nginx + Let&apos;s Encrypt · Workload Identity throughout · No long-lived credentials · Defender for Containers on ACR
-            </span>
-          </div>
+            );
+          })}
         </div>
 
-        {/* ── Data flow diagram ── */}
-        <div style={{ marginBottom: 40 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8", marginBottom: 16 }}>
-            End-to-end data flow
-          </div>
-          <div style={{ overflowX: "auto", paddingBottom: 4 }}>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 0, minWidth: 780 }}>
-              {[
-                { label: "Source", sub: "CSV · Parquet · API · DB", color: "#64748b", icon: "fa-database", detail: "External system" },
-                { label: "Bronze", sub: "Append-only ingestion", color: "#b45309", icon: "fa-inbox", detail: "Parquet / native format · Immutable" },
-                { label: "DQ Check", sub: "Schema · Content · Volume · Freshness", color: "#f59e0b", icon: "fa-shield-halved", detail: "YAML rulesets run by DQ SDK" },
-                { label: "Silver", sub: "Cleaned & validated", color: "#0284c7", icon: "fa-filter", detail: "Delta Lake · Schema enforced" },
-                { label: "DQ Gate", sub: "CRITICAL blocks", color: "#dc2626", icon: "fa-circle-stop", detail: "Pipeline halts on CRITICAL failure" },
-                { label: "Gold", sub: "Governed & aggregated", color: "#059669", icon: "fa-star", detail: "Delta Lake · SLA-governed · Optimised" },
-                { label: "Query", sub: "Trino · Portal · LoomX", color: primaryColor, icon: "fa-magnifying-glass", detail: "Federated SQL · APIs · Analytics" },
-              ].map((step, i) => (
-                <React.Fragment key={step.label}>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", minWidth: 96, flex: 1 }}>
-                    <div style={{
-                      width: "100%", padding: "10px 8px", borderRadius: 10,
-                      background: "white", border: `1px solid ${step.color}30`,
-                      borderTop: `3px solid ${step.color}`,
-                      display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-                      boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
-                    }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 7, background: `${step.color}12`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <i className={`fas ${step.icon}`} style={{ color: step.color, fontSize: 12 }} />
-                      </div>
-                      <div style={{ fontWeight: 800, fontSize: 12, color: "#0f172a", textAlign: "center" }}>{step.label}</div>
-                      <div style={{ fontSize: 10, color: "#64748b", textAlign: "center", lineHeight: 1.3 }}>{step.sub}</div>
-                    </div>
-                    <div style={{ fontSize: 9.5, color: "#94a3b8", textAlign: "center", marginTop: 6, lineHeight: 1.3, maxWidth: 90 }}>
-                      {step.detail}
-                    </div>
-                  </div>
-                  {i < 6 && (
-                    <div style={{ display: "flex", alignItems: "center", paddingTop: 16, flexShrink: 0, width: 24, justifyContent: "center" }}>
-                      <i className="fas fa-arrow-right" style={{ color: "#cbd5e1", fontSize: 12 }} />
-                    </div>
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-
-          {/* Lineage strip */}
-          <div style={{
-            marginTop: 16,
-            padding: "8px 16px",
-            background: "#7c3aed08",
-            border: "1px solid #7c3aed20",
-            borderRadius: 8,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}>
-            <i className="fas fa-share-nodes" style={{ color: "#7c3aed", fontSize: 13, flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: "#334155" }}>
-              <strong>OpenLineage</strong> events emitted at every Spark job and Airflow task execution →
-              captured by <strong>Microsoft Purview</strong> → column-level lineage and upstream/downstream impact analysis available in the Lineage Explorer
-            </div>
-          </div>
-          {/* Airflow orchestration strip */}
-          <div style={{
-            marginTop: 8,
-            padding: "8px 16px",
-            background: "#017cee08",
-            border: "1px solid #017cee20",
-            borderRadius: 8,
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}>
-            <i className="fas fa-calendar-check" style={{ color: "#017cee", fontSize: 13, flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: "#334155" }}>
-              <strong>Airflow 3.1.8</strong> orchestrates every Bronze → Silver → Gold transition via DAGs.
-              Each task runs as an isolated Kubernetes pod (KubernetesExecutor). DAG files are deployed to ADLS code/ container via sync-jobs.sh and picked up by Airflow automatically.
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            gap: 20,
-            flexWrap: "wrap",
-            marginBottom: 32,
-          }}
-        >
-          {/* Compute cluster */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 280,
-              background: "#fff",
-              border: `2px solid ${primaryColor}20`,
-              borderTop: `4px solid ${primaryColor}`,
-              borderRadius: 12,
-              padding: "1.5rem",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                marginBottom: 16,
-              }}
-            >
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 9,
-                  background: `${primaryColor}14`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <i className="fas fa-bolt" style={{ color: primaryColor, fontSize: 16 }} aria-hidden="true" />
-              </div>
-              <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a" }}>
-                Compute Cluster
-              </div>
-            </div>
-            <ul
-              style={{
-                listStyle: "none",
-                padding: 0,
-                margin: "0 0 16px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-              }}
-            >
-              {[
-                "Spark Operator 2.5.0",
-                "Spark Connect server (gRPC 15002)",
-                "Trino 480 (coordinator + workers)",
-              ].map((item) => (
-                <li
-                  key={item}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 13.5,
-                    color: "#334155",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: primaryColor,
-                      flexShrink: 0,
-                    }}
-                  />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <p style={{ fontSize: 13, color: "#64748b", lineHeight: 1.65 }}>
-              Scales independently from orchestration. Spark pools auto-scale to
-              zero between jobs, reducing idle compute cost.
-            </p>
-          </div>
-
-          {/* Orchestration cluster */}
-          <div
-            style={{
-              flex: 1,
-              minWidth: 280,
-              background: "#fff",
-              border: "2px solid #059669" + "20",
-              borderTop: "4px solid #059669",
-              borderRadius: 12,
-              padding: "1.5rem",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                marginBottom: 16,
-              }}
-            >
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 9,
-                  background: "#05996918",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <i className="fas fa-calendar-check" style={{ color: "#059669", fontSize: 16 }} aria-hidden="true" />
-              </div>
-              <div style={{ fontWeight: 700, fontSize: 16, color: "#0f172a" }}>
-                Orchestration Cluster
-              </div>
-            </div>
-            <ul
-              style={{
-                listStyle: "none",
-                padding: 0,
-                margin: "0 0 16px",
-                display: "flex",
-                flexDirection: "column",
-                gap: 8,
-              }}
-            >
-              {[
-                "Airflow 3.1.8 (KubernetesExecutor)",
-                "OpenLineage → Microsoft Purview (external SaaS)",
-                "Azure Monitor + Managed Grafana",
-                "Developer Portal (FastAPI + Next.js)",
-              ].map((item) => (
-                <li
-                  key={item}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 13.5,
-                    color: "#334155",
-                  }}
-                >
-                  <span
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: "#059669",
-                      flexShrink: 0,
-                    }}
-                  />
-                  {item}
-                </li>
-              ))}
-            </ul>
-            <p style={{ fontSize: 13, color: "#64748b", lineHeight: 1.65 }}>
-              Platform services isolated from job compute. High-availability
-              Airflow schedulers with redundant metadata database.
-            </p>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-            padding: "12px 20px",
-            background: "rgba(30,58,95,0.05)",
-            borderRadius: 10,
-            border: "1px solid rgba(30,58,95,0.1)",
-          }}
-        >
-          <i className="fas fa-lock" style={{ color: primaryColor, fontSize: 14 }} aria-hidden="true" />
-          <span style={{ fontSize: 13.5, color: "#475569", fontWeight: 500 }}>
-            Portal and Trino served over HTTPS (cert-manager / Let&apos;s Encrypt). Azure
-            Workload Identity throughout — zero long-lived credentials.
+        <div style={{ marginTop: 24, padding: "12px 18px", background: "rgba(30,58,95,0.04)", borderRadius: 10, border: "1px solid rgba(30,58,95,0.08)", display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <i className="fas fa-lock" style={{ color: primaryColor, fontSize: 13, flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: 13, color: "#475569", lineHeight: 1.6 }}>
+            All identities use <strong>Azure Workload Identity</strong> (OIDC federation) — no passwords, no client secrets,
+            no SAS tokens. K8s injects a short-lived projected service account token; Azure AD exchanges it
+            for a scoped access token valid for 1 hour. Each identity has a distinct blast radius.
           </span>
         </div>
-
       </Section>
 
-      {/* ── 6. Get Started ───────────────────────────────────────────────────── */}
+      {/* ── 8. Get Started ───────────────────────────────────────────────────── */}
       <section
         id="start"
         style={{
@@ -1237,7 +1411,7 @@ export default function AboutPage() {
         }}
       >
         <div style={{ maxWidth: 1400, margin: "0 auto" }}>
-          <div style={{ textAlign: "center", marginBottom: 48 }}>
+          <div style={{ textAlign: "center", marginBottom: 28 }}>
             <SectionLabel text="Get Started" color={primaryColor} light />
             <SectionHeading center light>
               Start building pipelines today

@@ -14,7 +14,7 @@ RUN apk upgrade --no-cache
 WORKDIR /app
 
 # Install dependencies only (layer cached unless package.json changes)
-COPY package.json package-lock.json* ./
+COPY portal/frontend/package.json portal/frontend/package-lock.json* ./
 RUN npm ci --frozen-lockfile
 
 # ── Builder ──────────────────────────────────────────────────────────────────
@@ -36,9 +36,12 @@ ENV NEXT_TELEMETRY_DISABLED=1 \
     NEXT_PUBLIC_AZURE_TENANT_ID=${AZURE_TENANT_ID} \
     NEXT_PUBLIC_AZURE_REDIRECT_URI=${WEB_URL}
 
-COPY package.json package-lock.json* ./
-RUN npm ci --frozen-lockfile
-COPY . .
+COPY portal/frontend/ .
+# Docs live at repo-root/docs/ — copy so the server component can read them at runtime
+COPY docs/ ./docs/
+# Reinstall deps inside the Linux container — discards any host-platform node_modules
+# that may have been included in the build context (Windows symlinks have no exec bits).
+RUN rm -rf node_modules && npm ci --frozen-lockfile
 
 RUN npm run build
 
@@ -60,6 +63,8 @@ RUN addgroup --system --gid 1001 nodejs \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static    ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public           ./public
+# Docs — server component reads these at request time via ../../docs from /app
+COPY --from=builder --chown=nextjs:nodejs /app/docs             /docs
 
 USER nextjs
 
