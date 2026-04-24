@@ -276,6 +276,22 @@ async def create_datasource(request: Request, body: DataSourceCreate) -> DataSou
         raise HTTPException(status_code=503, detail="Database not available")
     try:
         await _ensure_table(conn)
+
+        # Check for duplicate config (same account + container + base_path, any name)
+        cfg = body.config or {}
+        duplicate = await conn.fetchrow("""
+            SELECT name FROM data_sources
+            WHERE config->>'account'   = $1
+              AND config->>'container' = $2
+              AND config->>'base_path' = $3
+            LIMIT 1
+        """, cfg.get("account"), cfg.get("container"), cfg.get("base_path"))
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A data source with the same account/container/path already exists: '{duplicate['name']}'"
+            )
+
         row = await conn.fetchrow("""
             INSERT INTO data_sources
                 (name, display_name, description, source_type, config,
@@ -294,6 +310,8 @@ async def create_datasource(request: Request, body: DataSourceCreate) -> DataSou
         )
         log.info("ds_created", name=body.name, by=_user(request))
         return _row_to_response(row)
+    except HTTPException:
+        raise
     except Exception as exc:
         err = str(exc)
         if "unique" in err.lower() or "duplicate" in err.lower():
