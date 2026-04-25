@@ -1324,7 +1324,7 @@ If DQ passes on retry, Airflow continues to `publish_serving` automatically.
 
 Check the portal: **Lineage → silver/sales/orders → [job node] → Run detail → Events**. Each job run should show both a START and a COMPLETE event. If only START is present, the Spark job crashed before the OpenLineage event was sent — fix the underlying job failure first and the lineage will be emitted on the next successful run.
 
-If the graph is incomplete after a successful run, contact the platform team — lineage transport config (Purview endpoint, namespace) requires cluster access to diagnose.
+If the graph is incomplete after a successful run, check that the DAG was generated with the correct `source:` and `output:` tags (regenerate with `forge generate` if needed, then re-sync). The portal lineage API uses these tags to build the graph — it does not use OpenLineage or Purview.
 
 ---
 
@@ -1348,7 +1348,7 @@ Exactly one thing is different between the dev and prod clusters: **sizing**. Ev
 | Spark configuration (JVM, shuffle, memory fractions) | Identical | Identical |
 | Delta Lake version | 4.0.0 (same) | 4.0.0 (same) |
 | ADLS access method | Workload identity (same) | Workload identity (same) |
-| OpenLineage config | Points to `purview-forge-dev` endpoint | Points to `purview-forge-prod` endpoint |
+| Lineage | DAG `source:`/`output:` tags (same) | DAG `source:`/`output:` tags (same) |
 | Airflow configuration | `KubernetesExecutor` (same) | `KubernetesExecutor` (same) |
 | Node pool sizes | `spark`: 0–5 nodes, `E4s_v5` | `spark`: 0–20 nodes, `E8s_v5` |
 | Data | Dev ADLS account (subset of prod data) | Prod ADLS account |

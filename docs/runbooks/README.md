@@ -32,8 +32,8 @@ kubectl get pods -A --context "$COMPUTE" | grep -v Running | grep -v Completed
 kubectl get pods -A --context "$ORCH"    | grep -v Running | grep -v Completed
 
 # 3. Check portal health API (unauthenticated endpoint)
-curl https://forge-portal-{alias}-dev.westcentralus.cloudapp.azure.com/api/health
-curl https://forge-portal-{alias}-dev.westcentralus.cloudapp.azure.com/api/status
+curl https://forge-portal-{alias}-dev.northcentralus.cloudapp.azure.com/api/health
+curl https://forge-portal-{alias}-dev.northcentralus.cloudapp.azure.com/api/status
 ```
 
 ## Accessing Logs

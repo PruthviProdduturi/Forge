@@ -80,7 +80,7 @@ The frontend uses Next.js 15 with the App Router. All pages are Client Component
 
 Key client-side components:
 
-- **`useAuth` hook** — MSAL `loginPopup` for Azure AD SSO; token stored in `sessionStorage`. User ID is the AAD `oid` claim.
+- **`useAuth` hook** — fetches `/api/auth/me` with `credentials: "include"` to check session state from the proxy-injected headers. If not authenticated, redirects to `/oauth2/sign_in`. No browser-side MSAL or `sessionStorage` tokens.
 - **`ForgeLoader`** — revolving crosshair SVG animation with a shimmer progress bar, used for all loading states throughout the portal
 - **`ThemeModal`** — per-user theme colour picker with HSV canvas; theme preferences are stored in PostgreSQL (the only use of the database)
 - **`PageLayout`** — shared page shell: hero gradient, icon/title, stat pills in `heroContent`, and a consistent content area
@@ -145,43 +145,45 @@ The FastAPI backend is a thin aggregation layer. It does not own platform data �
 
 ## 3. Authentication Flow
 
-The portal uses **browser-side MSAL `loginPopup`** for Azure AD SSO. No server-side redirect handling, no cookies for auth state — tokens are held in `sessionStorage` only.
+The portal uses **proxy-based session authentication**. All authentication is handled by `portal-auth-proxy` — there is no browser-side MSAL, no `sessionStorage` tokens, and no popup flows in the frontend.
 
 ### Identity Model
 
-- **MSAL `loginPopup`** — `loginAzure()` in `auth/useAuth.tsx` triggers the popup flow; the resulting token is written to `sessionStorage` via `writeCache()`
-- **Redirect URI type** — must be `SPA` (not `Web`) in the AAD app registration; `loginRedirect` is explicitly avoided due to Next.js App Router conflicts
-- **User ID** — AAD `oid` claim, used as the `user_id` primary key in the `user_preferences` Postgres table
-- **Authorization** — Azure AD App Roles only; no user/role tables in Postgres
+- **Session cookie** — `portal-auth-proxy` sets an encrypted session cookie after AAD OAuth2 callback completes. All subsequent requests carry this cookie.
+- **Header injection** — after validating the session cookie, the proxy injects `X-User-Email`, `X-User-Name`, and `X-User-Roles` into every upstream request. `portal-api` reads user identity exclusively from these headers.
+- **`useAuth` hook** — calls `GET /api/auth/me` with `credentials: "include"` on mount. If the session is valid the proxy forwards it and `portal-api` returns user info. If not, the hook redirects to `/oauth2/sign_in`.
+- **User ID** — derived from the `X-User-Email` header (AAD email/UPN), used as `user_id` in the `user_preferences` Postgres table.
+- **Authorization** — Azure AD App Roles only; no user/role tables in Postgres. Roles are injected by the proxy in `X-User-Roles`.
 
 ### Auth Configuration
 
 | Item | Value |
 |------|-------|
 | AAD App Registration | `d0ce7c35-cc10-4ae7-b6be-60d002f43059` |
-| Redirect URI type | SPA |
-| Token storage | `sessionStorage` via MSAL cache |
-| Portal MI | `id-forge-portal-dev` (assigned to orch VMSS nodes — used by `portal-auth-proxy` for backend API calls) |
+| Redirect URI type | **Web** (server-side callback to `/oauth2/callback` on the proxy) |
+| Token storage | Server-side session cookie only — no browser `sessionStorage` |
+| Portal MI | `id-forge-portal-dev` (assigned to orch VMSS nodes — proxy uses IMDS to obtain MI token as `client_assertion`) |
 
-### Azure AD Auth Flow (browser MSAL)
+### Azure AD Auth Flow (proxy-based)
 
 ```
 1. Unauthenticated user visits any page
-   useAuth.initialize() → silent token from cached MSAL accounts
-   No accounts found → redirects to /login
+   useAuth calls GET /api/auth/me → proxy has no valid session cookie
+   proxy returns 302 to /oauth2/sign_in
 
-2. User clicks "Sign in with Microsoft"
-   loginAzure() → msalInstance.loginPopup()
-   Popup: AAD login + MFA enforced at tenant level
+2. Browser follows /oauth2/sign_in
+   portal-auth-proxy: IMDS → id-forge-portal-dev MI token (client_assertion)
+   MSAL ConfidentialClientApplication → AAD authorization URL
+   Browser redirected to AAD login (MFA enforced at tenant level)
 
-3. loginPopup() resolves synchronously with AuthenticationResult
-   writeCache() persists tokens to sessionStorage
-   useAuth sets authenticated state; user is redirected to original destination
+3. AAD redirects to /oauth2/callback
+   portal-auth-proxy exchanges code for tokens using MI token as client_assertion
+   Encrypted session cookie set on response; user redirected to original destination
 
 4. Subsequent page loads / API calls:
-   MSAL acquireTokenSilent() from sessionStorage cache
-   Bearer token attached to every /api/* request
-   portal-api validates the Bearer token (RS256 AAD JWT)
+   Browser sends session cookie automatically
+   portal-auth-proxy validates cookie → injects X-User-Email, X-User-Name, X-User-Roles
+   portal-api reads user identity from injected headers
    RBAC enforced per endpoint: Admin role required for /api/platform/*
 ```
 
@@ -524,7 +526,7 @@ Service: portal-api         (ClusterIP, port 8080)
 Service: portal-web         (ClusterIP, port 3001)
 
 Ingress: NGINX ingress controller (public LB — IP assigned by Azure at deploy time)
-  host: forge-portal-{env}.westcentralus.cloudapp.azure.com
+  host: forge-portal-{env}.northcentralus.cloudapp.azure.com
   TLS: cert-manager / Let's Encrypt
   rules:
     - path: /oauth2/*  → portal-auth-proxy:8080  (OAuth2 flow endpoints)
@@ -604,7 +606,7 @@ When these are set to `.svc.cluster.local` DNS names (the default for intra-clus
                                    ▼
                     ┌──────────────────────────────────────────┐
                     │  NGINX Ingress (public LB, IP at deploy)   │
-                    │  forge-portal-{env}.westcentralus.cloud..  │
+                    │  forge-portal-{env}.northcentralus.cloud..  │
                     │  TLS: cert-manager / Let's Encrypt        │
                     └──────────────────┬───────────────────────┘
                                        │  all paths

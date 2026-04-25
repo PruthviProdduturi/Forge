@@ -31,10 +31,10 @@ Step 8 — Spark Connect           (reachable from laptop)
 Get the Airflow managed identity name:
 ```bash
 az identity show \
-  --resource-group rg-forge-prproddu-dev \
-  --name id-forge-airflow-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name id-forge-airflow-{alias}-dev \
   --query name -o tsv
-# Expected: id-forge-airflow-prproddu-dev
+# Expected: id-forge-airflow-{alias}-dev
 ```
 
 Spin up a Postgres client pod inside the orchestration cluster:
@@ -42,7 +42,7 @@ Spin up a Postgres client pod inside the orchestration cluster:
 kubectl run pg-grants --rm -it --restart=Never \
   --image=bitnami/postgresql:16 \
   --namespace airflow \
-  --context aks-forge-orchestration-prproddu-dev \
+  --context aks-forge-orchestration-{alias}-dev \
   -- bash
 ```
 
@@ -54,8 +54,8 @@ TOKEN=$(curl -s \
   -H "Metadata: true" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
-PG_HOST="psql-forge-prproddu-dev.postgres.database.azure.com"
-MI_NAME="id-forge-airflow-prproddu-dev"
+PG_HOST="psql-forge-{alias}-dev.postgres.database.azure.com"
+MI_NAME="id-forge-airflow-{alias}-dev"
 
 # Grant database-level access
 PGPASSWORD="$TOKEN" psql \
@@ -83,39 +83,39 @@ exit
 
 Check every namespace on both clusters. All pods should be `Running` or `Completed`.
 
-### Compute cluster (`aks-forge-compute-prproddu-dev`)
+### Compute cluster (`aks-forge-compute-{alias}-dev`)
 
 ```bash
 # Spark Operator
-kubectl get pods -n spark-operator --context aks-forge-compute-prproddu-dev
+kubectl get pods -n spark-operator --context aks-forge-compute-{alias}-dev
 # Expected: spark-operator-controller-* Running
 
 # Spark Connect
-kubectl get pods -n spark-connect --context aks-forge-compute-prproddu-dev
+kubectl get pods -n spark-connect --context aks-forge-compute-{alias}-dev
 # Expected: spark-connect-* Running
 
 # Hive Metastore
-kubectl get pods -n hive --context aks-forge-compute-prproddu-dev
+kubectl get pods -n hive --context aks-forge-compute-{alias}-dev
 # Expected: hive-metastore-* Running
 
 # Trino
-kubectl get pods -n trino --context aks-forge-compute-prproddu-dev
+kubectl get pods -n trino --context aks-forge-compute-{alias}-dev
 # Expected: trino-coordinator-* Running, trino-worker-* Running, trino-auth-proxy-* Running
 ```
 
-### Orchestration cluster (`aks-forge-orchestration-prproddu-dev`)
+### Orchestration cluster (`aks-forge-orchestration-{alias}-dev`)
 
 ```bash
 # Airflow
-kubectl get pods -n airflow --context aks-forge-orchestration-prproddu-dev
+kubectl get pods -n airflow --context aks-forge-orchestration-{alias}-dev
 # Expected: airflow-scheduler-* Running, airflow-webserver-* Running, airflow-triggerer-* Running
 
 # Portal
-kubectl get pods -n portal --context aks-forge-orchestration-prproddu-dev
+kubectl get pods -n portal --context aks-forge-orchestration-{alias}-dev
 # Expected: forge-portal-api-* Running, forge-portal-web-* Running
 
 # Ingress
-kubectl get pods -n ingress-nginx --context aks-forge-orchestration-prproddu-dev
+kubectl get pods -n ingress-nginx --context aks-forge-orchestration-{alias}-dev
 # Expected: ingress-nginx-controller-* Running
 ```
 
@@ -135,11 +135,11 @@ Verify the compute cluster can reach ADLS Gen2:
 kubectl run adls-check --rm -it --restart=Never \
   --image=mcr.microsoft.com/azure-cli \
   --namespace spark-jobs \
-  --context aks-forge-compute-prproddu-dev \
+  --context aks-forge-compute-{alias}-dev \
   -- bash -c "
     az login --identity --allow-no-subscriptions
     az storage container list \
-      --account-name forgeadlsprproddudev \
+      --account-name forgeadls{alias}dev \
       --auth-mode login \
       --query '[].name' -o tsv
   "
@@ -168,7 +168,7 @@ TOKEN=$(az account get-access-token --resource https://management.azure.com/ --q
 
 # Submit a query and poll for results
 QUERY_URL=$(curl -s -X POST \
-  https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com/v1/statement \
+  https://forge-compute-{alias}-dev.northcentralus.cloudapp.azure.com/v1/statement \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Trino-Catalog: system" \
   -H "X-Trino-Schema: runtime" \
@@ -182,7 +182,7 @@ curl -s "$QUERY_URL" -H "Authorization: Bearer $TOKEN" \
 
 Or use the Trino CLI:
 ```bash
-trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com \
+trino --server=https://forge-compute-{alias}-dev.northcentralus.cloudapp.azure.com \
       --access-token="$TOKEN" \
       --execute="SELECT node_id, state FROM system.runtime.nodes"
 ```
@@ -195,11 +195,11 @@ trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.
 
 ```bash
 # Check git-sync is pulling DAGs
-kubectl logs -n airflow --context aks-forge-orchestration-prproddu-dev \
+kubectl logs -n airflow --context aks-forge-orchestration-{alias}-dev \
   -l component=scheduler --tail=50 | grep -i "dag\|sync\|error"
 
 # List DAGs via Airflow CLI
-kubectl exec -n airflow --context aks-forge-orchestration-prproddu-dev \
+kubectl exec -n airflow --context aks-forge-orchestration-{alias}-dev \
   deploy/airflow-scheduler \
   -- airflow dags list
 ```
@@ -209,7 +209,7 @@ kubectl exec -n airflow --context aks-forge-orchestration-prproddu-dev \
 If DAGs are missing — check git-sync secret:
 ```bash
 kubectl get secret airflow-git-credentials -n airflow \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 ```
 
 ---
@@ -245,7 +245,7 @@ bash infra/scripts/forge-up.sh \
 
 Open in browser:
 ```
-https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
+https://forge-portal-{alias}-dev.northcentralus.cloudapp.azure.com
 ```
 
 Check:
@@ -257,7 +257,7 @@ Check:
 
 Check API directly (unauthenticated — health endpoint is public):
 ```bash
-curl -s https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/health \
+curl -s https://forge-portal-{alias}-dev.northcentralus.cloudapp.azure.com/api/health \
   | python3 -m json.tool
 ```
 
@@ -270,7 +270,7 @@ curl -s https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/h
 ```bash
 # Port-forward Spark Connect
 kubectl port-forward svc/spark-connect 15002:15002 \
-  -n spark-connect --context aks-forge-compute-prproddu-dev
+  -n spark-connect --context aks-forge-compute-{alias}-dev
 ```
 
 In a Python session or notebook:
@@ -284,7 +284,7 @@ spark.sql("SELECT 1 AS test").show()
 
 # Read from ADLS via the cluster
 df = spark.read.format("delta").load(
-    "abfss://gold@forgeadlsprproddudev.dfs.core.windows.net/nyc/taxi/trips"
+    "abfss://gold@forgeadls{alias}dev.dfs.core.windows.net/nyc/taxi/trips"
 )
 print(f"Gold row count: {df.count()}")
 ```

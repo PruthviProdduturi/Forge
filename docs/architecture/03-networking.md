@@ -46,7 +46,7 @@ Internet
   ├── HTTPS :443  ──────────────────────────────────────────────────────────────┐
   │                                                                             │
   │   ┌──────────────────────────────────────────────────────────────────────┐ │
-  │   │  DNS: forge-portal-{env}.westcentralus.cloudapp.azure.com             │ │
+  │   │  DNS: forge-portal-{env}.northcentralus.cloudapp.azure.com             │ │
   │   │  Public LB IP: assigned by Azure at deploy time                      │ │
   │   │  ingress-nginx → TLS terminated (cert-manager / Let's Encrypt)       │ │
   │   │                                                                      │ │
@@ -60,7 +60,7 @@ Internet
   │   TCP   :9083  ─────────────────────────────────────────────────────────────┼──┤
   │                                                                             │  │
   │   ┌──────────────────────────────────────────────────────────────────────┐    │
-  │   │  DNS: forge-compute-{env}.westcentralus.cloudapp.azure.com            │    │
+  │   │  DNS: forge-compute-{env}.northcentralus.cloudapp.azure.com            │    │
   │   │  Public LB IP: assigned by Azure at deploy time                      │    │
   │   │                                                                      │    │
   │   │  :443  ingress-nginx → TLS (cert-manager / Let's Encrypt)            │    │
@@ -160,8 +160,8 @@ Internet
 └──────────────────────────────────────────────────────────────────────────────────────┘
 
 Traffic flows (dev):
-  Internet :443  → ingress-nginx (orch LB, forge-portal-{env}.westcentralus.cloudapp.azure.com) → portal-auth-proxy / portal-api / portal-web
-  Internet :443  → ingress-nginx (compute LB, forge-compute-{env}.westcentralus.cloudapp.azure.com) → trino-auth-proxy → Trino
+  Internet :443  → ingress-nginx (orch LB, forge-portal-{env}.northcentralus.cloudapp.azure.com) → portal-auth-proxy / portal-api / portal-web
+  Internet :443  → ingress-nginx (compute LB, forge-compute-{env}.northcentralus.cloudapp.azure.com) → trino-auth-proxy → Trino
   Internet :15002 → Spark Connect (compute LB, TCP)
   Internet :9083  → Hive Metastore Thrift (compute LB, TCP)
   Corp VPN → Bastion → node shell (emergency only)
@@ -406,14 +406,14 @@ Azure DevOps Pipelines run on ADO-hosted agents that reach the AKS API server ov
 | Azure Key Vault | `kv-forge-{env}` | `pe-keyvault` | private-endpoints | 10.3.0.6 | `privatelink.vaultcore.azure.net` |
 | Azure Container Registry | `forgeacr<env>` | `pe-acr` | private-endpoints | 10.3.0.7 | `privatelink.azurecr.io` |
 | PostgreSQL (Airflow) | `psql-forge-airflow-<env>` | `pe-psql-airflow` | private-endpoints | 10.3.0.8 | `privatelink.postgres.database.azure.com` |
-| Microsoft Purview | `purview-forge-<env>` | `pe-purview` | private-endpoints | 10.3.0.9 | `privatelink.purview.azure.com` |
+| ~~Microsoft Purview~~ | ~~`purview-forge-<env>`~~ | ~~`pe-purview`~~ | private-endpoints | 10.3.0.9 | ~~`privatelink.purview.azure.com`~~ — **removed Apr 2026; Purview integration retired** |
 | Azure Monitor | `azmon-forge-<env>` | `pe-azmon` | private-endpoints | 10.3.0.10 | `privatelink.monitor.azure.com` |
-| AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.westcentralus.azmk8s.io` |
-| AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.westcentralus.azmk8s.io` |
+| AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.northcentralus.azmk8s.io` |
+| AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.northcentralus.azmk8s.io` |
 
 **Why two ADLS private endpoints?** ADLS Gen2 has two sub-resources that each need their own private endpoint: `dfs` (Data Lake Storage — used by Spark and all Hadoop/ABFS clients) and `blob` (Blob Storage — used by ACR layer pulls and some Azure SDKs that fall back to blob). Both must be present for complete private access.
 
-**Why is there a Purview private endpoint?** All lineage event POSTs and Data Map API calls from cluster pods route through the Purview private endpoint, ensuring no lineage data leaves the private network.
+~~**Why is there a Purview private endpoint?**~~ Purview integration was retired in April 2026 — the private endpoint, `purview_client.py`, and all OpenLineage-to-Purview transport config have been removed. Lineage is now derived from Airflow DAG tags (source/output) via the portal API.
 
 ### 6.2 Private DNS Zone Linking
 
@@ -544,10 +544,10 @@ The pod would attempt to connect to the public IP. This connection would be **bl
 When the Airflow pod on the orchestration cluster reaches the compute cluster's Kubernetes API server:
 
 ```
-Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.westcentralus.azmk8s.io
+Airflow pod → FQDN: forge-compute-aks-xxxx.privatelink.northcentralus.azmk8s.io
   → CoreDNS (172.21.0.10)
   → 168.63.129.16 (Azure DNS)
-  → privatelink.westcentralus.azmk8s.io zone linked to vnet-forge-{env}
+  → privatelink.northcentralus.azmk8s.io zone linked to vnet-forge-{env}
   → A record: 10.3.0.11
   → Airflow connects to 10.3.0.11:443 (compute AKS API private endpoint)
   → kubectl auth via ServiceAccount token in the kubeconfig (fetched from Key Vault)
@@ -564,13 +564,13 @@ In the dev environment, both clusters use **ingress-nginx** as the public ingres
 ```
 Internet (HTTPS :443)
     │
-    ├─▶ orch cluster LB (forge-portal-{env}.westcentralus.cloudapp.azure.com)
+    ├─▶ orch cluster LB (forge-portal-{env}.northcentralus.cloudapp.azure.com)
     │     ingress-nginx → TLS termination (cert-manager / Let's Encrypt)
     │       /oauth2/*  → portal-auth-proxy:8080
     │       /api/*     → portal-api:8080
     │       /*         → portal-web:3001
     │
-    └─▶ compute cluster LB (forge-compute-{env}.westcentralus.cloudapp.azure.com)
+    └─▶ compute cluster LB (forge-compute-{env}.northcentralus.cloudapp.azure.com)
           ingress-nginx → TLS termination (cert-manager / Let's Encrypt)
             /*  → trino-auth-proxy:8080 → Trino coordinator:8080
 ```
@@ -717,7 +717,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
-# Egress: allow Airflow to reach ADLS, Key Vault, Purview
+# Egress: allow Airflow to reach ADLS, Key Vault (Purview removed Apr 2026)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -761,7 +761,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
-# Allow Spark executors: egress to ADLS and Purview only
+# Allow Spark executors: egress to ADLS only (Purview removed Apr 2026)
 # No egress to internet, no egress to orchestration cluster directly
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -782,13 +782,7 @@ spec:
       ports:
         - port: 443
           protocol: TCP
-    # Microsoft Purview OpenLineage endpoint (via private endpoint 10.3.0.9)
-    - to:
-        - ipBlock:
-            cidr: 10.3.0.9/32
-      ports:
-        - port: 443
-          protocol: TCP
+    # NOTE: Purview private endpoint (10.3.0.9) was removed Apr 2026 — rule no longer applied
     # CoreDNS (DNS resolution)
     - to:
         - namespaceSelector:

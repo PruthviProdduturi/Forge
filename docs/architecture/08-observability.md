@@ -154,7 +154,11 @@ Structured and unstructured log lines from all pods on both clusters, collected 
 
 ### 3.3 Traces (OpenTelemetry → Azure Monitor / Application Insights)
 
-Distributed traces for the Developer Portal API and (optionally) Spark jobs. Traces capture the full request path through portal-api → Airflow API → Purview Data Map API, enabling precise latency attribution. Traces are ingested via OTLP (OpenTelemetry Protocol) and stored in Azure Monitor / Application Insights.
+> **Not yet deployed.** OTel instrumentation is planned; the code exists in `portal/backend/app/telemetry.py` but is not active in dev. See Section 1 for current deployment state.
+
+Distributed traces for the Developer Portal API and (optionally) Spark jobs. Traces capture the full request path through portal-api → Airflow API, enabling precise latency attribution. Traces are ingested via OTLP (OpenTelemetry Protocol) and stored in Azure Monitor / Application Insights.
+
+> **Note:** Purview Data Map API was removed from the trace path in April 2026 — `purview_client.py` has been deleted and Purview is no longer part of the lineage stack. Lineage is now derived from Airflow DAG tags (source/output) via the portal lineage API.
 
 Trace IDs are injected into structured logs as `trace_id` fields, enabling Azure Managed Grafana's exemplar linking: click a slow portal API call in the latency histogram → jump directly to the trace.
 
@@ -919,22 +923,11 @@ Exposed via Trino's built-in `/v1/info` and cluster endpoints with a Prometheus-
 - Query queue depth sustained high (warning — cluster is undersized for load)
 - Blocked queries sustained (warning — deadlock or resource leak scenario)
 
-### 10.4 Microsoft Purview
+### 10.4 ~~Microsoft Purview~~ (removed)
 
-Microsoft Purview is a managed service — there are no self-hosted `/metrics` endpoints to scrape. Purview health and ingestion signals are observed via Azure Monitor and the Purview Data Map API.
-
-| Signal | Source | Type | Alert Threshold |
-|--------|--------|------|-----------------|
-| OpenLineage HTTP response code | App Insights (portal-api outbound traces) | Trace/Counter | 5xx rate > 1% on Purview endpoint |
-| OpenLineage HTTP latency | App Insights (HTTPXClientInstrumentor) | Histogram | P95 > 2s to Purview endpoint |
-| Lineage event volume (emitter side) | Custom metric: `openlineage.events.sent` (Airflow, Spark, Trino) | Counter | Drop > 50% vs previous hour |
-| Purview Data Map API latency | App Insights (portal-api → Purview calls) | Histogram | P95 > 500ms |
-| Purview service health | Azure Service Health (resource: `purview-forge-{env}`) | Azure Monitor alert | Any `Degraded` or `Unavailable` event |
-
-**What to alert on for Purview:**
-- Outbound 5xx rate to Purview endpoint > 1% (lineage events are being lost — pipelines will have gaps in lineage)
-- Lineage event volume drops to zero while pipelines are running (Purview endpoint unreachable or workload identity token failure)
-- Purview service health degradation (Azure Service Health alert — route to PagerDuty)
+> **Purview integration was retired in April 2026.** `purview_client.py`, the Purview private endpoint, and all OpenLineage-to-Purview transport config have been removed. This section is kept for historical reference only.
+>
+> Lineage is now derived from Airflow DAG `source:` and `output:` tags, surfaced via the portal `/lineage` page. There are no active Purview metrics, alerts, or monitoring signals to configure.
 
 ### 10.5 Portal API
 
