@@ -1,9 +1,9 @@
 # Forge — Developer Portal Architecture
 
-> **Version:** 1.2
+> **Version:** 1.3
 > **Status:** Active development
 > **Audience:** Platform engineers, data engineers, frontend/backend contributors
-> **Last updated:** 2026-04-09
+> **Last updated:** 2026-04-24
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 
@@ -90,7 +90,7 @@ Route structure:
 
 ```
 app/
-├── page.tsx                  ← /                Home dashboard (recent pipelines, health)
+├── page.tsx                  ← /                Home dashboard (KPI tiles, pipeline activity table, DQ health)
 ├── about/page.tsx            ← /about           Platform overview and architecture
 ├── pipelines/page.tsx        ← /pipelines       Airflow DAG monitor with run history
 ├── datasets/page.tsx         ← /datasets        ADLS Gen2 dataset browser (bronze/silver/gold)
@@ -98,11 +98,23 @@ app/
 ├── lineage/page.tsx          ← /lineage         Airflow DAG tag lineage explorer
 ├── dq/page.tsx               ← /dq              Data quality rule monitor
 ├── cost/page.tsx             ← /cost            Azure cost attribution (7/30/90d)
-├── observability/page.tsx    ← /observability   Grafana and Azure Monitor links
-├── status/page.tsx           ← /status          AKS cluster health and pod state
+├── observability/page.tsx    ← /observability   Coming Soon — Grafana + Azure Monitor integration (roadmap)
+├── status/page.tsx           ← /status          AKS cluster health, pod state, clear-failed-pods
 ├── settings/page.tsx         ← /settings        User preferences (theme)
 └── docs/[...slug]/page.tsx   ← /docs/*          Embedded platform documentation
 ```
+
+**Nav order** (top navigation): Pipelines → Data Quality → Datasets → Lineage → Data Sources → Cost Explorer. Observability is excluded from the nav until Grafana integration is complete — accessible directly at `/observability`.
+
+### Home Dashboard (`/`)
+
+The home page is an operational overview, not a business dashboard:
+
+- **KPI tiles** (4 across): Active Pipelines / DQ Pass Rate / Datasets / Platform Status — each links to its respective page
+- **Pipeline activity table**: borderless table with columns — Pipeline (dag\_id + output dataset + layer badge) | Resources (`N×Cc Mg` format with hover tooltip showing instances/cores/memory) | Schedule | Status + time ago — sorted by most recent run, up to 14 rows
+- **DQ Health card**: overall pass rate bar, 2×2 grid of pass/fail/warn/profiling counts
+- **Explore panel**: quick-links to all sections in nav order, plus Observability and Cluster Status at the bottom
+- **Alert banners**: appear only when there are failed pipelines or DQ issues
 
 ### Backend: `portal-api` (FastAPI)
 
@@ -251,6 +263,14 @@ Unauthenticated requests return `401 Unauthorized`. Authenticated requests from 
 | DELETE | `/api/v1/datasources/{id}` | Remove a data source | Yes |
 | POST | `/api/v1/datasources/test` | Test a data source connection | Yes |
 
+**Duplicate detection:** `POST /api/v1/datasources` checks for an existing source with the same `account` + `container` + `base_path` before inserting. If a match is found it returns `409 Conflict` with the conflicting source name:
+
+```json
+{ "detail": "A data source with the same account/container/path already exists: 'nyc-taxi-yellow'" }
+```
+
+A `409` is also returned if a source with the same `name` already exists (unique constraint on the `name` column). To update an existing source use `PUT /api/v1/datasources/{id}` instead.
+
 #### Data Quality
 
 | Method | Path | Description | Auth Required |
@@ -278,6 +298,7 @@ Unauthenticated requests return `401 Unauthorized`. Authenticated requests from 
 | Method | Path | Description | Auth Required |
 |--------|------|-------------|---------------|
 | GET | `/api/status` | AKS cluster state and workload probes | Yes |
+| DELETE | `/api/status/clear-failed` | Delete all pods in phase `Failed` across orch namespaces (`airflow`, `portal`, `dq`, `monitoring`). Returns `{"deleted": N, "namespaces": [...]}`. Requires the `portal-api` service account to have `delete` on pods (granted via `forge-portal-reader` ClusterRole). | Yes |
 | GET | `/api/v1/theme` | Current user's theme preference | Yes |
 | PUT | `/api/v1/theme` | Save user theme preference | Yes |
 
@@ -398,7 +419,11 @@ Cost data is expensive to fetch and changes slowly. The backend uses in-memory s
 
 The `portal-api` pod uses in-cluster config (`load_incluster_config()`) to list pods across the key orchestration namespaces: `airflow`, `portal`, `dq`, `monitoring`. For each pod it returns name, phase, and readiness.
 
-The `portal-api` service account requires a ClusterRole granting `get`/`list`/`watch` on pods and deployments in these namespaces, bound via a ClusterRoleBinding.
+The `portal-api` service account requires the `forge-portal-reader` ClusterRole granting `get`/`list`/`watch`/`delete` on pods and `get`/`list`/`watch` on nodes, bound via a ClusterRoleBinding. The `delete` verb is required for the clear-failed-pods feature.
+
+### Clear Failed Pods
+
+`DELETE /api/status/clear-failed` iterates over the `airflow`, `portal`, `dq`, and `monitoring` namespaces and deletes any pod in phase `Failed` with `gracePeriodSeconds=0`. The `/status` page shows a **"Clear failed pods"** button when the failed count is > 0, which calls this endpoint. Use this to clean up stale failed Spark driver pods or crashed task pods without needing `kubectl` access.
 
 ### Compute Cluster (Azure Resource API)
 

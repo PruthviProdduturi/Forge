@@ -8,10 +8,9 @@
 
 ## Table of Contents
 
-1. [Cluster Access Setup (AAD)](#1-cluster-access-setup-aad)
+1. [Prerequisites](#1-prerequisites)
 2. [VS Code Setup](#2-vs-code-setup)
 3. [Spark Connect Development](#3-spark-connect-development)
-   - [3.5 Trino CLI](#35-trino-cli)
 4. [Airflow DAG Development](#4-airflow-dag-development)
 5. [DQ Rule Authoring](#5-dq-rule-authoring)
 6. [End-to-End Pipeline Workflow](#6-end-to-end-pipeline-workflow)
@@ -23,75 +22,20 @@
 
 ---
 
-## 1. Cluster Access Setup (AAD)
+## 1. Prerequisites
 
-Both AKS clusters use **AAD-managed RBAC** with local accounts disabled. Every engineer authenticates with their corporate identity — there are no shared kubeconfig certificates.
+Before you start, make sure you have the following. Contact the platform team if anything is missing.
 
-### Prerequisites
-
-```bash
-# Azure CLI
-az --version  # 2.50+
-
-# kubelogin — converts kubeconfig to use AAD token
-winget install Microsoft.Azure.Kubelogin
-# or: az aks install-cli
-```
-
-### One-time setup per cluster
-
-Run once per machine. Tokens are cached automatically after first login.
-
-```bash
-# 1. Pull kubeconfig for both clusters
-az aks get-credentials \
-  --resource-group rg-forge-prproddu-dev \
-  --name aks-forge-compute-prproddu-dev \
-  --context forge-compute-dev
-
-az aks get-credentials \
-  --resource-group rg-forge-prproddu-dev \
-  --name aks-forge-orchestration-prproddu-dev \
-  --context forge-orch-dev
-
-# 2. Convert kubeconfig to use AAD auth (kubelogin)
-kubelogin convert-kubeconfig -l azurecli
-
-# 3. Verify — this will trigger an AAD browser login on first run
-kubectl get nodes --context forge-compute-dev
-kubectl get nodes --context forge-orch-dev
-```
-
-### Switching between clusters
-
-```bash
-kubectl config use-context forge-compute-dev
-kubectl config use-context forge-orch-dev
-
-# Or pass context inline
-kubectl get pods -n spark-jobs --context forge-compute-dev
-```
-
-### Token refresh
-
-AAD tokens expire after ~1 hour. `kubelogin` refreshes them automatically using your `az login` session. If your az session expires, re-authenticate:
-
-```bash
-az login
-# No need to re-run get-credentials or convert-kubeconfig
-```
-
-### Access levels
-
-Access is granted by Azure role assignment on the cluster resource. Your access level depends on which role your AAD account has been assigned:
-
-| Role | What you can do |
+| What you need | How to get it |
 |---|---|
-| `AKS RBAC Cluster Admin` | Full access — platform team only |
-| `AKS RBAC Writer` | Deploy to assigned namespaces |
-| `AKS RBAC Reader` | Read-only `kubectl get/describe` |
+| Azure CLI (`az`) 2.50+ | [Install](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) — run `az login` with your corporate account |
+| Portal access | Browse to `https://forge-portal-{alias}-dev.northcentralus.cloudapp.azure.com` — sign in with your corporate account. If you get a 403, ask the platform team to add you to the `forge-data-engineer` AD group. |
+| Spark Connect URL | Ask the platform team or run `forge job spark-connect-url` once the CLI is set up (§2) |
+| Git access to this repo | Standard ADO access — clone `DSEngCoreInfra` and `DSEngCoreData` |
 
-Contact the platform team to request access if `kubectl get nodes` returns a 403.
+That's it. You don't need `kubectl`, cluster credentials, or any Azure infra access to build and run pipelines. The portal and `sync-jobs.sh` handle everything.
+
+> **Platform team only:** Cluster access setup (kubelogin, AKS RBAC, kubeconfig) is documented in the [Post-Deploy Verification runbook](../runbooks/04-post-deploy-verification.md).
 
 ---
 
@@ -106,7 +50,7 @@ Install these extensions before working on Forge. The repository includes a `.vs
 | Python | `ms-python.python` | Python language support, environment management |
 | Pylance | `ms-python.vscode-pylance` | Type checking, IntelliSense, import resolution |
 | Jupyter | `ms-toolsai.jupyter` | Run notebooks inline in VS Code against Spark Connect |
-| Kubernetes | `ms-kubernetes-tools.vscode-kubernetes-tools` | Browse cluster resources, port-forward, view logs |
+| Kubernetes | `ms-kubernetes-tools.vscode-kubernetes-tools` | Browse cluster resources (optional — platform team use) |
 | REST Client | `humao.rest-client` | Test portal API endpoints directly from `.http` files |
 | YAML | `redhat.vscode-yaml` | Schema validation for DQ rulesets and Helm values |
 | GitLens | `eamodio.gitlens` | Inline blame, commit history, branch comparison |
@@ -146,10 +90,6 @@ The repository ships with `D:/Repos/Forge/.vscode/settings.json`. This is commit
   },
   "jupyter.kernelPickerType": "mru",
   "jupyter.notebookFileRoot": "${workspaceFolder}",
-  "vs-kubernetes": {
-    "vs-kubernetes.kubectl-path": "/usr/local/bin/kubectl",
-    "vs-kubernetes.kubeconfig": "${env:KUBECONFIG}"
-  },
   "editor.rulers": [100],
   "files.exclude": {
     "**/__pycache__": true,
@@ -161,27 +101,34 @@ The repository ships with `D:/Repos/Forge/.vscode/settings.json`. This is commit
 
 Key settings to understand:
 
-- `python.analysis.extraPaths` adds the SDK and Airflow DAG directories to the Pylance import resolver. This means `from forge.dq.sdk import DQRunner` resolves correctly in VS Code without installing the package in editable mode each time.
+- `python.analysis.extraPaths` adds the Airflow DAG directory to the Pylance import resolver so DAG imports resolve correctly in VS Code (only relevant if you set up the Python venv for DAG tests).
 - `yaml.schemas` wires DQ ruleset YAML files to the JSON Schema for real-time validation. If you reference a non-existent rule type or misspell a severity level, VS Code underlines it immediately.
 - `ruff.lint.args` points to the project `pyproject.toml` which defines consistent linting rules shared with CI.
 
-### Python Virtual Environment
+### Install the Forge CLI
 
-Create the virtual environment once after cloning:
+The `forge` CLI is a TypeScript package in `sdk/cli/`. Install it once after cloning:
 
 ```bash
 # From repo root
-python -m venv .venv
-source .venv/bin/activate                    # Linux/macOS
-# .\.venv\Scripts\Activate.ps1              # Windows PowerShell
-
-pip install -e "sdk/python[dev]"             # installs forge SDK + dev deps
-pip install -r orchestration/airflow/requirements-dev.txt
+npm install
 ```
 
-The SDK installs `pyspark`, `delta-spark`, `openlineage-python`, and the `forge-cli` entry point. The Airflow dev requirements install `apache-airflow` (matching the production version), `pytest`, `coverage`, and mock libraries.
+Verify:
 
-After the venv is set up, VS Code detects `.venv/bin/python` automatically (matching `python.defaultInterpreterPath`) and Pylance uses it for type checking.
+```bash
+forge --version
+# forge-cli 1.0.0
+```
+
+> **Running DAG unit tests?** You also need a Python venv:
+> ```bash
+> python -m venv .venv
+> source .venv/bin/activate          # Linux/macOS / WSL
+> # .\.venv\Scripts\Activate.ps1    # Windows PowerShell
+> pip install -r orchestration/airflow/requirements-dev.txt
+> ```
+> This installs `apache-airflow`, `pytest`, and mock libraries for local structure tests. The Python SDK itself (`forge_sdk`, `forge_dq`) runs on the cluster — you don't install it locally.
 
 ---
 
@@ -204,17 +151,10 @@ The Spark Connect server runs as a persistent pod on the `forge-compute` cluster
 **Step 1: Get the Spark Connect server address**
 
 ```bash
-# Using forge-cli (recommended)
 forge job spark-connect-url
-
-# Or directly:
-kubectl --context forge-compute-dev \
-  get svc spark-connect \
-  -n spark-system \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
 
-The output is the internal IP of the Spark Connect load balancer service, e.g. `10.1.42.100`. The gRPC port is always `15002`.
+This prints the Spark Connect endpoint, e.g. `sc://10.1.42.100:15002`. If you don't have the CLI set up yet, ask the platform team for the URL.
 
 **Step 2: Create a notebook**
 
@@ -255,7 +195,7 @@ export SPARK_CONNECT_URL="sc://10.1.42.100:15002"
 **Step 4: Read data**
 
 ```python
-ADLS_ACCOUNT = "forgestorageprod"
+ADLS_ACCOUNT = "forgeadlsdsengdev"   # dev account — ask platform team if unsure
 
 df = spark.read.format("delta").load(
     f"abfss://gold@{ADLS_ACCOUNT}.dfs.core.windows.net/sales/orders"
@@ -302,51 +242,18 @@ daily_volume = (
 daily_volume.limit(30).toPandas()
 ```
 
-### Debugging a Slow Query Using Spark UI
+### Debugging a Slow Query
 
-When a cell runs slowly, use the Spark UI to understand what is happening.
+When a cell runs slowly, the most useful signals are:
 
-**Step 1: Port-forward to the Spark Connect server's Spark UI**
-
-```bash
-# Find the Spark Connect server pod
-kubectl --context forge-compute-dev \
-  get pods -n spark-system \
-  -l app=spark-connect
-
-# Port-forward the Spark UI (port 4040 is the default)
-kubectl --context forge-compute-dev \
-  port-forward -n spark-system \
-  pod/spark-connect-server-0 4040:4040
-```
-
-Open `http://localhost:4040` in your browser. The Spark UI shows the active Spark application running the Connect server.
-
-**Step 2: Find your query in the Spark UI**
-
-Navigate to the **SQL / DataFrame** tab. You should see your recent queries listed by description. Each query shows:
-
-- Duration
-- Number of stages and tasks
-- Whether it read from cache or disk
-- The physical plan
-
-Click into a query to see the stage breakdown. Common problems to spot:
-
-| Symptom in Spark UI | Likely Cause | Fix |
+| Symptom | Likely Cause | Fix |
 |--------------------|--------------|-----|
-| One stage has 1 task, all others have 200 tasks | Data skew — one partition is huge | Repartition by a different key: `df.repartition(200, "order_date")` |
-| Many small tasks (< 1 MB each) | Too many small partitions (common after filter) | Coalesce: `df.coalesce(20)` after the filter |
-| Long shuffle stage | Large join or groupBy creating network IO | Check join type — consider `broadcast()` if one side is small |
-| Spill to disk (shown in stage metrics) | Insufficient executor memory for operation | Increase `spark.executor.memory` or reduce parallelism |
+| One stage runs much longer than others | Data skew — one partition is huge | Repartition by a different key: `df.repartition(200, "order_date")` |
+| Many small tasks (< 1 MB each) | Too many small partitions after a filter | Coalesce: `df.coalesce(20)` after the filter |
+| Long shuffle stage | Large join or groupBy | Check join type — consider `broadcast()` if one side is small |
+| `OutOfMemoryError` on executor | Insufficient executor memory | Ask the platform team to increase executor memory in the Spark Connect server config |
 
-**Step 3: Read the physical plan**
-
-In the SQL tab, click **Details** on any query to see the full Spark physical plan. Look for:
-
-- `FileScan delta` — confirms Delta file pruning is working (check `PushedFilters` — if your filter column is a partition column, it should be there)
-- `BroadcastHashJoin` vs `SortMergeJoin` — BroadcastHashJoin is faster for joins where one side fits in memory
-- `Exchange` nodes — these are shuffle boundaries, each one is expensive
+For deeper profiling (Spark UI, stage breakdown, physical plan), contact the platform team — they can access the Spark UI via the cluster directly.
 
 ### Moving from Notebook to a Production Spark Job
 
@@ -355,14 +262,15 @@ Once your notebook logic is validated, extract it into a standalone Python file:
 **1. Create the job file**
 
 ```bash
-# Job files live in orchestration/spark/jobs/
-touch orchestration/spark/jobs/transform_sales_orders.py
+# Job files live in the DSEngCoreData repo under sources/dev/CoreData/src/<domain>/
+# Example:
+touch D:/Repos/DSEngCoreData/sources/dev/CoreData/src/sales/transform_sales_orders.py
 ```
 
 **2. Structure the production job**
 
 ```python
-# orchestration/spark/jobs/transform_sales_orders.py
+# sources/dev/CoreData/src/sales/transform_sales_orders.py  (in DSEngCoreData repo)
 
 import sys
 import logging
@@ -441,39 +349,35 @@ if __name__ == "__main__":
 | Logging | `print()` | `logging.getLogger()` — output captured by Spark log driver |
 | Testing | Interactive | Unit tests with `pytest` using local SparkSession fixture |
 
-**4. Upload the job file and define the SparkApplication CRD**
+**4. Deploy the job**
+
+Use `sync-jobs.sh` from the `DSEngCoreInfra` repo — it handles DAG generation, ADLS upload, dag-processor injection, and portal registration in one step:
 
 ```bash
-# Upload job to ADLS code container
-az storage blob upload \
-  --account-name "forgestoragedev" \
-  --container-name "code" \
-  --name "jobs/transform_sales_orders.py" \
-  --file "orchestration/spark/jobs/transform_sales_orders.py" \
-  --auth-mode login
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" \
+  bash infra/scripts/sync-jobs.sh --job transform_sales_orders \
+  --data-repo D:/Repos/DSEngCoreData
 ```
-
-The Airflow DAG references this path directly in the `SparkApplication` CRD definition (see DAG Development section).
 
 ---
 
-## 3.5 Trino CLI
+### 3.5 Trino CLI
 
 Trino is exposed over HTTPS via the Trino auth proxy. The proxy validates your Azure AD Bearer token, extracts your email, and injects `X-Trino-User` for all queries — no separate username needed.
 
-### Prerequisites
+#### Prerequisites
 
 - [Trino CLI](https://trino.io/docs/current/client/cli.html) (`trino` on PATH)
 - Azure CLI logged in (`az login`)
 
-### Connect
+#### Connect
 
 ```powershell
 # 1. Get a Bearer token (uses your existing az login session — no extra consent needed)
 $token = az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv
 
 # 2. Connect
-trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com `
+trino --server=https://forge-compute-{alias}-dev.northcentralus.cloudapp.azure.com `
       --access-token="$token" `
       --catalog=hive
 ```
@@ -481,14 +385,14 @@ trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.
 ```bash
 # bash / WSL
 TOKEN=$(az account get-access-token --resource https://management.azure.com/ --query accessToken -o tsv)
-trino --server=https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com \
+trino --server=https://forge-compute-{alias}-dev.northcentralus.cloudapp.azure.com \
       --access-token="$TOKEN" \
       --catalog=hive
 ```
 
 > **Why ARM token?** The auth proxy validates tenant + domain only (`verify_aud: False`). Any valid Azure AD token from your corporate account works. The `api://d0ce7c35-...` resource also works once admin consent is granted.
 
-### Query examples
+#### Query examples
 
 ```sql
 -- List catalogs
@@ -507,15 +411,15 @@ SELECT node_id, state FROM system.runtime.nodes;
 SELECT query_id, state, query FROM system.runtime.queries WHERE state = 'RUNNING';
 ```
 
-### Token refresh
+#### Token refresh
 
 ARM tokens expire after ~1 hour. Re-run the `az account get-access-token` command and reconnect.
 
-### Trino UI
+#### Trino UI
 
 The web UI is accessible at:
 ```
-https://forge-compute-prproddu-dev.northcentralus.cloudapp.azure.com/ui/
+https://forge-compute-{alias}-dev.northcentralus.cloudapp.azure.com/ui/
 ```
 
 Sign in with your corporate account via the OAuth2 flow. The UI shows `trino-user` in the top-right (cosmetic only) — queries are attributed to your actual username via `X-Trino-User`.
@@ -524,11 +428,26 @@ Sign in with your corporate account via the OAuth2 flow. The UI shows `trino-use
 
 ## 4. Airflow DAG Development
 
+> **New pipeline?** Follow the step-by-step runbook: [Create a New Pipeline](../runbooks/05-create-pipeline.md) — manifest → generate → sync → dev test → PR.
+
 ### Authoring a DAG — Codegen First
 
 DAG files in `orchestration/airflow/dags/` are **generated by `forge generate`** from a `.forge.ts` manifest. Do not write DAG files directly for platform-managed pipelines — the generator produces them and will overwrite any manual edits on the next `forge generate` run.
 
 The manifest controls: schedule, `start_date`, `end_date` (for bounded runs), `triggeredBy` (upstream DAG dependency), DQ rules, Spark resources, and partition strategy. The generator emits a DAG that imports `ForgeSparkOperator` and `ForgeDqGateOperator` from the `forge_airflow` plugin.
+
+**DAG tags stamped by the generator** — the following tags are written to every generated DAG and consumed by the portal:
+
+| Tag | Example | Portal use |
+|-----|---------|------------|
+| `layer:<layer>` | `layer:bronze` | Layer badge in pipeline activity table |
+| `source:<name>` | `source:TlcYellowTrip` | Internal source dataset name |
+| `output:<name>` | `output:NycTaxiBronze` | Output dataset shown in pipeline activity table |
+| `executors:<n>` | `executors:2` | Executor count shown in pipeline activity (e.g. `2×4c 8g`) |
+| `exec_cores:<n>` | `exec_cores:4` | Cores per executor (hover tooltip: "2 executor instances · 4 cores each · 8g memory") |
+| `exec_mem:<m>` | `exec_mem:8g` | Memory per executor |
+
+These tags are read-only to application code — do not add or remove them manually, they are regenerated on every `forge generate` run.
 
 **Generated DAG structure — bronze (no upstream dependency):**
 
@@ -666,18 +585,16 @@ Once structure tests pass, sync the pipeline to dev using `sync-jobs.sh`:
 ```bash
 # Sync the job — generates DAG, uploads to ADLS, pulls into dag-processor
 FORGE_ENV="dev" OWNER_ALIAS="DSEng" \
-  bash infra/scripts/sync-jobs.sh --job transform_sales_orders
+  bash infra/scripts/sync-jobs.sh --job transform_sales_orders --data-repo <path-to-data-repo>
 ```
 
-The DAG appears in Airflow within ~30 seconds (dag-processor rescans every 30s). Then trigger it:
+The DAG appears in Airflow within ~30 seconds. Then trigger it:
 
 ```bash
-# Via Airflow CLI on the orchestration cluster
-kubectl exec <dag-processor-pod> -n airflow -c dag-processor \
-  --context aks-forge-orchestration-prproddu-dev \
-  -- airflow dags trigger transform_sales_orders \
-     --conf '{"run_date": "2026-03-24"}'
+forge dag trigger transform_sales_orders --env dev --conf '{"run_date": "2026-03-24"}'
 ```
+
+Or use the portal: **Pipelines → transform_sales_orders → Trigger**.
 
 The dev cluster runs `KubernetesExecutor` — tasks execute as pods with real access to ADLS, Key Vault, Spark Connect, and ACR. This is the only reliable way to test actual task execution.
 
@@ -701,39 +618,25 @@ DAGs stored in ADLS survive pod restarts — the `dag-restore` init container re
 
 **To remove a DAG:**
 ```bash
-# 1. Delete from ADLS (prevents restoration on next restart)
+# Delete from ADLS — prevents it being restored on next pod restart
 az storage blob delete \
   --account-name forgeadlsdsengdev --container-name code \
   --name dags/<name>_dag.py --auth-mode login
-
-# 2. Remove from the running pod immediately
-kubectl exec <dag-processor-pod> -n airflow -c dag-processor \
-  -- rm /opt/airflow/dags/<name>_dag.py
 ```
+The DAG will disappear from Airflow the next time the dag-processor pod restarts. For immediate removal, ask the platform team.
 
 ### Triggering a Test Run in the Dev Environment
 
 To trigger a test run in the dev environment without waiting for the schedule:
 
 ```bash
-# Using forge-cli
 forge dag trigger transform_sales_orders --env dev --conf '{"run_date": "2026-03-24"}'
-
-# Or directly via Airflow CLI (on orchestration cluster):
-kubectl --context forge-orchestration-dev \
-  exec -n airflow deploy/airflow-scheduler \
-  -- airflow dags trigger transform_sales_orders \
-     --conf '{"run_date": "2026-03-24"}'
 ```
 
-Monitor the run:
+Monitor in the portal: **Pipelines → transform_sales_orders → [run] → task graph**. Or via CLI:
 
 ```bash
-# Watch task state in terminal
-forge dag status transform_sales_orders --run-id manual__...
-
-# Or in the portal:
-open https://portal.forge.internal/pipelines/transform_sales_orders
+forge dag status transform_sales_orders --latest
 ```
 
 ---
@@ -841,12 +744,15 @@ Before adding the ruleset to the production DAG, validate it against real data i
 
 ```python
 # Cell 1: Establish session
+import os
 from pyspark.sql import SparkSession
-spark = SparkSession.builder.remote("sc://10.1.42.100:15002").getOrCreate()
+spark = SparkSession.builder \
+    .remote(os.environ["SPARK_CONNECT_URL"]) \
+    .getOrCreate()
 
 # Cell 2: Read the dataset
 df = spark.read.format("delta").load(
-    "abfss://silver@forgestorageprod.dfs.core.windows.net/sales/orders"
+    "abfss://silver@forgeadlsdsengdev.dfs.core.windows.net/sales/orders"
 )
 print(f"Row count: {df.count():,}")
 df.printSchema()
@@ -919,24 +825,59 @@ A new data source has arrived: a daily CSV export of supplier invoices placed in
 
 ---
 
+### Step 0: Register the External Data Source (if needed)
+
+If your pipeline reads from an **external** source (Azure Open Datasets, an external storage account, a partner ADLS container), register it in the portal before writing the manifest. This gives the manifest a named slug to reference instead of a raw ABFS path.
+
+1. Open the portal → **Data Sources** → **Add Source**
+2. Fill in the connection details (account, container, base path, auth type)
+3. Click **Test** to verify connectivity, then **Save**
+4. Note the slug (the `name` field, e.g. `nyc-taxi-yellow`)
+
+In the manifest, use `registeredSource` instead of `rawPath`:
+
+```typescript
+source: {
+  registeredSource: "nyc-taxi-yellow",   // slug from the portal Data Sources page
+  sourcePath: "puYear={_year}/puMonth={_month}/*.parquet",  // appended after basePath
+  name: "TlcYellowTrip",
+  version: 1,
+  format: "parquet",
+  options: { mergeSchema: "true" },
+},
+```
+
+`forge generate` calls the portal API at codegen time to resolve `registeredSource` → `account` + `container` + `basePath`, then constructs the full ABFS path. The resolved path is baked into the generated job — the runtime Spark job does not call the portal API.
+
+> **Internal sources** (data already in your Forge ADLS — e.g. bronze → silver) use `path` (internal ADLS path spec) instead. Only external sources need `registeredSource`.
+
+> **Duplicate detection:** The portal rejects registration of a source with the same `account` + `container` + `base_path` as an existing source (returns 409 with the conflicting source name). Use `PUT /api/v1/datasources/{id}` to update an existing source.
+
+---
+
 ### Step 1: Branch and Scaffold
 
+Forge pipelines span two repos: Spark jobs live in **DSEngCoreData**, everything else (DAG tests, DQ rules) in **DSEngCoreInfra**.
+
 ```bash
+# In DSEngCoreData — Spark job source
+cd D:/Repos/DSEngCoreData
 git checkout main && git pull
 git checkout -b feature/ingest-supplier-invoices
+mkdir -p sources/dev/CoreData/src/finance/IngestSupplierInvoices/jobs
+mkdir -p sources/dev/CoreData/src/finance/IngestSupplierInvoices/dq
 
-# Create directories
-mkdir -p orchestration/airflow/dags/finance
+# In DSEngCoreInfra — DAG tests
+cd D:/Repos/DSEngCoreInfra/Forge
+git checkout main && git pull
+git checkout -b feature/ingest-supplier-invoices
 mkdir -p orchestration/airflow/tests/finance
-mkdir -p orchestration/spark/jobs/finance
-mkdir -p orchestration/spark/crds/finance
-mkdir -p orchestration/dq/rules/finance
 ```
 
 ### Step 2: Write the Raw Ingestion Spark Job
 
 ```python
-# orchestration/spark/jobs/finance/ingest_raw_supplier_invoices.py
+# sources/dev/CoreData/src/finance/IngestSupplierInvoices/jobs/ingest_raw_supplier_invoices.py  (DSEngCoreData repo)
 
 import sys
 import logging
@@ -996,7 +937,7 @@ if __name__ == "__main__":
 ### Step 3: Write the Curated Transform Spark Job
 
 ```python
-# orchestration/spark/jobs/finance/transform_curated_supplier_invoices.py
+# sources/dev/CoreData/src/finance/IngestSupplierInvoices/jobs/transform_curated_supplier_invoices.py  (DSEngCoreData repo)
 
 import sys
 import logging
@@ -1072,24 +1013,10 @@ if __name__ == "__main__":
     main()
 ```
 
-### Step 4: Upload Job Files
-
-```bash
-# Upload both job files to the ADLS code container (dev environment)
-for job in ingest_raw_supplier_invoices.py transform_curated_supplier_invoices.py; do
-  az storage blob upload \
-    --account-name "forgestoragedev" \
-    --container-name "code" \
-    --name "jobs/finance/${job}" \
-    --file "orchestration/spark/jobs/finance/${job}" \
-    --auth-mode login
-done
-```
-
-### Step 5: Write the DQ Ruleset
+### Step 4: Write the DQ Ruleset
 
 ```yaml
-# orchestration/dq/rules/finance/supplier_invoices.yaml
+# sources/dev/CoreData/src/finance/IngestSupplierInvoices/dq/supplier_invoices.yaml  (DSEngCoreData repo)
 
 dataset:
   namespace: curated
@@ -1142,74 +1069,79 @@ rules:
 Validate the ruleset:
 
 ```bash
-forge dq validate orchestration/dq/rules/finance/supplier_invoices.yaml
+forge dq validate sources/dev/CoreData/src/finance/IngestSupplierInvoices/dq/supplier_invoices.yaml
 # Output: ✓ Ruleset valid (6 rules, 0 errors)
 ```
 
-### Step 6: Test the Ruleset Against Sampled Data in a Notebook
+### Step 5: Test the Ruleset Against Sampled Data in a Notebook
 
 ```python
 # In VS Code notebook, connected to Spark Connect (dev environment):
-
+import os
 from pyspark.sql import SparkSession
 from forge.dq.sdk import DQRunner, load_ruleset
 
-spark = SparkSession.builder.remote("sc://10.1.42.100:15002").getOrCreate()
+spark = SparkSession.builder \
+    .remote(os.environ["SPARK_CONNECT_URL"]) \
+    .getOrCreate()
 
-# Read the dev curated table (assuming Step 3 was already run in dev)
+# Read the dev curated table (after Step 6 syncs and runs once)
 df = spark.read.format("delta").load(
-    "abfss://silver@forgestoragedev.dfs.core.windows.net/finance/supplier_invoices"
+    "abfss://silver@forgeadlsdsengdev.dfs.core.windows.net/finance/supplier_invoices"
 )
 
-ruleset = load_ruleset("orchestration/dq/rules/finance/supplier_invoices.yaml")
+ruleset = load_ruleset("sources/dev/CoreData/src/finance/IngestSupplierInvoices/dq/supplier_invoices.yaml")
 runner = DQRunner(spark=spark, ruleset=ruleset)
 report = runner.run(df)
 
 assert report.passed, f"DQ failed in dev: {report.critical_summary()}"
-print("All DQ rules passed on dev data — ready for production DAG")
+print("All DQ rules passed on dev data — ready to sync and open a PR")
 ```
 
-### Step 7: Generate the Airflow DAG
+### Step 6: Sync to Dev and Test
 
-The DAG is generated from the manifest — do not write it by hand.
+`sync-jobs.sh` does everything in one step: generates the DAG, uploads Spark job + DQ rules + DAG to ADLS, injects the DAG into the running dag-processor pod, and registers the pipeline in the portal.
 
 ```bash
-# Generate job files for this pipeline
-forge generate --job ingest_supplier_invoices --manifest-dir src/spark/jobs --dir .
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" \
+  bash infra/scripts/sync-jobs.sh --job ingest_supplier_invoices --data-repo <path-to-data-repo>
 ```
 
-This produces `src/airflow/dags/ingestion/ingest_supplier_invoices_dag.py` (fully managed). The generator emits `ForgeSparkOperator` and `ForgeDqGateOperator` calls. Platform config comes from Airflow Variables — nothing is hardcoded in the DAG.
-
-If the pipeline depends on an upstream DAG, set `triggeredBy: "upstream_dag_id"` in the manifest. The generator adds an `ExternalTaskSensor` at the top of the DAG. The upstream DAG does not need to be modified.
-
-If the backfill has a defined end date, set `endDate: "YYYY-MM-DD"` in the manifest. The generator writes `end_date=datetime(...)` into the `DAG(...)` constructor — without it, a `catchup=True` DAG runs indefinitely.
-
-### Step 8: Run Tests, Open PR, and Merge
+Wait ~30 seconds, then trigger a test run:
 
 ```bash
-# DAG unit tests
+forge dag trigger ingest_supplier_invoices --env dev --conf '{"run_date": "2026-04-01"}'
+```
+
+Monitor progress in the portal: **Pipelines → ingest_supplier_invoices → [run] → task graph**.
+
+### Step 7: Run Tests, Open PR, and Merge
+
+```bash
+# DAG unit tests (in DSEngCoreInfra repo)
 pytest orchestration/airflow/tests/finance/ -v
 
-# DQ ruleset validation
-forge dq validate orchestration/dq/rules/finance/supplier_invoices.yaml
+# DQ ruleset validation (in DSEngCoreData repo)
+forge dq validate sources/dev/CoreData/src/finance/IngestSupplierInvoices/dq/supplier_invoices.yaml
 
-# Push and open PR
-git add orchestration/
+# Commit and push — two repos, two PRs
+# DSEngCoreData (Spark jobs + DQ rules):
+cd D:/Repos/DSEngCoreData
+git add sources/dev/CoreData/src/finance/
 git commit -m "feat: add supplier invoices ingestion pipeline"
 git push origin feature/ingest-supplier-invoices
 gh pr create --title "feat: supplier invoices ingestion pipeline" \
-  --body "Adds raw ingestion, curated transform, DQ validation, and serving publish for the daily supplier invoices export from the finance ERP system."
+  --body "Adds raw ingestion, curated transform, and DQ rules for the daily supplier invoices export."
+
+# DSEngCoreInfra (DAG tests):
+cd D:/Repos/DSEngCoreInfra/Forge
+git add orchestration/airflow/tests/finance/
+git commit -m "feat: add DAG tests for supplier invoices pipeline"
+git push origin feature/ingest-supplier-invoices
+gh pr create --title "test: DAG unit tests for supplier invoices pipeline"
 ```
 
-After sync:
-
-1. The DAG is in ADLS `code/dags/` and in the running dag-processor pod
-2. Airflow dag-processor picks it up within 30s and schedules for next execution
-3. At 05:00 UTC the next day, the pipeline runs
-4. By 07:00 UTC, `serving.finance.supplier_invoices` is queryable via Trino
-5. The portal shows the pipeline, the dataset, the DQ results, and the lineage graph
-
-> In **prod**, step 1 happens automatically when a PR merges to `main` — git-sync delivers the DAG within 30s. No manual `sync-jobs.sh` needed in prod.
+After both PRs merge, the pipeline is live in dev — visible in the portal under **Pipelines**, queryable via Trino at `hive.silver.supplier_invoices`.
 
 ---
 
@@ -1236,7 +1168,6 @@ There is one long-lived branch: `main`. Every change arrives via a short-lived f
 | `fix/` | Bug fix in existing pipeline or platform code |
 | `chore/` | Dependency upgrades, tooling changes, refactoring |
 | `docs/` | Documentation updates only |
-| `hotfix/` | Emergency production fix (rare — goes through the same PR process, just expedited) |
 
 ### Pull Request Requirements
 
@@ -1274,26 +1205,7 @@ GitHub / Azure DevOps                      forge-orchestration-dev
 
 Git-synced resources (DAG files, DQ rules) appear in dev within 60–90 seconds of merge. Kubernetes resources (new pod images, config map changes) are updated by ADO Pipeline within minutes.
 
-### Promoting to Production via Git Tag
-
-Production is **not** automatically synced. Production deployments require an explicit Git tag:
-
-```bash
-# After validating the change in dev:
-git tag prod-2026-03-24-001 -m "Deploy supplier invoices pipeline to prod"
-git push origin prod-2026-03-24-001
-```
-
-The production ADO release pipeline is configured to trigger on `prod-*` tags. On push, the pipeline runs `helm upgrade` against the prod cluster.
-
-The tag convention is `prod-{date}-{seq}`, making it trivial to roll back:
-
-```bash
-# Rollback: tag the previous production commit
-git tag prod-2026-03-23-003 <prev-sha> -m "Rollback: revert supplier invoices pipeline"
-git push origin prod-2026-03-23-003
-# ADO Pipeline deploys the tagged commit — production returns to the prior state
-```
+> **Production promotion** is handled by the platform team via git tags after your PR merges and is validated in dev. You don't need to do anything — open your PR, get it reviewed, and the platform team handles the rest.
 
 ---
 
@@ -1322,23 +1234,15 @@ forge dag logs transform_sales_orders --task spark_transform_curated --run-id sc
 
 **Step 2: Read the Spark driver log**
 
-The Spark driver log contains the actual Python traceback. The driver pod name appears in the Airflow task log:
+The driver log contains the actual Python traceback. Get it via the portal (click the task → **Logs**) or via the forge CLI:
 
 ```bash
-# Get the driver pod name from the SparkApplication
-kubectl --context forge-compute-prod \
-  get sparkapplication -n spark-jobs \
-  -l forge.io/pipeline=transform_sales_orders \
-  --sort-by=.metadata.creationTimestamp | tail -1
-
-# Read driver logs
-kubectl --context forge-compute-prod \
-  logs -n spark-jobs \
-  transform-sales-orders-<sha>-driver \
-  --tail=200
+forge dag logs transform_sales_orders \
+  --task spark_transform_curated \
+  --run-id scheduled__2026-03-24T06:00:00
 ```
 
-The driver log will show the Python traceback at the point of failure. Common errors:
+Common errors:
 
 | Error | Cause |
 |-------|-------|
@@ -1348,40 +1252,9 @@ The driver log will show the Python traceback at the point of failure. Common er
 | `org.apache.spark.SparkException: Job aborted due to stage failure` | Task-level failure — look at executor logs for the specific task error |
 | `DeltaConcurrentModificationException` | Two jobs wrote to the same Delta table simultaneously — fix the pipeline scheduling to serialise writes |
 
-**Step 3: Read executor logs (for task-level failures)**
+**Step 3: Deeper debugging (executor logs, Spark UI)**
 
-When the driver log says "stage aborted" without a clear Python error, the problem is in an executor:
-
-```bash
-# List all pods from this Spark application (executor pods)
-kubectl --context forge-compute-prod \
-  get pods -n spark-jobs \
-  -l spark-app-selector=<app-id> \
-  --field-selector=status.phase=Failed
-
-# Get logs from a failed executor pod
-kubectl --context forge-compute-prod \
-  logs -n spark-jobs \
-  transform-sales-orders-<sha>-exec-5
-```
-
-Executor logs contain the exact UDF or serialization error if the failure happened inside a Spark task.
-
-**Step 4: Use the Spark UI for slow-running jobs**
-
-For jobs that run but are slow (timing out rather than failing with an exception):
-
-```bash
-# Port-forward the driver pod's Spark UI
-kubectl --context forge-compute-prod \
-  port-forward -n spark-jobs \
-  transform-sales-orders-<sha>-driver 4040:4040
-```
-
-Open `http://localhost:4040`. Navigate to:
-- **Stages** — find stages with very long durations or high task-level variation (data skew)
-- **Executors** — check for heavy GC time (> 5% of executor time in GC = memory pressure)
-- **SQL/DataFrame** — find the slowest query; check if partition pruning is happening
+If the driver log says "stage aborted" without a clear Python error, the failure is inside an executor. This requires cluster access — contact the platform team with the run ID and they can pull executor logs and Spark UI details for you.
 
 ### Debugging a Failed Airflow Task (Non-Spark)
 
@@ -1391,24 +1264,15 @@ In the Developer Portal, navigate to **Pipelines → [dag] → [run] → [task] 
 
 Common causes for DQ task failure:
 - `DQ CRITICAL failures: ...` — a CRITICAL DQ rule failed; see next section
-- `ConnectionRefusedError` connecting to Trino — check Trino coordinator pod health: `kubectl get pods -n trino`
+- `ConnectionRefusedError` connecting to Trino — check Trino status in the portal (**Platform → Services → Trino**) or contact the platform team
 - `FileNotFoundError` for the DQ rules YAML — the git-sync did not pick up the new file yet (wait 60s and retry)
 
 To retry a failed task without re-running the full DAG:
 
 ```bash
-# Clear and re-run only the failed task
 forge dag retry transform_sales_orders \
   --task validate_dq \
   --run-id scheduled__2026-03-24T06:00:00
-
-# Or via Airflow CLI:
-kubectl --context forge-orchestration-prod \
-  exec -n airflow deploy/airflow-scheduler \
-  -- airflow tasks clear transform_sales_orders \
-     --task-regex validate_dq \
-     --run-id scheduled__2026-03-24T06:00:00 \
-     --yes
 ```
 
 ### Debugging a DQ Failure
@@ -1456,51 +1320,11 @@ If DQ passes on retry, Airflow continues to `publish_serving` automatically.
 
 ### Debugging Missing Lineage
 
-**Symptom:** The lineage graph for `silver/sales/orders` does not show the upstream `bronze/sales/orders` node, or the graph is incomplete.
+**Symptom:** The lineage graph for `silver/sales/orders` is missing upstream or downstream nodes.
 
-**Step 1: Check whether OpenLineage events were emitted**
+Check the portal: **Lineage → silver/sales/orders → [job node] → Run detail → Events**. Each job run should show both a START and a COMPLETE event. If only START is present, the Spark job crashed before the OpenLineage event was sent — fix the underlying job failure first and the lineage will be emitted on the next successful run.
 
-In Purview: **portal → Lineage → silver/sales/orders → [job node] → Run detail → Events** (or via the Developer Portal lineage explorer, which queries the Purview Data Map API).
-
-Each job run should show START and COMPLETE (or FAIL) events. If only START is present with no COMPLETE, the OpenLineage library failed to emit the COMPLETE event (usually because the Spark job crashed before the event was sent).
-
-Check the Airflow scheduler log for OpenLineage transport errors (events are emitted in-process by the `openlineage-airflow` package, so failures surface in the scheduler log):
-
-```bash
-kubectl --context forge-orchestration-prod \
-  logs -n airflow deploy/airflow-scheduler \
-  --tail=200 | grep -i openlineage
-```
-
-**Step 2: Check Airflow OpenLineage integration**
-
-The OpenLineage Airflow integration emits events via the `openlineage-airflow` package installed in the Airflow image. If it is misconfigured, no events are sent.
-
-Check the environment variables on the Airflow scheduler pod:
-
-```bash
-kubectl --context forge-orchestration-prod \
-  exec -n airflow deploy/airflow-scheduler \
-  -- env | grep OPENLINEAGE
-# Expected:
-# OPENLINEAGE_URL=https://purview-forge-prod.purview.azure.com/dataMap/openlineage/namespaces/forge-prod/events
-# OPENLINEAGE_TRANSPORT={"type":"http","url":"...","auth":{"type":"azure_identity"}}
-# OPENLINEAGE_NAMESPACE=forge-prod
-```
-
-If `OPENLINEAGE_URL` is not set, the Airflow OpenLineage integration is silently disabled. Fix the Helm values and redeploy Airflow.
-
-**Step 3: Manually replay a run's lineage**
-
-If the events were missing due to a transient Purview endpoint outage, you can replay them:
-
-```bash
-# Trigger the DAG with lineage_replay=true flag
-forge dag trigger transform_sales_orders \
-  --conf '{"lineage_replay": true, "run_date": "2026-03-24"}'
-```
-
-The `lineage_replay` flag causes the Airflow OpenLineage plugin to re-emit the START and COMPLETE events using the original run timestamps.
+If the graph is incomplete after a successful run, contact the platform team — lineage transport config (Purview endpoint, namespace) requires cluster access to diagnose.
 
 ---
 
@@ -1522,7 +1346,7 @@ Exactly one thing is different between the dev and prod clusters: **sizing**. Ev
 |--------------|-----|------|
 | Spark container image tag | `spark:4.1.0` (same) | `spark:4.1.0` (same) |
 | Spark configuration (JVM, shuffle, memory fractions) | Identical | Identical |
-| Delta Lake 4.0.0 (same) |
+| Delta Lake version | 4.0.0 (same) | 4.0.0 (same) |
 | ADLS access method | Workload identity (same) | Workload identity (same) |
 | OpenLineage config | Points to `purview-forge-dev` endpoint | Points to `purview-forge-prod` endpoint |
 | Airflow configuration | `KubernetesExecutor` (same) | `KubernetesExecutor` (same) |
@@ -1556,13 +1380,11 @@ az storage blob delete \
   --account-name forgeadlsdsengdev --container-name code \
   --name dags/<old_dag_name>_dag.py --auth-mode login
 
-# 2. Remove from the running dag-processor pod immediately
-kubectl exec <dag-processor-pod> -n airflow -c dag-processor \
-  -- rm /opt/airflow/dags/<old_dag_name>_dag.py
-
-# 3. Sync the new DAG
-FORGE_ENV="dev" OWNER_ALIAS="DSEng" bash infra/scripts/sync-jobs.sh --job <new_job_name>
+# 2. Sync the new DAG (old one disappears on next dag-processor restart)
+FORGE_ENV="dev" OWNER_ALIAS="DSEng" \
+  bash infra/scripts/sync-jobs.sh --job <new_job_name> --data-repo D:/Repos/DSEngCoreData
 ```
+If you need the old DAG gone immediately (not waiting for a restart), ask the platform team.
 
 None of these rules apply in prod.
 
@@ -1576,7 +1398,7 @@ Both dev and prod run `KubernetesExecutor` — every task spawns a dedicated pod
 
 Always write tasks as stateless functions that communicate only via XCom or shared storage — this is enforced by the executor, not just a convention.
 
-The DAG unit tests (described in Section 3) do not test task execution — they test DAG structure. Actual task execution is tested in the dev environment using the `forge dag trigger` workflow.
+The DAG unit tests (described in Section 4) do not test task execution — they test DAG structure. Actual task execution is tested in the dev environment using the `forge dag trigger` workflow.
 
 ---
 
@@ -1611,8 +1433,6 @@ USAGE:
   forge job submit <crd-file> [options]
 
 OPTIONS:
-  --context       Kubernetes context (default: current context)
-  --namespace     Namespace to submit into (default: spark-jobs)
   --wait          Block until job completes or fails (default: false)
   --timeout       Max wait time in seconds (default: 3600)
   --param KEY=VAL Override SparkApplication spec fields (repeatable)
@@ -1620,15 +1440,14 @@ OPTIONS:
 EXAMPLES:
 
   # Submit a job and return immediately
-  forge job submit orchestration/spark/crds/finance/ingest_raw_supplier_invoices.yaml
+  forge job submit sources/dev/CoreData/src/finance/IngestSupplierInvoices/jobs/ingest_raw_supplier_invoices.yaml
 
   # Submit and wait for completion
-  forge job submit orchestration/spark/crds/transform_sales_orders.yaml --wait
+  forge job submit sources/dev/CoreData/src/sales/transform_sales_orders.yaml --wait
 
-  # Submit to dev cluster, overriding the ADLS account parameter
-  forge job submit orchestration/spark/crds/transform_sales_orders.yaml \
-    --context forge-compute-dev \
-    --param "spec.arguments[0]=forgestoragedev" \
+  # Override the ADLS account parameter
+  forge job submit sources/dev/CoreData/src/sales/transform_sales_orders.yaml \
+    --param "spec.arguments[0]=forgeadlsdsengdev" \
     --wait
 
 OUTPUT (--wait):
@@ -1790,12 +1609,6 @@ EXAMPLES:
   forge dag trigger transform_sales_orders \
     --env dev \
     --conf '{"run_date": "2026-03-24"}'
-
-  # Trigger prod run and wait
-  forge dag trigger transform_sales_orders \
-    --env prod \
-    --conf '{"run_date": "2026-03-24"}' \
-    --wait
 
   # Watch run status (without --wait)
   forge dag status transform_sales_orders --latest

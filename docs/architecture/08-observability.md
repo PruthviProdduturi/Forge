@@ -1,9 +1,9 @@
 # Forge — Observability Architecture
 
-> **Version:** 1.0
-> **Status:** Production
+> **Version:** 1.1
+> **Status:** Partially deployed — see section 1 for current state
 > **Audience:** Platform engineers, SREs, data engineers
-> **Last updated:** 2026-03-24
+> **Last updated:** 2026-04-24
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io) [![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=flat-square&logo=prometheus&logoColor=white)](https://prometheus.io) [![Grafana](https://img.shields.io/badge/Grafana-F46800?style=flat-square&logo=grafana&logoColor=white)](https://grafana.com) [![Azure Monitor](https://img.shields.io/badge/Azure%20Monitor-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/monitor)
 
@@ -26,6 +26,8 @@
 ---
 
 ## 1. Observability Philosophy
+
+> **Current state (dev, April 2026):** Log Analytics Workspaces and Container Insights are provisioned and collecting metrics/logs from both clusters. Azure Managed Grafana, Azure Monitor Alerts, and OpenTelemetry distributed tracing are **not yet deployed** — they are on the roadmap for the first prod promotion cycle. The `/observability` portal page is currently a "Coming Soon" placeholder; it will surface Grafana dashboard links and Azure Monitor metric queries once those services are provisioned.
 
 Forge treats observability as a first-class platform capability. Every pipeline run, every query, every data write must be observable without SSH access, without log scraping, and without tribal knowledge. As a pure-Azure platform, Forge uses the Azure-native observability stack, which covers four signals:
 

@@ -9,7 +9,7 @@
 
 > **Automated:** `forge-up.sh` phase **[7/8]** handles all orchestration cluster deployments
 > automatically (ingress-nginx, Airflow, Portal).
-> Run `bash infra/scripts/forge-up.sh --env dev --alias prproddu --skip-infra --git-pat <pat>` to
+> Run `bash infra/scripts/forge-up.sh --env dev --alias {alias} --skip-infra --git-pat <pat>` to
 > deploy (or re-deploy) all orchestration components in one step.
 >
 > This document is a reference for the individual components, access instructions, and
@@ -69,10 +69,10 @@ az keyvault secret set \
 
 | Property | Value |
 |----------|-------|
-| Helm chart | `oci://forgeacrprproddu.azurecr.io/helm/airflow:1.20.0` |
-| Image | `forgeacrprproddu.azurecr.io/airflow:3.1.8` |
+| Helm chart | `oci://forgeacr{alias}.azurecr.io/helm/airflow:1.20.0` |
+| Image | `forgeacr{alias}.azurecr.io/airflow:3.1.8` |
 | Executor | `LocalExecutor` (dev) / `KubernetesExecutor` (prod) |
-| Postgres DB | `psql-forge-prproddu-dev` → database `airflow` |
+| Postgres DB | `psql-forge-{alias}-dev` → database `airflow` |
 | DAG delivery (dev) | ADLS `code/dags/` + dag-restore init container (git-sync disabled) |
 | DAG delivery (prod) | git-sync from Azure DevOps main branch |
 | Values file | `infra/helm/orchestration/airflow/values.yaml` |
@@ -84,14 +84,14 @@ az keyvault secret set \
 # Webserver (UI) port-forward
 kubectl port-forward svc/airflow-webserver 8081:8080 \
   -n airflow \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 # Open: http://localhost:8081
 # Login: Azure AD OAuth2 (AAD group membership determines Airflow role)
 
 # API server port-forward (REST API /api/v2/*)
 kubectl port-forward svc/airflow-api-server 8082:8080 \
   -n airflow \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 # POST http://localhost:8082/auth/token  → JWT
 # GET  http://localhost:8082/api/v2/dags → list DAGs
 ```
@@ -99,7 +99,7 @@ kubectl port-forward svc/airflow-api-server 8082:8080 \
 ### Verify
 
 ```bash
-kubectl get pods -n airflow --context aks-forge-orchestration-prproddu-dev
+kubectl get pods -n airflow --context aks-forge-orchestration-{alias}-dev
 # NAME                                    READY   STATUS    RESTARTS
 # airflow-dag-processor-xxx               1/1     Running   0
 # airflow-scheduler-xxx                   1/1     Running   0
@@ -108,12 +108,12 @@ kubectl get pods -n airflow --context aks-forge-orchestration-prproddu-dev
 
 # Check dag-restore init container ran successfully (on pod start)
 kubectl logs -n airflow <dag-processor-pod> -c dag-restore \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 # Should show: dag-restore: N DAG(s) restored from forgeadlsdsengdev/code/dags/
 
 # Check DAGs are loaded
 kubectl exec -n airflow <dag-processor-pod> -c dag-processor \
-  --context aks-forge-orchestration-prproddu-dev \
+  --context aks-forge-orchestration-{alias}-dev \
   -- ls /opt/airflow/dags/
 ```
 
@@ -198,7 +198,7 @@ env:
 
 | Property | Value |
 |----------|-------|
-| URL | `https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com` |
+| URL | `https://forge-portal-{alias}-dev.westcentralus.cloudapp.azure.com` |
 | Auth mode | Azure AD OAuth2 via `portal-auth-proxy` (Flask + MSAL ConfidentialClientApp) |
 | TLS | cert-manager / Let's Encrypt (ACME HTTP-01 on NGINX ingress) |
 | Values file | `infra/helm/orchestration/portal/values.yaml` |
@@ -207,7 +207,7 @@ env:
 
 The portal is available publicly at:
 ```
-https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
+https://forge-portal-{alias}-dev.westcentralus.cloudapp.azure.com
 ```
 
 **Portal endpoints:**
@@ -226,19 +226,19 @@ https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
 # Option 1 — port-forward the NGINX ingress controller (full portal with API routing)
 kubectl port-forward svc/ingress-nginx-controller 8080:80 \
   -n ingress-nginx \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 # Open: http://localhost:8080
 
 # Option 2 — port-forward directly to portal-web (UI only)
 kubectl port-forward svc/portal-web 3001:3001 \
   -n portal \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 # Open: http://localhost:3001  (note: /api/* won't work — use Option 1 for full access)
 
 # Option 3 — port-forward directly to portal-api (API only)
 kubectl port-forward svc/portal-api 8080:8080 \
   -n portal \
-  --context aks-forge-orchestration-prproddu-dev
+  --context aks-forge-orchestration-{alias}-dev
 # Open: http://localhost:8080/api/health
 #        http://localhost:8080/api/docs
 ```
@@ -251,12 +251,12 @@ port-forward from Section 5.2 directly, or access it through the portal's proxy.
 ### Verify
 
 ```bash
-kubectl get pods -n portal --context aks-forge-orchestration-prproddu-dev
+kubectl get pods -n portal --context aks-forge-orchestration-{alias}-dev
 # NAME                    READY   STATUS    RESTARTS
 # portal-api-xxx          1/1     Running   0
 # portal-web-xxx          1/1     Running   0
 
-curl -s https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com/api/health
+curl -s https://forge-portal-{alias}-dev.westcentralus.cloudapp.azure.com/api/health
 # Expected: {"status": "ok", ...}
 ```
 
@@ -276,7 +276,7 @@ LoadBalancer IPs on the shared VNet:
 ```bash
 # Get Trino internal LB IP (set after compute cluster is deployed)
 kubectl get svc trino -n trino \
-  --context aks-forge-compute-prproddu-dev \
+  --context aks-forge-compute-{alias}-dev \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
 
@@ -365,7 +365,28 @@ env:
 
 ---
 
-## 5.6 Orchestration Cluster Readiness Checklist
+## 5.6 Portal Helm RBAC
+
+The portal Helm chart creates a `forge-portal-reader` ClusterRole and ClusterRoleBinding that grants the `portal-api` service account the following permissions:
+
+| Resource | Verbs | Purpose |
+|----------|-------|---------|
+| `pods` | `get`, `list`, `watch`, `delete` | Pod state for `/status` page; `delete` enables the clear-failed-pods button |
+| `nodes` | `get`, `list`, `watch` | Node pool info for the compute cluster status panel |
+
+The `delete` verb on pods is required for `DELETE /api/status/clear-failed` to work. If this permission is missing, the clear-failed button will return a `403 Forbidden` from the Kubernetes API.
+
+```yaml
+# infra/helm/orchestration/portal/templates/rbac.yaml (key excerpt)
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list", "watch", "delete"]
+```
+
+---
+
+## 5.7 Orchestration Cluster Readiness Checklist
 
 ```
 [ ] PostgreSQL airflow database created
@@ -380,13 +401,25 @@ env:
 [ ] Portal API pod Running:                kubectl get pods -n portal
 [ ] Portal Web pod Running
 [ ] ingress-nginx controller Running:      kubectl get pods -n ingress-nginx
-[ ] Portal accessible at https://forge-portal-prproddu-dev.westcentralus.cloudapp.azure.com
-[ ] Portal login: Azure AD OAuth2 (redirects to AAD on first visit)
+[ ] Portal accessible at https://forge-portal-{alias}-dev.northcentralus.cloudapp.azure.com
+[ ] Portal login: Azure AD OAuth2 (session cookie via portal-auth-proxy)
 [ ] Portal /api/health returns 200
 [ ] Portal /api/pipelines lists DAGs from Airflow
 [ ] Portal /api/status shows both cluster states
-[ ] Purview account reachable from cluster (non-000 HTTP status)
-[ ] id-forge-read-{env} has Purview Data Curator role
+[ ] Portal /status page: orch + compute panels side-by-side, pod lists visible
+[ ] forge-portal-reader ClusterRole present: kubectl get clusterrole forge-portal-reader
+[ ] portal-api MI has Reader on compute AKS cluster (required for compute panel)
 ```
 
 All green → proceed to Step 06 (CI/CD pipeline configuration).
+
+
+---
+
+## Next: Deploy Your First Pipeline
+
+Orchestration cluster is running. To deploy a data pipeline:
+
+→ **[Create a New Pipeline — Runbook](../runbooks/05-create-pipeline.md)**
+
+Covers: manifest, `forge generate`, `sync-jobs.sh`, dev test run, and PR.
