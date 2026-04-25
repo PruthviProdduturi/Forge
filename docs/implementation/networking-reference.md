@@ -82,7 +82,7 @@ fi
 
 ## 4. Create the Platform Resource Group
 
-This RG holds VNet, NSGs, private DNS zones, ADLS, Key Vault, Managed Grafana, Purview, and Azure Monitor.
+This RG holds VNet, NSGs, private DNS zones, ADLS, Key Vault, Managed Grafana, and Azure Monitor.
 
 ```bash
 az group create \
@@ -362,7 +362,6 @@ DNS_ZONES=(
   "privatelink.vaultcore.azure.net"
   "privatelink.postgres.database.azure.com"
   "privatelink.monitor.azure.com"
-  "privatelink.purview.azure.com"
 )
 
 for ZONE in "${DNS_ZONES[@]}"; do
@@ -423,7 +422,6 @@ privatelink.blob.core.windows.net
 privatelink.vaultcore.azure.net
 privatelink.postgres.database.azure.com
 privatelink.monitor.azure.com
-privatelink.purview.azure.com
 ```
 
 ---

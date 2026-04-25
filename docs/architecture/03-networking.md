@@ -132,7 +132,6 @@ Internet
 │  │  10.3.0.6   — Key Vault                       privatelink.vaultcore.azure.net    ││
 │  │  10.3.0.7   — Azure Container Registry        privatelink.azurecr.io             ││
 │  │  10.3.0.8   — PostgreSQL (Airflow metadata)   privatelink.postgres.database...   ││
-│  │  10.3.0.9   — Microsoft Purview               privatelink.purview.azure.com      ││
 │  │  10.3.0.10  — Azure Monitor (metrics)         privatelink.monitor.azure.com      ││
 │  │  10.3.0.11  — (reserved for Compute AKS API server, prod private cluster only)   ││
 │  │  10.3.0.12  — (reserved for Orch AKS API server, prod private cluster only)      ││
@@ -406,14 +405,11 @@ Azure DevOps Pipelines run on ADO-hosted agents that reach the AKS API server ov
 | Azure Key Vault | `kv-forge-{env}` | `pe-keyvault` | private-endpoints | 10.3.0.6 | `privatelink.vaultcore.azure.net` |
 | Azure Container Registry | `forgeacr<env>` | `pe-acr` | private-endpoints | 10.3.0.7 | `privatelink.azurecr.io` |
 | PostgreSQL (Airflow) | `psql-forge-airflow-<env>` | `pe-psql-airflow` | private-endpoints | 10.3.0.8 | `privatelink.postgres.database.azure.com` |
-| ~~Microsoft Purview~~ | ~~`purview-forge-<env>`~~ | ~~`pe-purview`~~ | private-endpoints | 10.3.0.9 | ~~`privatelink.purview.azure.com`~~ — **removed Apr 2026; Purview integration retired** |
 | Azure Monitor | `azmon-forge-<env>` | `pe-azmon` | private-endpoints | 10.3.0.10 | `privatelink.monitor.azure.com` |
 | AKS API (Compute) | `forge-compute` AKS | (managed by AKS) | private-endpoints | 10.3.0.11 | `privatelink.northcentralus.azmk8s.io` |
 | AKS API (Orchestration) | `forge-orchestration` AKS | (managed by AKS) | private-endpoints | 10.3.0.12 | `privatelink.northcentralus.azmk8s.io` |
 
 **Why two ADLS private endpoints?** ADLS Gen2 has two sub-resources that each need their own private endpoint: `dfs` (Data Lake Storage — used by Spark and all Hadoop/ABFS clients) and `blob` (Blob Storage — used by ACR layer pulls and some Azure SDKs that fall back to blob). Both must be present for complete private access.
-
-~~**Why is there a Purview private endpoint?**~~ Purview integration was retired in April 2026 — the private endpoint, `purview_client.py`, and all OpenLineage-to-Purview transport config have been removed. Lineage is now derived from Airflow DAG tags (source/output) via the portal API.
 
 ### 6.2 Private DNS Zone Linking
 
@@ -717,7 +713,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
-# Egress: allow Airflow to reach ADLS, Key Vault (Purview removed Apr 2026)
+# Egress: allow Airflow to reach ADLS, Key Vault
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -761,7 +757,7 @@ spec:
         - port: 443
           protocol: TCP
 ---
-# Allow Spark executors: egress to ADLS only (Purview removed Apr 2026)
+# Allow Spark executors: egress to ADLS only
 # No egress to internet, no egress to orchestration cluster directly
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -782,7 +778,6 @@ spec:
       ports:
         - port: 443
           protocol: TCP
-    # NOTE: Purview private endpoint (10.3.0.9) was removed Apr 2026 — rule no longer applied
     # CoreDNS (DNS resolution)
     - to:
         - namespaceSelector:

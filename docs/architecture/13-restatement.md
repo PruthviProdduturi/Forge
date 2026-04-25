@@ -196,7 +196,7 @@ A record is written to the Restatement Registry before any destructive action. T
   "restatement_id":      "rst-7f3a9c2b-...",
   "dataset_id":          "sales.orders",
   "pipeline_id":         "ingest_sales_orders",
-  "triggered_by":        "prproddu@contoso.com",
+  "triggered_by":        "{alias}@contoso.com",
   "triggered_at":        "2024-01-15T09:12:00Z",
   "date_range_start":    "2024-01-01",
   "date_range_end":      "2024-01-07",
@@ -261,7 +261,7 @@ The portal polls the Airflow REST API and the Restatement Registry to stream pro
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  Restatement in progress — sales.orders                      │
-│  rst-7f3a9c2b  ·  Triggered by prproddu  ·  09:12 UTC       │ 
+│  rst-7f3a9c2b  ·  Triggered by {alias}  ·  09:12 UTC       │ 
 │                                                              │
 │  Progress:  9 / 14 partitions complete                       │
 │  ████████████████░░░░░░░░  64%                               │
@@ -359,7 +359,7 @@ When a Bronze or Silver dataset is restated, its downstream derived datasets sho
 
 ### 5.1 Lineage-Driven Cascade
 
-The portal uses the **Purview lineage graph** to determine downstream impact. When the user selects cascade, the portal queries Purview for all datasets downstream of the target:
+The portal uses the **portal lineage API** to determine downstream impact. When the user selects cascade, the portal queries the lineage graph for all datasets downstream of the target:
 
 ```
 ingest_sales_orders  →  silver/sales/orders
@@ -540,7 +540,7 @@ When a restatement is IN_PROGRESS for a dataset, a banner is shown on the datase
 
 ```
 ⟳  Restatement in progress (rst-7f3a9c2b) · 9/14 partitions · ~4 min remaining
-   Triggered by prproddu · Reason: Source system redelivered corrected January data
+   Triggered by {alias} · Reason: Source system redelivered corrected January data
    [ View Progress ]
 ```
 
@@ -581,7 +581,7 @@ The following metrics are emitted to Azure Monitor:
 
 ### 9.3 Lineage
 
-Every restatement run emits OpenLineage events stamped with `restatement_id`. This means the Purview lineage graph shows:
+Every restatement run emits OpenLineage events stamped with `restatement_id`. This means the portal lineage graph shows:
 
 - **Normal runs** — steady-state lineage
 - **Restatement runs** — visually distinct (tagged `restatement`) overlaid on the same dataset nodes

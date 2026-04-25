@@ -8,7 +8,7 @@
 ---
 
 > **Automated:** `forge-up.sh` phase **[6/8]** handles all compute cluster deployments automatically.
-> Run `bash infra/scripts/forge-up.sh --env dev --alias prproddu --skip-infra --git-pat <pat>` to
+> Run `bash infra/scripts/forge-up.sh --env dev --alias {alias} --skip-infra --git-pat <pat>` to
 > deploy (or re-deploy) all compute components in one step.
 >
 > This document is a reference for the individual Helm commands and troubleshooting. You do not need

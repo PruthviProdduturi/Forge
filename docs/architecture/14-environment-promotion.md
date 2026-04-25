@@ -69,7 +69,7 @@ This is the single most important distinction for data engineers on the platform
 | **SparkSession** | `SparkSession.builder.remote("sc://10.x.x.x:15002").getOrCreate()` | `SparkSession.builder.appName("my-job").getOrCreate()` — Spark Operator injects cluster config |
 | **Use case** | Writing and iterating on transformation logic interactively | Running scheduled, automated, production-grade pipeline jobs |
 | **Data written** | To dev ADLS only (you control the path) | To the appropriate ADLS container per the pipeline definition |
-| **Lineage emitted** | No automatic lineage (sandbox is excluded) | Yes — OpenLineage emits START/COMPLETE/FAIL events to Purview |
+| **Lineage emitted** | No automatic lineage (sandbox is excluded) | Yes — OpenLineage emits START/COMPLETE/FAIL events (surfaced via portal lineage API) |
 
 ### The mental model
 
@@ -152,7 +152,7 @@ VS Code                            compute/spark/jobs/               Airflow DAG
 │    Spark UI → job completed, no OOM                                    │
 │    silver/crm/orders/ → data written correctly                         │
 │    DQ task → all checks passed                                         │
-│    Purview → lineage graph shows bronze → silver edge                  │
+│    Portal lineage graph shows bronze → silver edge                     │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │  dev run passes
                                      ▼
@@ -228,7 +228,7 @@ Before creating a `release/` branch, confirm:
 - [ ] All CI checks green on `main`
 - [ ] Job ran successfully in dev (Spark Operator — not just Spark Connect interactive)
 - [ ] DQ checks passed in dev
-- [ ] Lineage graph visible in Purview dev
+- [ ] Lineage graph visible in the Developer Portal (dev)
 - [ ] No pending infra `what-if` changes that need separate review
 - [ ] Data volume in dev run is representative (not just a 10-row sample)
 
@@ -242,7 +242,6 @@ Before creating a `release/` branch, confirm:
 | Spark Operator | ✅ Yes | ✅ Yes |
 | Trino | ✅ Yes | ✅ Yes |
 | Airflow | ✅ Yes (git-sync from `main`) | ✅ Yes (git-sync from release tag) |
-| Microsoft Purview | ✅ Yes | ✅ Yes |
 | Azure Managed Grafana | ✅ Yes | ✅ Yes |
 | Sandbox ADLS container | ✅ Yes (28-day TTL) | ❌ No |
 | ADLS bronze/silver/gold | ✅ dev account | ✅ prod account |

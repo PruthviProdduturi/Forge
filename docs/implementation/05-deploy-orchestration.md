@@ -20,8 +20,7 @@
 
 ## Overview
 
-The orchestration cluster hosts Airflow and the Developer Portal. Lineage is handled by Microsoft
-Purview — a managed service, no in-cluster deployment required. Deploy in this order:
+The orchestration cluster hosts Airflow and the Developer Portal. Lineage is derived from Airflow DAG tags (source/output) and surfaced via the portal lineage API. Deploy in this order:
 
 ```
 1. PostgreSQL setup       ← metadata DB for Airflow (Azure managed, configured by forge-up.sh [3/7])
@@ -317,50 +316,6 @@ output: {
     assetName: "NycTaxi",
   },
 }
-```
-
----
-
-## 5.5 Purview OpenLineage Integration
-
-Microsoft Purview is the lineage backend — a managed Azure service provisioned via Bicep (Step 03).
-No in-cluster deployment is required. Airflow emits OpenLineage events automatically via the
-`openlineage-airflow` provider.
-
-### Assign Purview Data Curator role
-
-```bash
-PURVIEW_ACCOUNT="purview-forge-{env}"
-
-az purview account add-root-collection-admin \
-  --account-name "${PURVIEW_ACCOUNT}" \
-  --resource-group rg-forge-platform-{env} \
-  --object-id "$(az identity show \
-    --name id-forge-read-{env} \
-    --resource-group rg-forge-platform-{env} \
-    --query principalId -o tsv)"
-```
-
-Or in the Purview governance portal:
-1. Open `https://purview-forge-{env}.purview.azure.com`
-2. Go to **Data Map** → **Collections** → root collection → **Role assignments**
-3. Add `id-forge-read-{env}` to the **Data Curators** role
-
-### Airflow values for OpenLineage
-
-```yaml
-env:
-  - name: AIRFLOW__LINEAGE__BACKEND
-    value: "openlineage.airflow.OpenLineageBackend"
-  - name: OPENLINEAGE_URL
-    value: "https://purview-forge-{env}.purview.azure.com"
-  - name: OPENLINEAGE_TRANSPORT
-    value: >-
-      {"type":"http",
-       "url":"https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events",
-       "auth":{"type":"azure_identity"}}
-  - name: OPENLINEAGE_NAMESPACE
-    value: "forge-{env}"
 ```
 
 ---

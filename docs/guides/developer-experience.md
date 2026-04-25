@@ -1324,7 +1324,7 @@ If DQ passes on retry, Airflow continues to `publish_serving` automatically.
 
 Check the portal: **Lineage → silver/sales/orders → [job node] → Run detail → Events**. Each job run should show both a START and a COMPLETE event. If only START is present, the Spark job crashed before the OpenLineage event was sent — fix the underlying job failure first and the lineage will be emitted on the next successful run.
 
-If the graph is incomplete after a successful run, check that the DAG was generated with the correct `source:` and `output:` tags (regenerate with `forge generate` if needed, then re-sync). The portal lineage API uses these tags to build the graph — it does not use OpenLineage or Purview.
+If the graph is incomplete after a successful run, check that the DAG was generated with the correct `source:` and `output:` tags (regenerate with `forge generate` if needed, then re-sync). The portal lineage API uses these tags to build the graph.
 
 ---
 

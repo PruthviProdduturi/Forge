@@ -63,13 +63,13 @@ The shared ACR is created by `infra/bicep/environments/shared/main.bicep`.
 
 | Deployment type | Registry name | Example |
 |----------------|--------------|---------|
-| Personal dev (with `ownerAlias`) | `forgeacr{alias}` | `forgeacrprproddu` |
+| Personal dev (with `ownerAlias`) | `forgeacr{alias}` | `forgeacr{alias}` |
 | Shared / production | `forgeacr` | `forgeacr` |
 
 Set a shell variable before running any build command:
 
 ```bash
-ACR="forgeacrprproddu"   # replace with your registry name
+ACR="forgeacr{alias}"   # replace with your registry name
 ```
 
 ---
@@ -119,7 +119,7 @@ Custom images have a Dockerfile in `infra/docker/<name>/`. Each image uses `az a
 - Hadoop Azure 3.4.1 — ABFS driver for ADLS Gen2
 - Azure Identity + Azure Storage File DataLake JARs — workload identity token provider
 - Azure Core + Azure Core HTTP Netty — transitive Azure SDK dependencies
-- OpenLineage Spark 1.39.0 — automatic lineage emission to Purview
+- OpenLineage Spark 1.39.0 — automatic lineage emission
 - Python 3.11, PySpark, delta-spark, pandas, pyarrow, azure-identity, openlineage-python
 - `spark-defaults.conf` with ADLS and OpenLineage defaults baked in
 - `forge-dq` SDK (from `sdk/python/`) — baked in so Spark jobs can run DQ checks without a separate install
@@ -159,7 +159,7 @@ az acr build \
 
 **Note on OpenLineage:** Trino is intentionally not instrumented with OpenLineage. Trino serves
 interactive SQL queries — meaningful lineage is captured upstream at the Spark (job) and Airflow
-(pipeline) layers. Instrumenting ad-hoc Trino queries produces noise in Purview, not signal.
+(pipeline) layers. Instrumenting ad-hoc Trino queries produces noise, not signal.
 
 ```bash
 az acr build \
@@ -218,7 +218,7 @@ az acr build \
 
 ### 5.4 portal-api
 
-**Purpose:** FastAPI backend for the Forge Developer Portal. Aggregates data from Airflow, Purview (lineage), Trino, Azure Cost Management, and ADLS catalog.
+**Purpose:** FastAPI backend for the Forge Developer Portal. Aggregates data from Airflow (lineage via DAG tags and OpenLineage events), Trino, Azure Cost Management, and ADLS catalog.
 
 **Tag scheme:** Git SHA — no upstream version applies to first-party code.
 

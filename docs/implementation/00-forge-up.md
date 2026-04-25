@@ -56,7 +56,7 @@ kubelogin convert-kubeconfig --login azurecli
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--env <env>` | `dev` | Environment name (`dev` or `prod`) |
-| `--alias <alias>` | _(blank)_ | Owner alias appended to resource names (`prproddu`). Leave blank for shared/unscoped deployments — globally unique resource names use subscription ID suffix automatically. |
+| `--alias <alias>` | _(blank)_ | Owner alias appended to resource names (`{alias}`). Leave blank for shared/unscoped deployments — globally unique resource names use subscription ID suffix automatically. |
 | `--skip-infra` | false | Skip phase [1/8] — Bicep provisioning (infra already exists) |
 | `--skip-build` | false | Skip phase [5/8] — image builds (images already in ACR) |
 | `--skip-pg-grants` | false | Skip Postgres schema grants in phase [3/8] |
@@ -95,16 +95,16 @@ Resource names when alias is blank (first 8 chars of subscription ID used for gl
 ### First-time full deploy (with alias — personal/test deployment)
 
 ```bash
-bash infra/scripts/forge-up.sh --env dev --alias prproddu
+bash infra/scripts/forge-up.sh --env dev --alias {alias}
 ```
 
-Resource names with alias `prproddu`:
-- ACR: `forgeacrprproddu`
-- Key Vault: `kv-forge-prproddu-dev`
-- Postgres: `psql-forge-prproddu-dev`
-- ADLS: `forgeadlsprproddudev`
-- AKS: `aks-forge-compute-prproddu-dev`, `aks-forge-orchestration-prproddu-dev`
-- RGs: `rg-forge-prproddu-dev`, `rg-forge-platform-prproddu-dev`
+Resource names with alias `{alias}`:
+- ACR: `forgeacr{alias}`
+- Key Vault: `kv-forge-{alias}-dev`
+- Postgres: `psql-forge-{alias}-dev`
+- ADLS: `forgeadls{alias}dev`
+- AKS: `aks-forge-compute-{alias}-dev`, `aks-forge-orchestration-{alias}-dev`
+- RGs: `rg-forge-{alias}-dev`, `rg-forge-platform-{alias}-dev`
 
 ### Re-deploy apps (infrastructure already exists)
 
@@ -263,7 +263,7 @@ Uninstall all workloads without touching Azure infrastructure or ACR images. Use
 
 ```bash
 ENV=dev
-ALIAS=""          # set to your alias if used, e.g. ALIAS="prproddu"
+ALIAS=""          # set to your alias if used, e.g. ALIAS="{alias}"
 _A="${ALIAS:+${ALIAS}-}"
 
 COMPUTE="aks-forge-compute-${_A}${ENV}"

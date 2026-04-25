@@ -282,7 +282,7 @@ All commands in this section target the **compute cluster** (`aks-forge-compute-
 ```bash
 ENV="prod"
 
-ALIAS="prproddu"   # set to your ownerAlias, or empty for shared envs
+ALIAS="{alias}"   # set to your ownerAlias, or empty for shared envs
 
 az aks get-credentials \
   --name "aks-forge-compute-${ALIAS}-${ENV}" \
@@ -1262,22 +1262,7 @@ kubectl get pods -n airflow
 # airflow-webserver-<hash>-<hash>             1/1     Running
 ```
 
-### 4.10 Verify Purview OpenLineage Connectivity
-
-Microsoft Purview is a managed service — there is no Helm chart or pod to install. The orchestration step for lineage is to verify that the `id-forge-read-{env}` managed identity has the **Purview Data Curator** role assigned on the Purview collection, and that the Purview OpenLineage endpoint is reachable from within the orchestration cluster.
-
-Verify connectivity from within the cluster:
-
-```bash
-# Test the Purview endpoint from within the airflow-scheduler pod
-kubectl --context forge-orchestration-${ENV} exec -n airflow deploy/airflow-scheduler -- \
-  curl -s -o /dev/null -w "%{http_code}" \
-  "https://purview-forge-${ENV}.purview.azure.com/dataMap/openlineage/namespaces/forge-${ENV}/events"
-# Expected: 200 or 405 (endpoint exists; 405 = GET not allowed, POST required)
-# 401 = Purview Data Curator role is missing — see docs/implementation/05-deploy-orchestration.md section 5.2
-```
-
-### 4.11 Verify Airflow Webserver is Accessible
+### 4.10 Verify Airflow Webserver is Accessible
 
 Port-forward to the Airflow webserver to confirm the UI loads before the Ingress is configured:
 
@@ -1463,36 +1448,7 @@ submit_spark_pi -> success
 monitor_spark_pi -> success
 ```
 
-### 5.2 Test: Purview Receives an OpenLineage Event
-
-When Airflow runs a task with the `openlineage-airflow` integration installed, it emits `START` and `COMPLETE` OpenLineage events to the Purview OpenLineage endpoint automatically. The test DAG above triggers this.
-
-Verify events arrived in Purview by checking the Airflow scheduler log for successful transport:
-
-```bash
-kubectl --context forge-orchestration-${ENV} \
-  logs -n airflow deploy/airflow-scheduler \
-  --tail=200 | grep -i openlineage
-# Expected: no ERROR lines; INFO lines confirming events were sent
-```
-
-Then verify the asset appeared in the Purview Data Map:
-
-```bash
-ACCESS_TOKEN=$(az account get-access-token \
-  --resource "https://purview.azure.com" --query accessToken -o tsv)
-
-curl -s -X POST \
-  "https://purview-forge-${ENV}.purview.azure.com/catalog/api/search/query?api-version=2022-03-01-preview" \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -H "Content-Type: application/json" \
-  -d '{"keywords": "forge_cross_cluster_test", "limit": 5}' \
-  | python3 -m json.tool | grep -A3 "displayText"
-```
-
-Expected: at least one asset entry for the `forge_cross_cluster_test` job visible in the Purview Data Map.
-
-### 5.3 Test: Metrics Appear in Azure Managed Grafana
+### 5.2 Test: Metrics Appear in Azure Managed Grafana
 
 **Step 1: Verify Azure Monitor is receiving metrics**
 
@@ -1587,12 +1543,11 @@ Do not declare the platform ready for pipeline onboarding until every item below
 - [ ] Airflow scheduler pods (2 replicas) show `2/2 Running`
 - [ ] Airflow webserver pods are Running and return HTTP 200 on `/health`
 - [ ] Airflow triggerer pod is Running
-- [ ] Purview OpenLineage endpoint returns 200/405 from within the orchestration cluster
 
 **Cross-Cluster Validation**
 - [ ] Airflow `forge_cross_cluster_test` DAG triggered and reached state `success`
 - [ ] SparkApplication `pi-test-*` reached state `SUCCEEDED` on the compute cluster
-- [ ] Purview received OpenLineage events from the test DAG run (asset visible in Purview Data Map)
+- [ ] Lineage graph visible in the Developer Portal for the `forge_cross_cluster_test` DAG run
 - [ ] Azure Managed Grafana shows metrics from both clusters
 - [ ] Azure Log Analytics shows logs from both clusters
 - [ ] No network policy violations logged by Calico during the test run

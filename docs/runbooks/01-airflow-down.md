@@ -79,7 +79,7 @@ kubectl run psql-debug --rm -it --image=postgres:15 \
 ```bash
 # The postgres password is in Key Vault
 FORGE_PG_PASS=$(az keyvault secret show \
-  --vault-name kv-forge-prproddu-dev \
+  --vault-name kv-forge-{alias}-dev \
   --name forge-airflow-db-password \
   --query value -o tsv)
 
@@ -87,7 +87,7 @@ FORGE_PG_PASS=$(az keyvault secret show \
 kubectl delete secret airflow-db-credentials -n airflow --context forge-orch-dev
 kubectl create secret generic airflow-db-credentials \
   -n airflow --context forge-orch-dev \
-  --from-literal=connection="postgresql://airflow:${FORGE_PG_PASS}@pg-forge-prproddu-dev.postgres.database.azure.com:5432/airflow"
+  --from-literal=connection="postgresql://airflow:${FORGE_PG_PASS}@pg-forge-{alias}-dev.postgres.database.azure.com:5432/airflow"
 
 kubectl rollout restart deployment airflow-scheduler -n airflow --context forge-orch-dev
 ```
@@ -151,7 +151,7 @@ kubectl get secret airflow-compute-kubeconfig -n airflow --context forge-orch-de
 # Verify the kubeconfig inside is valid
 kubectl get secret airflow-compute-kubeconfig -n airflow --context forge-orch-dev \
   -o jsonpath='{.data.config}' | base64 -d | \
-  KUBECONFIG=/dev/stdin kubectl get nodes --context aks-forge-compute-prproddu-dev
+  KUBECONFIG=/dev/stdin kubectl get nodes --context aks-forge-compute-{alias}-dev
 ```
 
 **Fix — kubeconfig expired (AKS credential rotation):**
@@ -159,8 +159,8 @@ kubectl get secret airflow-compute-kubeconfig -n airflow --context forge-orch-de
 ```bash
 # Re-fetch compute cluster kubeconfig
 az aks get-credentials \
-  --resource-group rg-forge-prproddu-dev \
-  --name aks-forge-compute-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name aks-forge-compute-{alias}-dev \
   --file /tmp/compute-kubeconfig \
   --overwrite-existing
 

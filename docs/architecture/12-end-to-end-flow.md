@@ -203,7 +203,7 @@ Airflow Scheduler
         │
         │  1. Task pod created (KubernetesExecutor — ephemeral, 1 per task)
         │  2. CSI driver mounts Key Vault secrets
-        │  3. OpenLineage emits START to Purview
+        │  3. OpenLineage emits START event
         │
         │  4. ForgeSparkOperator builds SparkApplication CRD internally
         │     and submits it to the compute cluster:
@@ -264,7 +264,7 @@ ForgeDqGateOperator task
         │  ├── filters to __date = "01_04_2026_00"  (silver/gold partition key)
         │  ├── runs DQRunner (profiling + rule checks + anomaly)
         │  ├── writes DQ results to Delta
-        │  └── emits OpenLineage DQ facet to Purview
+        │  └── emits OpenLineage DQ facet
         │
         │  Critical failure → task FAILED → downstream tasks UPSTREAM_FAILED
         ▼
@@ -274,7 +274,7 @@ ADLS silver/nyc/taxi/trips/
         │  Tracker: silver/nyc/taxi/trips/_tracker/01_04_2026_00/tracker.json
         │           {"status": "success", "rows_written": 847291, ...}
         │
-        │  OpenLineage COMPLETE → Purview
+        │  OpenLineage COMPLETE event emitted
         │    input:  bronze/nyc/taxi   (schema + row count)
         │    output: silver/nyc_taxi_trips  (schema + row count + DQ facet)
         │
@@ -354,7 +354,7 @@ ADLS Gen2  (single storage account per environment)
 |---|---|---|
 | Repos | Single mono-repo (`examples/` = pipelines) | Two repos: platform + pipelines |
 | ADLS | `forgeadls{alias}dev` | `forgeadls{alias}prod` |
-| Storage account env var | `FORGE_STORAGE_ACCOUNT=forgeadlsprproddudev` | Set per-environment in CI |
+| Storage account env var | `FORGE_STORAGE_ACCOUNT=forgeadls{alias}dev` | Set per-environment in CI |
 | Spark Connect | Available (dev only) | Not deployed |
 | sync-jobs.sh target | `FORGE_ENV=dev` | `FORGE_ENV=prod` |
 | SDK distribution | forge-sdk + forge-dq baked into Spark image | Same — versioned wheels via Azure Artifacts |
@@ -369,7 +369,7 @@ Airflow task pod   → Azure Monitor (task_instance_state, dag_run_duration)
 Spark Driver/Execs → Azure Monitor (executor count, task duration, GC time)
 Trino coordinator  → Azure Monitor (active queries, query duration P95)
 All pods           → Log Analytics (structured JSON with dag_id, run_id, task_id)
-OpenLineage events → Microsoft Purview (lineage graph, DQ facets)
+OpenLineage events → Portal lineage API (lineage graph, DQ facets)
 DQ results         → Delta table silver/_platform/dq_results/ (append)
 Trackers           → ADLS {layer}/_tracker/ (idempotency + downstream gating)
 

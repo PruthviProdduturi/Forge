@@ -254,7 +254,7 @@ rules:
 
 Calico network policies restrict traffic within the `airflow` namespace:
 
-- Task pods: egress allowed to the compute cluster AKS API server (for SparkKubernetesOperator), to the Purview OpenLineage endpoint (via private endpoint), to PostgreSQL (metadata DB), and to ADLS (via private endpoint). No other egress.
+- Task pods: egress allowed to the compute cluster AKS API server (for SparkKubernetesOperator), to PostgreSQL (metadata DB), and to ADLS (via private endpoint). No other egress.
 - Scheduler: egress to Kubernetes API server, PostgreSQL, and Key Vault only.
 - Webserver: ingress from the ingress controller; egress to PostgreSQL and the scheduler's internal port.
 
@@ -776,7 +776,7 @@ The Airflow webserver service is `ClusterIP` — it is not exposed via public in
 
 ```bash
 kubectl port-forward svc/airflow-webserver 8081:8080 \
-  -n airflow --context aks-forge-orchestration-prproddu-dev
+  -n airflow --context aks-forge-orchestration-{alias}-dev
 # Open: http://localhost:8081
 ```
 
@@ -1012,7 +1012,7 @@ The Azure Managed Grafana "Airflow Health" dashboard includes a pre-built log pa
                     │                         │
     kubectl apply   │              ┌───────────┘
     SparkApp CRD    │              │  Trino SQL (HTTP)
-                    │              │  Purview OpenLineage endpoint (HTTPS, workload identity)
+                    │              │  ADLS (HTTPS, workload identity)
                     │              │  ADLS (HTTPS, workload identity)
                     ▼              ▼
 ╔══════════════════════════════════════════════════════════════════════════════════╗
@@ -1053,11 +1053,9 @@ The Azure Managed Grafana "Airflow Health" dashboard includes a pre-built log pa
 ║  │  • OIDC secrets           │                                                   ║
 ║  └──────────────────────────┘   ┌──────────────────────────┐                   ║
 ║                                  │  Azure Log Analytics      │                   ║
-║  ┌──────────────────────────┐   │  pod log aggregation      │                   ║
-║  │  Microsoft Purview        │   │  configurable retention   │                   ║
-║  │  (managed service)        │   └──────────────────────────┘                   ║
-║  │  OpenLineage endpoint     │                                                   ║
-║  └──────────────────────────┘                                                   ║
+║                                  │  pod log aggregation      │                   ║
+║                                  │  configurable retention   │                   ║
+║                                  └──────────────────────────┘                   ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 
 
@@ -1086,7 +1084,7 @@ Scheduler creates Task Pod via Kubernetes API
           │       │  SparkApp reaches Completed
           │       │  Triggerer re-queues task
           │       │  new task pod starts, marks task SUCCESS
-          │       │  OpenLineage COMPLETE event → Purview
+          │       │  OpenLineage COMPLETE event emitted
           │       ▼
           │   Task state: SUCCESS in PostgreSQL
           │
@@ -1094,7 +1092,7 @@ Scheduler creates Task Pod via Kubernetes API
           │       │  loads YAML ruleset from ADLS
           │       │  runs checks (Trino SQL + Delta metadata)
           │       │  writes DQRunReport to _platform/dq_results/ Delta table
-          │       │  emits DQ facet to Purview (via OpenLineage)
+          │       │  emits DQ facet via OpenLineage
           │       │  if CRITICAL failure → raises exception → task FAILED
           │       │  Airflow marks downstream tasks UPSTREAM_FAILED
           │       │  AlertReporter posts webhook to Teams

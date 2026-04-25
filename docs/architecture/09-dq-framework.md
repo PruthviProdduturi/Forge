@@ -686,7 +686,7 @@ The decorator wraps a function that returns a `DataFrame`. After the function ex
 2. Loads and evaluates Layer 2 rules (if `rules` path provided)
 3. Runs Layer 3 anomaly detection
 4. Writes all three result sets to Delta
-5. Emits the OpenLineage DQ facet to Purview
+5. Emits the OpenLineage DQ facet (consumed by the portal lineage API)
 
 ```python
 from forge_dq import track
@@ -739,7 +739,7 @@ with DAG(dag_id="nyc_taxi_silver", schedule="0 2 * * *",
 
 ### DQ Facet
 
-On every run (decorator or `DQOperator`), after all three DQ layers complete, the `forge-dq` package emits an OpenLineage event to the Purview OpenLineage endpoint. The event attaches a custom `forge_dq` facet to the dataset output node that represents the written dataset.
+On every run (decorator or `DQOperator`), after all three DQ layers complete, the `forge-dq` package emits an OpenLineage event. The event attaches a custom `forge_dq` facet to the dataset output node that represents the written dataset.
 
 **Example facet payload:**
 
@@ -789,15 +789,15 @@ If a critical-severity rule fails:
 }
 ```
 
-### How It Appears in Purview
+### How It Appears in the Portal
 
-In the Microsoft Purview lineage graph, each dataset node that has been written by a `@track`-decorated function or a `DQOperator` task will show the `forge_dq` facet when selected. The facet is visible in the asset details panel under **Custom Properties → forge_dq**.
+In the Developer Portal lineage graph, each dataset node that has been written by a `@track`-decorated function or a `DQOperator` task will show the `forge_dq` facet when selected. The facet is visible in the asset details panel under **Custom Properties → forge_dq**.
 
-The `overall_status` field allows Purview users to see at a glance whether the last pipeline run for a given asset passed DQ. The `critical_failures` array identifies which rules failed by name, without requiring the viewer to open Trino or the DQ portal.
+The `overall_status` field allows users to see at a glance whether the last pipeline run for a given asset passed DQ. The `critical_failures` array identifies which rules failed by name, without requiring the viewer to open Trino or the DQ portal.
 
 ### Emission Behavior
 
-The OpenLineage event is a fire-and-forget HTTP POST to the Purview endpoint. A failure to emit (e.g. network timeout, Purview API unavailability) does **not** cause the Airflow task to fail. The failure is logged at WARNING level and the pipeline continues. DQ results are always written to Delta regardless of lineage emission outcome.
+The OpenLineage event is fire-and-forget. A failure to emit does **not** cause the Airflow task to fail. The failure is logged at WARNING level and the pipeline continues. DQ results are always written to Delta regardless of lineage emission outcome.
 
 ---
 

@@ -4,7 +4,7 @@
 > **Status:** Current
 > **Audience:** Platform engineers, data engineers, architects
 
-[![OpenLineage](https://img.shields.io/badge/OpenLineage-7B2FBE?style=flat-square&logoColor=white)](https://openlineage.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Microsoft Purview](https://img.shields.io/badge/Microsoft%20Purview-0078D4?style=flat-square&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/en-us/products/purview)
+[![OpenLineage](https://img.shields.io/badge/OpenLineage-7B2FBE?style=flat-square&logoColor=white)](https://openlineage.io) [![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=flat-square&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Airflow](https://img.shields.io/badge/Airflow-017CEE?style=flat-square&logo=apacheairflow&logoColor=white)](https://airflow.apache.org)
 
 ---
 
@@ -14,14 +14,14 @@
 2. [Full Lineage Chain](#2-full-lineage-chain)
 3. [Emission Points](#3-emission-points)
 4. [Upstream Source Naming Convention](#4-upstream-source-naming-convention)
-5. [Purview Configuration](#5-purview-configuration)
+5. [OpenLineage Transport Configuration](#5-openlineage-transport-configuration)
 6. [OpenLineage Event Structure](#6-openlineage-event-structure)
 7. [Custom Facets](#7-custom-facets)
 8. [Column-Level Lineage](#8-column-level-lineage)
 9. [Impact Analysis](#9-impact-analysis)
 10. [Lineage for Streaming Jobs](#10-lineage-for-streaming-jobs)
 11. [Lineage Retention](#11-lineage-retention)
-12. [Viewing Lineage in Purview](#12-viewing-lineage-in-purview)
+12. [Viewing Lineage in the Portal](#12-viewing-lineage-in-the-portal)
 
 ---
 
@@ -33,24 +33,9 @@ OpenLineage is an open standard for collecting lineage metadata from data pipeli
 
 The standard is defined at [openlineage.io](https://openlineage.io). Forge uses version 1.x of the specification. The Forge components that emit events (Airflow, Spark, Trino) all use the official OpenLineage client libraries, ensuring the events are spec-compliant and backend-portable.
 
-### Microsoft Purview as the Lineage Backend
+### Lineage in Forge
 
-Forge uses **Microsoft Purview** as the lineage backend. Airflow, Spark, and Trino emit standard OpenLineage events over HTTP and POST them directly to Purview's OpenLineage REST endpoint. Purview ingests these events and builds the full lineage graph natively.
-
-**Why Purview?**
-
-- **Org-wide license** — Microsoft Purview is already licensed across the organisation. No additional cost, no self-hosted infrastructure to operate or upgrade.
-- **Enterprise data catalog** — Purview provides a unified catalog (assets, schemas, glossary, classifications, data sensitivity) alongside lineage. A single tool covers lineage, discovery, and governance.
-- **Azure-native integration** — Purview integrates directly with ADLS Gen2, Azure SQL, Azure Data Factory, and AKS workload identity. Private endpoints are first-class citizens.
-- **OpenLineage standard** — Purview's OpenLineage endpoint accepts the same events that any OpenLineage-compatible backend accepts. Emitters (Airflow, Spark, Trino) are unchanged; only the transport destination changes.
-- **No self-hosted database** — Purview is a fully managed service. There is no PostgreSQL to back up, patch, or scale.
-
-### Purview Account Naming
-
-| Environment | Purview Account | OpenLineage Endpoint |
-|-------------|----------------|----------------------|
-| dev | `purview-forge-dev` | `https://purview-forge-dev.purview.azure.com/dataMap/openlineage/namespaces/forge-dev/events` |
-| prod | `purview-forge-prod` | `https://purview-forge-prod.purview.azure.com/dataMap/openlineage/namespaces/forge-prod/events` |
+Lineage in Forge is derived from **Airflow DAG tags** (`source:` and `output:` tags declared in each DAG) and surfaced through the **portal lineage API**. There is no external lineage store. OpenLineage events are emitted by Airflow tasks and Spark jobs as before, but they are consumed internally — the portal lineage API reads DAG tags and OpenLineage run metadata to build the lineage graph displayed in the Developer Portal.
 
 The namespace convention is `forge-{env}` (e.g., `forge-dev`, `forge-prod`).
 
@@ -58,11 +43,11 @@ The namespace convention is `forge-{env}` (e.g., `forge-dev`, `forge-prod`).
 
 ## 2. Full Lineage Chain
 
-Purview captures the complete lineage from upstream source systems to the gold serving layer. Opening a gold asset in Purview shows the full upstream chain: where the data originated, which ingest jobs brought it in, how it was transformed through bronze and silver, and which aggregation jobs produced the gold output.
+The portal lineage API captures the complete lineage from upstream source systems to the gold serving layer. Opening a gold asset in the Developer Portal shows the full upstream chain: where the data originated, which ingest jobs brought it in, how it was transformed through bronze and silver, and which aggregation jobs produced the gold output.
 
 ```
 ╔══════════════════════════════════════════════════════════════════════════════════╗
-║                     FULL LINEAGE CHAIN IN PURVIEW                               ║
+║                     FULL LINEAGE CHAIN                                           ║
 ╚══════════════════════════════════════════════════════════════════════════════════╝
 
   SOURCE SYSTEMS                INGEST                 BRONZE
@@ -103,11 +88,11 @@ Purview captures the complete lineage from upstream source systems to the gold s
                             Spark job)
 
 
-  GOLD                 PURVIEW GRAPH
-  ────                 ─────────────
+  GOLD                 PORTAL LINEAGE GRAPH
+  ────                 ────────────────────
 
   abfss://gold@.../               ┌───────────────────────────────────────────┐
-  sales/orders_summary/ ─────────►│  Microsoft Purview                        │
+  sales/orders_summary/ ─────────►│  Developer Portal — Lineage Explorer      │
                                   │                                           │
                                   │  gold/sales/orders_summary                │
                                   │    ← publish_orders                       │
@@ -150,7 +135,7 @@ OpenLineage Airflow Plugin
         │  - run.facets.nominalTime: dag execution_date
         │  - run.facets.parent: links Spark child run to this Airflow task
         ▼
-HTTP POST → Purview OpenLineage endpoint
+OpenLineage event stored internally (consumed by portal lineage API)
 
         │  Task completes (COMPLETE or FAILED)
         ▼
@@ -160,7 +145,7 @@ OpenLineage Airflow Plugin
         │  - inputs/outputs: final, with schema facets
         │  - run.facets.errorMessage: (on FAIL)
         ▼
-HTTP POST → Purview OpenLineage endpoint
+OpenLineage event stored internally (consumed by portal lineage API)
 ```
 
 **Operator-specific lineage extraction:**
@@ -199,7 +184,7 @@ SparkContext termination
         │    - columnLineage facets on output datasets
         │    - computeCost facet (see Section 7)
         ▼
-HTTP POST → Purview OpenLineage endpoint
+OpenLineage event stored internally (consumed by portal lineage API)
 ```
 
 ### Trino OpenLineage Plugin
@@ -217,7 +202,7 @@ For `SELECT` queries (read-only), Trino emits lineage with inputs only and no ou
 
 ## 4. Upstream Source Naming Convention
 
-This section is critical. Without correctly declaring upstream sources as OpenLineage inputs, lineage starts at the bronze layer instead of the real source system. Purview cannot show the true origin of data unless ingest jobs declare their upstream inputs.
+This section is critical. Without correctly declaring upstream sources as OpenLineage inputs, lineage starts at the bronze layer instead of the real source system. The portal lineage API cannot show the true origin of data unless ingest jobs declare their upstream inputs.
 
 **ADLS datasets** (bronze, silver, gold) are auto-captured by the OpenLineage Spark integration using ABFS paths. No manual declaration needed.
 
@@ -265,7 +250,7 @@ from forge.lineage import declare_inputs, InputDataset
 
 spark = SparkSession.builder.getOrCreate()
 
-# Explicitly declare the upstream JDBC source so Purview shows the full chain
+# Explicitly declare the upstream JDBC source so the portal shows the full chain
 declare_inputs(spark, [
     InputDataset(
         namespace="mssql://crm-server.database.windows.net/CRM",
@@ -287,7 +272,7 @@ df.write.format("delta").mode("append").save(
 )
 ```
 
-**Result in Purview:** The bronze ADLS dataset shows `dbo.orders` from `mssql://crm-server.database.windows.net/CRM` as its upstream source. Following the chain upstream in Purview shows the full SQL Server → bronze → silver → gold path.
+**Result in the portal:** The bronze ADLS dataset shows `dbo.orders` from `mssql://crm-server.database.windows.net/CRM` as its upstream source. Following the chain upstream in the portal shows the full SQL Server → bronze → silver → gold path.
 
 ### REST API Source Declaration
 
@@ -322,13 +307,13 @@ declare_inputs(spark, [
 ])
 ```
 
-Each declared input appears as a separate upstream node in the Purview lineage graph.
+Each declared input appears as a separate upstream node in the portal lineage graph.
 
 ---
 
-## 5. Purview Configuration
+## 5. OpenLineage Transport Configuration
 
-### OpenLineage Transport Configuration
+OpenLineage events are emitted by Airflow tasks and Spark jobs. The events are consumed internally by the portal lineage API — no external lineage backend is used.
 
 #### Airflow (Helm values / environment variables)
 
@@ -338,18 +323,9 @@ Each declared input appears as a separate upstream node in the Purview lineage g
 env:
   - name: AIRFLOW__LINEAGE__BACKEND
     value: "openlineage.airflow.OpenLineageBackend"
-  - name: OPENLINEAGE_URL
-    value: "https://purview-forge-{env}.purview.azure.com"
-  - name: OPENLINEAGE_TRANSPORT
-    value: >-
-      {"type":"http",
-       "url":"https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events",
-       "auth":{"type":"azure_identity"}}
   - name: OPENLINEAGE_NAMESPACE
     value: "forge-{env}"
 ```
-
-The `"auth":{"type":"azure_identity"}` configuration tells the OpenLineage HTTP transport to obtain an Azure AD access token via workload identity (the pod's managed identity) and attach it as a Bearer token on every POST request.
 
 #### Spark (spark-defaults.conf, baked into the Spark image)
 
@@ -358,12 +334,7 @@ The `"auth":{"type":"azure_identity"}` configuration tells the OpenLineage HTTP 
 
 spark.extraListeners=io.openlineage.spark.agent.OpenLineageSparkListener
 
-# Transport: Purview OpenLineage endpoint
-spark.openlineage.transport.type=http
-spark.openlineage.transport.url=https://purview-forge-${FORGE_ENV}.purview.azure.com/dataMap/openlineage/namespaces/forge-${FORGE_ENV}/events
-spark.openlineage.transport.auth.type=azure_identity
-
-# Namespace matches Purview collection namespace
+# Namespace
 spark.openlineage.namespace=forge-${FORGE_ENV}
 
 # Timeouts (ms) — lineage emission never fails a pipeline
@@ -372,34 +343,7 @@ spark.openlineage.transport.timeoutInMillis=10000
 
 `FORGE_ENV` is injected as an environment variable in the `SparkApplication` pod spec by the Airflow `SparkKubernetesOperator`.
 
-#### Trino (event listener properties)
-
-```properties
-# etc/trino/trino-event-listener.properties
-
-event-listener.name=openlineage
-openlineage.transport.type=http
-openlineage.transport.url=https://purview-forge-${FORGE_ENV}.purview.azure.com/dataMap/openlineage/namespaces/forge-${FORGE_ENV}/events
-openlineage.transport.auth.type=azure_identity
-openlineage.transport.timeoutInMillis=10000
-openlineage.namespace=forge-${FORGE_ENV}
-```
-
-### Authentication — Azure Workload Identity
-
-All three emitters (Airflow, Spark, Trino) authenticate to the Purview OpenLineage endpoint using **Azure Workload Identity** (OIDC). The managed identity `id-forge-read-{env}` must be assigned the **Purview Data Curator** role on the Purview collection.
-
-| Identity | Purview Role | What it enables |
-|----------|-------------|-----------------|
-| `id-forge-read-{env}` | Purview Data Curator | POST OpenLineage events to the Purview endpoint; read lineage graph via Data Map API |
-
-No secrets or client credentials are required. The workload identity token is obtained automatically by the OpenLineage `azure_identity` auth transport from the pod's OIDC endpoint.
-
-### Connectivity
-
-Purview is accessed via its private endpoint using the `privatelink.purview.azure.com` DNS zone, which is linked to the platform VNet. No public internet access is required from cluster nodes to reach Purview.
-
-**Event delivery behaviour:** Events are sent as HTTP POST requests. If Purview is unreachable, the emitter logs a warning and the pipeline continues — lineage emission never fails a pipeline. The transport includes a 10-second timeout.
+**Event delivery behaviour:** Events are fire-and-forget. A failure to emit does **not** cause the Airflow task to fail. The failure is logged at WARNING level and the pipeline continues.
 
 ---
 
@@ -521,7 +465,7 @@ Forge defines two custom facets: the **DQ facet** (data quality summary) and the
 
 ### DQ Facet
 
-**Purpose:** Attach data quality run results to the dataset event for the output dataset of a DQ validation task. This enables the Purview lineage graph and the Developer Portal to show DQ status inline with lineage.
+**Purpose:** Attach data quality run results to the dataset event for the output dataset of a DQ validation task. This enables the Developer Portal to show DQ status inline with lineage.
 
 **Where it is emitted:** The `forge-lineage` SDK's `LineageReporter` class, called at the end of a `DQRunner.run()` call. Attached to the output dataset facet of the `validate_dq_<entity>` Airflow task's OpenLineage event.
 
@@ -616,11 +560,11 @@ Forge defines two custom facets: the **DQ facet** (data quality summary) and the
 }
 ```
 
-This facet is attached to `outputs[0].facets` of the DQ validation task's COMPLETE event. Purview stores it as a dataset version facet on the curated dataset node, visible to any consumer navigating the lineage graph.
+This facet is attached to `outputs[0].facets` of the DQ validation task's COMPLETE event. The portal lineage API reads it from the OpenLineage event and surfaces it on the curated dataset node, visible to any consumer navigating the lineage graph.
 
 ### Cost Facet
 
-**Purpose:** Record the estimated compute cost of each Spark or Trino job run. Enables the Developer Portal to aggregate pipeline costs from Purview event facets without calling Azure Cost Management for every job.
+**Purpose:** Record the estimated compute cost of each Spark or Trino job run. Enables the Developer Portal to aggregate pipeline costs from OpenLineage run facets without calling Azure Cost Management for every job.
 
 **Where it is emitted:** The OpenLineage Spark listener computes and attaches this facet to `run.facets` of the COMPLETE event. For Trino queries, the OpenLineage Trino plugin attaches a simplified version.
 
@@ -746,16 +690,16 @@ For `JOIN` operations, the extractor traces each projected column through the jo
 
 When the extractor cannot determine column lineage, it emits a `INDIRECT` transformation type edge with no `input_field`, flagging the gap without recording false lineage.
 
-### Column Lineage in Purview
+### Column Lineage in the Portal
 
-Purview renders column-level lineage as an overlay on the dataset lineage graph. In the Purview UI:
+The Developer Portal renders column-level lineage as an overlay on the dataset lineage graph. In the Lineage Explorer:
 
 1. Navigate to an asset (e.g., `gold/sales/orders_summary`)
 2. Open the **Lineage** tab
 3. Toggle **Column lineage** in the view controls
 4. Select a column to highlight its upstream ancestry across all dataset hops
 
-For the Developer Portal, column lineage is fetched from Purview's Data Map API and rendered in the Lineage Explorer with a column-level toggle.
+Column lineage is derived from the `columnLineage` facets attached to OpenLineage events and surfaced through the portal lineage API.
 
 ---
 
@@ -763,36 +707,34 @@ For the Developer Portal, column lineage is fetched from Purview's Data Map API 
 
 ### Problem Statement
 
-When a data engineer needs to change a column in an upstream dataset — rename it, change its type, remove it — they need to know: which downstream datasets, jobs, and consumers will break? With column-level lineage in Purview, this is a forward graph traversal from the changed column.
+When a data engineer needs to change a column in an upstream dataset — rename it, change its type, remove it — they need to know: which downstream datasets, jobs, and consumers will break? With column-level lineage from OpenLineage, this is a forward graph traversal from the changed column.
 
-### Using Purview for Impact Analysis
+### Using the Portal for Impact Analysis
 
-Purview's **Lineage** view provides impact analysis natively:
+The Developer Portal's **Lineage Explorer** provides impact analysis:
 
 **Dataset-level impact:**
-1. Open the dataset asset in Purview (e.g., `silver/sales/orders`)
+1. Open the dataset asset in the Developer Portal (e.g., `silver/sales/orders`)
 2. Go to the **Lineage** tab
 3. The graph shows upstream (left) and downstream (right) nodes
 4. Downstream nodes are exactly the datasets and jobs that will be affected by a change
 
 **Column-level impact:**
-1. Open the dataset asset in Purview
+1. Open the dataset asset in the Developer Portal
 2. Go to the **Lineage** tab → enable **Column-level lineage**
 3. Select a specific column (e.g., `order_total_usd`)
-4. Purview highlights all downstream columns that derive from this column across all dataset hops
+4. The portal highlights all downstream columns that derive from this column across all dataset hops
 
 ### Portal Use Case — Column Rename
 
 ```
 1. Engineer opens Dataset Detail for "silver/sales/orders" in the Developer Portal
 2. Clicks "Impact Analysis" button
-3. Portal calls Purview Data Map API:
-   GET https://purview-forge-prod.purview.azure.com/dataMap/api/atlas/v2/lineage/<assetGuid>?direction=OUTPUT&depth=10
+3. Portal lineage API traverses the lineage graph (built from DAG tags + OpenLineage events)
 4. Portal renders: 3 downstream datasets, 4 downstream jobs
 5. Engineer clicks column "order_total_usd" → column-level view
-6. Portal queries Purview column lineage for that column
-7. Portal shows: gold/sales/orders_summary.total_usd derives from this column
-8. Engineer knows: renaming order_total_usd will break the publish_orders job
+6. Portal shows: gold/sales/orders_summary.total_usd derives from this column
+7. Engineer knows: renaming order_total_usd will break the publish_orders job
    and the gold/sales/orders_summary.total_usd column
 ```
 
@@ -822,38 +764,38 @@ Micro-batch 0 completes
         │      batchId: 0, rowsWritten: 4523, bytesRead: 1_048_576
         │
         │  ... emitted every 10 micro-batches (approx every 5 minutes)
-        │      to avoid flooding Purview with individual batch events
+        │      to avoid generating excessive individual batch events
         ▼
 Stream receives SIGTERM (graceful) or crashes
         │  → COMPLETE or FAIL event with final metrics
 ```
 
-### Streaming Lineage in Purview
+### Streaming Lineage in the Portal
 
-Streaming jobs appear in Purview as a single asset with a single run node (the long-running stream). The run state remains `RUNNING` until the stream stops. The Developer Portal shows:
+Streaming jobs appear in the portal lineage graph as a single asset with a single run node (the long-running stream). The run state remains `RUNNING` until the stream stops. The Developer Portal shows:
 
 - The streaming job in the lineage graph connecting the event source to the curated Delta table
 - The current batch ID and last-event time (from the most recent RUNNING facet)
 - A "streaming" badge on the job node to distinguish from batch jobs
 - Micro-batch metrics in the pipeline detail page (rows/second, bytes/second trend)
 
-Schema evolution in the streaming output is tracked by Purview dataset versions: each time the stream writes a micro-batch with a changed schema, a new dataset version is created.
+Schema evolution in the streaming output is tracked by dataset versions in the portal: each time the stream writes a micro-batch with a changed schema, a new dataset version is recorded.
 
 ---
 
 ## 11. Lineage Retention
 
-### Purview Retention Policy
+### Retention Policy
 
-Microsoft Purview retains lineage data according to the Purview service retention policy configured for the organisation. Forge operates under the following settings:
+Forge retains lineage data according to the following settings:
 
 | Data Type | Retention | Notes |
 |-----------|-----------|-------|
-| Asset records (datasets, jobs) | Indefinite | Dataset and job nodes are kept permanently in the Purview catalog for ongoing impact analysis |
-| Run records | 1 year (active) | Active runs visible in the Purview lineage graph; older runs archived to ADLS |
+| Asset records (datasets, jobs) | Indefinite | Dataset and job nodes are kept permanently for ongoing impact analysis |
+| Run records | 1 year (active) | Active runs visible in the portal lineage graph; older runs archived to ADLS |
 | Column lineage edges | 1 year (active) | Current version edges always retained; historical edges archived after 1 year |
 | Schema versions | 10 most recent per dataset | Older versions are archived to ADLS lineage archive |
-| Custom facets | 1 year (inline) | DQ facets and cost facets retained for 1 year in Purview; archived to ADLS thereafter |
+| Custom facets | 1 year (inline) | DQ facets and cost facets retained for 1 year; archived to ADLS thereafter |
 
 ### ADLS Lineage Archive
 
@@ -878,22 +820,21 @@ The archive is queryable directly with Spark or Trino for compliance audits.
 
 ---
 
-## 12. Viewing Lineage in Purview
+## 12. Viewing Lineage in the Portal
 
 ### Navigating to a Gold Asset
 
-1. Open the Purview governance portal: `https://purview-forge-{env}.purview.azure.com`
-2. Sign in with your Azure AD account (requires Reader or Data Reader role on the collection)
-3. In the left navigation, select **Data catalog**
-4. In the search bar, search for the gold dataset name (e.g., `orders_summary` or `forge-prod`)
-5. Select the asset from the results — its **Asset detail** page opens
+1. Open the Developer Portal and sign in with your Azure AD account
+2. In the left navigation, select **Lineage**
+3. Search for the gold dataset name (e.g., `orders_summary`)
+4. Select the asset from the results — its **Asset detail** page opens
 
 ### Viewing the Lineage Graph
 
 1. On the asset detail page, click the **Lineage** tab
 2. The lineage graph renders with the selected asset in the centre
 3. **Upstream** (left side): shows the complete chain from source systems through bronze and silver to this gold asset
-4. **Downstream** (right side): shows any consumers that read this asset (Trino queries, other Spark jobs, Power BI reports registered in Purview)
+4. **Downstream** (right side): shows any consumers that read this asset (Trino queries, other Spark jobs)
 
 **Navigation in the graph:**
 
@@ -920,26 +861,18 @@ To confirm that ingest jobs are correctly declaring their upstream source system
 
 ### Checking Lineage Event Delivery
 
-If a pipeline has run but lineage is not appearing in Purview:
+If a pipeline has run but lineage is not appearing in the portal:
 
 ```bash
 # Check Airflow OpenLineage transport config
 kubectl exec -n airflow deploy/airflow-scheduler -- \
   env | grep -E "OPENLINEAGE|AIRFLOW__LINEAGE"
 
-# Verify the Purview endpoint is reachable from the orchestration cluster
-kubectl run ol-test --image=curlimages/curl --restart=Never --rm -it -- \
-  curl -s -o /dev/null -w "%{http_code}" \
-  https://purview-forge-{env}.purview.azure.com/dataMap/openlineage/namespaces/forge-{env}/events \
-  -H "Content-Type: application/json" \
-  -d '{"eventType":"START","eventTime":"2026-03-24T00:00:00Z","run":{"runId":"00000000-0000-0000-0000-000000000000"},"job":{"namespace":"forge-{env}","name":"connectivity-test"},"inputs":[],"outputs":[]}'
-# Expected: 200
-
 # Check Airflow task logs for OpenLineage transport errors
 kubectl logs -n airflow <task-pod-name> | grep -i "openlineage"
 ```
 
-If connectivity is confirmed but events are missing, verify that `id-forge-read-{env}` has the **Purview Data Curator** role assigned on the Purview collection (not just the resource-level RBAC). The Data Curator role is a Purview-internal collection role, separate from Azure RBAC.
+If lineage events are being emitted but the graph is not updating in the portal, check the portal lineage API logs for parsing errors against the DAG tags.
 
 ---
 
@@ -950,61 +883,50 @@ If connectivity is confirmed but events are missing, verify that `id-forge-read-
 ║                         LINEAGE EVENT FLOW                                           ║
 ╚═══════════════════════════════════════════════════════════════════════════════════════╝
 
-  EMITTERS                          TRANSPORT                  BACKEND
-  ─────────                         ─────────                  ───────
+  EMITTERS                          EVENTS                     CONSUMER
+  ─────────                         ──────                     ────────
 
   forge-orchestration cluster:
   ┌────────────────────────────┐
   │  Airflow                   │
   │  ┌──────────────────────┐  │
-  │  │ ingest_raw_orders    │──┼──HTTPS POST /dataMap/openlineage/...──►┐
-  │  │ (task START event)   │  │  Bearer token via azure_identity        │
-  │  └──────────────────────┘  │                                        │
-  │  ┌──────────────────────┐  │                                        │
-  │  │ ingest_raw_orders    │──┼──HTTPS POST /dataMap/openlineage/...──►│
-  │  │ (task COMPLETE event)│  │                                        │
-  │  └──────────────────────┘  │                                        │
-  └────────────────────────────┘                                        │
-                                                                        │
-  forge-compute cluster:                                                │
-  ┌────────────────────────────┐                                        │
-  │  Spark Job                 │                                        │
-  │  OpenLineage Spark Listener│                                        ▼
+  │  │ ingest_raw_orders    │──┼──START event────────────────────►┐
+  │  │ (task START event)   │  │                                  │
+  │  └──────────────────────┘  │                                  │
+  │  ┌──────────────────────┐  │                                  │
+  │  │ ingest_raw_orders    │──┼──COMPLETE event─────────────────►│
+  │  │ (task COMPLETE event)│  │                                  │
+  │  └──────────────────────┘  │                                  │
+  └────────────────────────────┘                                  │
+                                                                  │
+  forge-compute cluster:                                          │
+  ┌────────────────────────────┐                                  │
+  │  Spark Job                 │                                  │
+  │  OpenLineage Spark Listener│                                  │
+  │  ┌──────────────────────┐  │                                  ▼
+  │  │ SparkContext init    │──┼──START event────────────►┌─────────────────────────┐
+  │  └──────────────────────┘  │                          │  Portal lineage API      │
+  │  ┌──────────────────────┐  │                          │  (internal consumer)     │
+  │  │ DataFrame.write()    │  │                          │                          │
+  │  │ - input datasets     │  │                          │  Reads DAG tags:         │
+  │  │ - output datasets    │──┼──COMPLETE event─────────►│  source: / output:       │
+  │  │ - column lineage     │  │                          │                          │
+  │  │ - schema facets      │  │                          │  Builds lineage graph:   │
+  │  │ - cost facet         │  │                          │  assets, processes,      │
+  │  └──────────────────────┘  │                          │  column lineage,         │
+  └────────────────────────────┘                          │  schema versions,        │
+                                                          │  custom facets           │
+  ┌────────────────────────────┐                          │                          │
+  │  DQ Runner                 │                          └────────────┬─────────────┘
+  │  (Airflow task pod)        │                                       │
+  │  LineageReporter           │                                       ▼
   │  ┌──────────────────────┐  │                          ┌─────────────────────────┐
-  │  │ SparkContext init    │──┼──START event────────────►│  Microsoft Purview      │
-  │  └──────────────────────┘  │                          │  purview-forge-{env}    │
-  │  ┌──────────────────────┐  │                          │  .purview.azure.com     │
-  │  │ DataFrame.write()    │  │                          │                         │
-  │  │ - input datasets     │  │                          │  OpenLineage endpoint:  │
-  │  │ - output datasets    │──┼──COMPLETE event─────────►│  /dataMap/openlineage/  │
-  │  │ - column lineage     │  │                          │  namespaces/forge-{env} │
-  │  │ - schema facets      │  │                          │  /events                │
-  │  │ - cost facet         │  │                          │                         │
-  │  └──────────────────────┘  │                          │  Builds lineage graph:  │
-  └────────────────────────────┘                          │  assets, processes,     │
-                                                          │  column lineage,        │
-  ┌────────────────────────────┐                          │  schema versions,       │
-  │  Trino                     │                          │  custom facets          │
-  │  OpenLineage Event Listener│                          │                         │
-  │  ┌──────────────────────┐  │                          └────────────┬────────────┘
-  │  │ QueryCreatedEvent    │──┼──START event────────────►             │
-  │  └──────────────────────┘  │                                       │ Data Map API
-  │  ┌──────────────────────┐  │                                       ▼
-  │  │ QueryCompletedEvent  │──┼──COMPLETE event─────────►┌─────────────────────────┐
-  │  │  SQL AST parsed      │  │                          │  Developer Portal        │
-  │  │  table refs extracted│  │                          │  portal-api FastAPI       │
-  │  └──────────────────────┘  │                          │                         │
-  └────────────────────────────┘                          │  Purview Data Map API   │
-                                                          │  GET lineage graph      │
-  ┌────────────────────────────┐                          │  GET asset details      │
-  │  DQ Runner                 │                          │  GET column lineage     │
-  │  (Airflow task pod)        │                          │                         │
-  │  LineageReporter           │                          │  Rendered in Portal:    │
-  │  ┌──────────────────────┐  │                          │  Lineage Explorer       │
-  │  │ DQ COMPLETE event    │──┼──DQ facet attached──────►│  Dataset Detail         │
-  │  │ with dataQuality     │  │                          │  Impact Analysis        │
-  │  │ facet on output      │  │                          └─────────────────────────┘
-  │  │ dataset              │  │
-  │  └──────────────────────┘  │
-  └────────────────────────────┘
+  │  │ DQ COMPLETE event    │──┼──DQ facet attached──────►│  Developer Portal        │
+  │  │ with dataQuality     │  │                          │  portal-api FastAPI       │
+  │  │ facet on output      │  │                          │                          │
+  │  │ dataset              │  │                          │  Rendered in Portal:     │
+  │  └──────────────────────┘  │                          │  Lineage Explorer        │
+  └────────────────────────────┘                          │  Dataset Detail          │
+                                                          │  Impact Analysis         │
+                                                          └─────────────────────────┘
 ```

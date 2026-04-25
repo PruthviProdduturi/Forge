@@ -59,8 +59,8 @@ kubectl describe pod <spark-driver-pod> -n spark-jobs --context forge-compute-de
 
 # Verify the managed identity exists and has the right client ID
 az identity show \
-  --resource-group rg-forge-prproddu-dev \
-  --name id-forge-spark-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name id-forge-spark-{alias}-dev \
   --query "{clientId: clientId, principalId: principalId}" \
   -o table
 ```
@@ -72,12 +72,12 @@ az identity show \
 ```bash
 STORAGE_ID=$(az storage account show \
   --name forgestoragedev \
-  --resource-group rg-forge-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
   --query id -o tsv)
 
 IDENTITY_PRINCIPAL=$(az identity show \
-  --resource-group rg-forge-prproddu-dev \
-  --name id-forge-spark-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name id-forge-spark-{alias}-dev \
   --query principalId -o tsv)
 
 # Check if the managed identity has Storage Blob Data Contributor
@@ -104,12 +104,12 @@ az role assignment list \
 ```bash
 STORAGE_ID=$(az storage account show \
   --name forgestoragedev \
-  --resource-group rg-forge-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
   --query id -o tsv)
 
 IDENTITY_PRINCIPAL=$(az identity show \
-  --resource-group rg-forge-prproddu-dev \
-  --name id-forge-spark-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name id-forge-spark-{alias}-dev \
   --query principalId -o tsv)
 
 az role assignment create \
@@ -147,8 +147,8 @@ Get the client ID:
 
 ```bash
 az identity show \
-  --resource-group rg-forge-prproddu-dev \
-  --name id-forge-spark-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name id-forge-spark-{alias}-dev \
   --query clientId -o tsv
 ```
 
@@ -164,7 +164,7 @@ After annotating, any new pods will get the token. Existing running pods will no
 # Check storage firewall config
 az storage account show \
   --name forgestoragedev \
-  --resource-group rg-forge-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
   --query networkRuleSet \
   -o json
 ```
@@ -174,13 +174,13 @@ If `defaultAction` is `Deny`, only the VNet subnets listed in `virtualNetworkRul
 ```bash
 # Get the subnet ID for the AKS node pool
 SUBNET_ID=$(az aks show \
-  --resource-group rg-forge-prproddu-dev \
-  --name aks-forge-compute-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
+  --name aks-forge-compute-{alias}-dev \
   --query "agentPoolProfiles[0].vnetSubnetId" -o tsv)
 
 az storage account network-rule add \
   --account-name forgestoragedev \
-  --resource-group rg-forge-prproddu-dev \
+  --resource-group rg-forge-{alias}-dev \
   --subnet "$SUBNET_ID"
 ```
 

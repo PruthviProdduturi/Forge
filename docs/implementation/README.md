@@ -13,7 +13,7 @@ The entire platform is deployed by a single script:
 
 ```bash
 # First-time full deploy (from repo root: D:\Repos\DSEngCoreInfra\Forge)
-bash infra/scripts/forge-up.sh --env dev --alias prproddu --pg-admin-pass <pass> --git-pat <pat>
+bash infra/scripts/forge-up.sh --env dev --alias {alias} --pg-admin-pass <pass> --git-pat <pat>
 ```
 
 See [`00-forge-up.md`](./00-forge-up.md) for the full `forge-up.sh` guide: partial re-deploys, flags, teardown, and smoke test.
@@ -63,20 +63,20 @@ Step 06 — CI/CD Pipeline
 ## Environment Naming
 
 All commands use `{env}` as a placeholder. Replace with `dev` or `prod`.
-For personal dev deployments, set `ownerAlias` (e.g. `prproddu`) — it is appended to all resource names to avoid conflicts.
+For personal dev deployments, set `ownerAlias` (e.g. `{alias}`) — it is appended to all resource names to avoid conflicts.
 
 | Variable | Example (personal dev) | Example (prod) |
 |----------|----------------------|----------------|
 | `{env}` | `dev` | `prod` |
-| `{alias}` | `prproddu` | *(empty)* |
-| ACR name | `forgeacrprproddu` | `forgeacr` |
-| `rg-forge-acr` | `rg-forge-acr-prproddu` | `rg-forge-acr` |
-| `rg-forge-platform-{env}` | `rg-forge-platform-prproddu-dev` | `rg-forge-platform-prod` |
-| `rg-forge-{env}` | `rg-forge-prproddu-dev` | `rg-forge-prod` |
-| `{compute_cluster}` | `aks-forge-compute-prproddu-dev` | `aks-forge-compute-prod` |
-| `{orch_cluster}` | `aks-forge-orchestration-prproddu-dev` | `aks-forge-orchestration-prod` |
-| `{adls_account}` | `forgeadlsprproddudev` | `forgeadlsprod` |
-| `{keyvault}` | `kv-forge-prproddu-dev` | `kv-forge-prod` |
+| `{alias}` | `{alias}` | *(empty)* |
+| ACR name | `forgeacr{alias}` | `forgeacr` |
+| `rg-forge-acr` | `rg-forge-acr-{alias}` | `rg-forge-acr` |
+| `rg-forge-platform-{env}` | `rg-forge-platform-{alias}-dev` | `rg-forge-platform-prod` |
+| `rg-forge-{env}` | `rg-forge-{alias}-dev` | `rg-forge-prod` |
+| `{compute_cluster}` | `aks-forge-compute-{alias}-dev` | `aks-forge-compute-prod` |
+| `{orch_cluster}` | `aks-forge-orchestration-{alias}-dev` | `aks-forge-orchestration-prod` |
+| `{adls_account}` | `forgeadls{alias}dev` | `forgeadlsprod` |
+| `{keyvault}` | `kv-forge-{alias}-dev` | `kv-forge-prod` |
 
 ---
 

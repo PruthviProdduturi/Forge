@@ -164,7 +164,7 @@ Calico network policies enforce pod-to-pod traffic rules within each cluster —
 | Key Vault operations | KV audit logs (every secret access) | Log Analytics | 1 year |
 | Airflow | DAG run / task instance audit log | ADLS + Log Analytics | 1 year |
 | DQ framework | DQ run reports (Delta table) | ADLS Silver layer | Unlimited |
-| OpenLineage events | Microsoft Purview (managed service) | Purview + ADLS archive | 1 year active, 2 years archive |
+| OpenLineage events | Portal lineage API (internal) | ADLS archive | 1 year active, 2 years archive |
 | Portal access | FastAPI structured access log | Log Analytics | 90 days |
 
 All logs in Log Analytics are **immutable** (append-only, cannot be modified or deleted by application credentials).
@@ -244,6 +244,6 @@ Image push to ACR
 
 ## Non-Goals (Out of Scope for S360 Baseline)
 
-- **Data classification and labeling** — Microsoft Purview integration is a future phase
+- **Data classification and labeling** — a future phase
 - **Customer-managed keys (CMK) for ADLS** — option available, not default; requires additional Key Vault HSM tier
 - **Cross-tenant data sharing governance** — single-tenant architecture assumed

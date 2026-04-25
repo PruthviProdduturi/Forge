@@ -201,7 +201,7 @@ This call:
 
 ## 8. Lineage Integration
 
-OpenLineage events emitted by Spark and Airflow use HMS table names as dataset identifiers, not raw ADLS paths. This means the lineage graph in Microsoft Purview shows human-readable names:
+OpenLineage events emitted by Spark and Airflow use HMS table names as dataset identifiers, not raw ADLS paths. This means the lineage graph in the Developer Portal shows human-readable names:
 
 ```
 lakehouse.silver.retail_orders_cleaned  →  lakehouse.gold.retail_daily_sales

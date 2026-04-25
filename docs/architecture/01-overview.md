@@ -128,7 +128,7 @@ Spark and Trino pools scale to zero when idle. Node taints + labels ensure workl
 
 **One-time setup per engineer:**
 ```bash
-az aks get-credentials --resource-group rg-forge-prproddu-dev --name aks-forge-compute-prproddu-dev
+az aks get-credentials --resource-group rg-forge-{alias}-dev --name aks-forge-compute-{alias}-dev
 kubelogin convert-kubeconfig -l azurecli
 kubectl get nodes
 ```

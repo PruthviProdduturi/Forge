@@ -150,7 +150,7 @@ The compute cluster provides elastic, scalable execution for batch processing an
 | **Batch (Spark Operator)** | Airflow `SparkKubernetesOperator` | dev + prod | `.builder.appName(...)` |
 
 - Workloads use **workload identity** (managed identity + OIDC) for ADLS and Key Vault access — no credentials in code or config
-- All jobs emit **OpenLineage** START/COMPLETE/FAIL events to Microsoft Purview automatically
+- All jobs emit **OpenLineage** START/COMPLETE/FAIL events automatically (consumed by the portal lineage API)
 - Spark UI is accessible via port-forward for debugging (not exposed publicly)
 - Node pools: `sparkpool` (memory-optimised, Standard_E8s_v5) autoscales 0→20 on demand
 
@@ -196,13 +196,12 @@ DQOperator
 
 Rules are managed as YAML in Git — the same PR review and CI validation process as code.
 
-### 6.3 Lineage (OpenLineage / Microsoft Purview)
+### 6.3 Lineage (OpenLineage / Portal Lineage API)
 
-- OpenLineage events are emitted automatically by Airflow tasks, Spark jobs, and Trino queries — no manual instrumentation for standard pipeline operations
-- Microsoft Purview stores the full lineage graph: upstream source systems → bronze → silver → gold, with dataset versions, column-level flows, and custom facets (DQ summary, compute cost)
+- OpenLineage events are emitted automatically by Airflow tasks and Spark jobs — no manual instrumentation for standard pipeline operations
+- Lineage is derived from Airflow DAG tags (`source:` / `output:`) and surfaced through the portal lineage API, which builds the full lineage graph: upstream source systems → bronze → silver → gold, with dataset versions, column-level flows, and custom facets (DQ summary, compute cost)
 - The full lineage chain from source system (SQL Server, PostgreSQL, REST API) to gold is captured when ingest jobs declare their upstream source as an OpenLineage input — see [Lineage Architecture](architecture/10-lineage.md) Section 4 for the upstream source naming convention
-- Impact analysis: "what breaks if I change this source table or column?" is answerable from Purview's lineage graph or the Developer Portal's Lineage Explorer
-- `id-forge-read-{env}` holds **Purview Data Curator** role on the Purview collection, enabling all emitters (Airflow, Spark, Trino pods) to POST lineage events via workload identity
+- Impact analysis: "what breaks if I change this source table or column?" is answerable from the Developer Portal's Lineage Explorer
 
 ### 6.4 Observability
 
@@ -412,7 +411,7 @@ feature/my-pipeline
 | **0 — Design & Foundations** | Final architecture, naming, DNS, repo structure, standards | 1–2 weeks |
 | **1 — Networking & Clusters** | VNets, private endpoints, ACR, AKS clusters (both envs) | 2 weeks |
 | **2 — Compute Services** | Spark Operator, Spark Connect, Trino deployed to dev → prod | 3 weeks |
-| **3 — Orchestration Services** | Airflow, Purview OpenLineage integration, Azure Monitor, Developer Portal to dev → prod | 3 weeks |
+| **3 — Orchestration Services** | Airflow, OpenLineage integration, Azure Monitor, Developer Portal to dev → prod | 3 weeks |
 | **4 — Data Quality & Lineage** | DQ framework, OpenLineage integration, dashboards | 3–4 weeks |
 | **5 — Hardening & Rollout** | Security review, cost guardrails, runbooks, onboarding docs | 2 weeks |
 
@@ -433,7 +432,7 @@ feature/my-pipeline
 | 7 | Airflow executor, DAG patterns, operators | [07-orchestration](architecture/07-orchestration.md) |
 | 8 | Azure Monitor, Grafana, Log Analytics, SLOs | [08-observability](architecture/08-observability.md) |
 | 9 | DQ rule types, YAML format, severity gating | [09-dq-framework](architecture/09-dq-framework.md) |
-| 10 | OpenLineage, Microsoft Purview, column-level lineage | [10-lineage](architecture/10-lineage.md) |
+| 10 | OpenLineage, portal lineage API, column-level lineage | [10-lineage](architecture/10-lineage.md) |
 | 11 | Developer Portal API and frontend | [11-developer-portal](architecture/11-developer-portal.md) |
 | 12 | Full data flow: source → gold | [12-end-to-end-flow](architecture/12-end-to-end-flow.md) |
 | 13 | Restatement, backfill, partition recovery | [13-restatement](architecture/13-restatement.md) |

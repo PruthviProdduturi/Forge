@@ -57,7 +57,6 @@ No cluster node ever pulls from a public registry. This eliminates:
 | Component | Version | Base Image | ACR Tag | Notes |
 |-----------|---------|-----------|---------|-------|
 | **Apache Airflow** | 3.1.8 | `apache/airflow:3.1.8-python3.11` | `forgeacr/airflow:3.1.8` | Custom image — see below |
-| **Microsoft Purview** | Managed service | — | — | Org-wide license; no image to manage. Lineage backend via OpenLineage REST endpoint. |
 
 ### Observability Layer
 
@@ -101,7 +100,7 @@ Built from `infra/docker/spark/Dockerfile`. Build context is the repo root (requ
 - Apache Iceberg 1.10.1 (`iceberg-spark-runtime-4.0_2.13` — Spark 4.x compatible)
 - Hadoop Azure 3.4.1 — ABFS driver for ADLS Gen2
 - Azure Identity + Azure Storage File DataLake JARs — workload identity token provider
-- OpenLineage Spark 1.39.0 — automatic lineage emission to Purview
+- OpenLineage Spark 1.39.0 — automatic lineage emission
 - Python 3.11, PySpark, delta-spark, pandas, pyarrow, openlineage-python 1.39.0
 - `spark-defaults.conf` with ADLS and OpenLineage defaults baked in
 - `forge-dq` SDK baked in from `sdk/python/`
@@ -200,7 +199,6 @@ All version changes go through Git — no image tag updates directly in producti
 | Trino | Apache 2.0 | Attribution |
 | Apache Airflow | Apache 2.0 | Attribution |
 | Delta Lake | Apache 2.0 | Attribution |
-| Microsoft Purview | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Monitor / Container Insights | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Managed Grafana | Microsoft Azure Terms | Covered by Azure enterprise agreement |
 | Azure Log Analytics Workspace | Microsoft Azure Terms | Covered by Azure enterprise agreement |
