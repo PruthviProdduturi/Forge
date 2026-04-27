@@ -452,7 +452,7 @@ export default function AboutPage() {
               letterSpacing: "-0.01em",
             }}
           >
-            DSEng · Core Data Engineering Platform
+            The Core Data Engineering Platform
           </h1>
           <p
             style={{

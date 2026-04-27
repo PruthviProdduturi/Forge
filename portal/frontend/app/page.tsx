@@ -169,9 +169,6 @@ export default function HomePage() {
 
             {/* Platform identity */}
             <div style={{ flex: "1 1 420px" }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.55)", letterSpacing: "0.02em", marginBottom: 6 }}>
-                DSEng
-              </div>
               <h1 style={{ fontSize: 34, fontWeight: 800, color: "#fff", margin: "0 0 10px", letterSpacing: "-0.025em", lineHeight: 1.1 }}>
                 Platform Overview
               </h1>
