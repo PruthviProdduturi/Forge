@@ -1,5 +1,6 @@
 /* ─── CSS Variables ────────────────────────────────────────────────────────── */
 :root {
+  color-scheme: light;
   --forge-primary: #1e3a5f;
   --forge-primary-hover: #16304f;
   --forge-dark: #0f1e2e;
