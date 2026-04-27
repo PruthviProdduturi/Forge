@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { ForgeLogo } from "../../components/ForgeLogo";
+import { FoundryLogo } from "../../components/FoundryLogo";
 import { useTheme } from "../../contexts/ThemeContext";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -440,26 +440,26 @@ export default function AboutPage() {
         }}
       >
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
-          <div style={{ display: "flex", justifyContent: "center", marginBottom: 14 }}>
-            <ForgeLogo size={80} animate="none" showName={true} color="#fff" />
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
+            <FoundryLogo size={80} animate="revolve" showName={true} color="#fff" mark="crosshair" />
           </div>
           <h1
             style={{
               fontSize: "clamp(1.1rem, 3vw, 1.5rem)",
               fontWeight: 700,
               color: "rgba(255,255,255,0.92)",
-              marginBottom: 8,
+              marginBottom: 4,
               letterSpacing: "-0.01em",
             }}
           >
-            The Core Data Engineering Platform
+            DSEng · Core Data Engineering Platform
           </h1>
           <p
             style={{
               fontSize: "1rem",
               color: "rgba(255,255,255,0.65)",
               marginBottom: 24,
-              lineHeight: 1.65,
+              lineHeight: 1.5,
             }}
           >
             Scalable compute. Reliable orchestration. Governed analytics.
@@ -1132,7 +1132,6 @@ export default function AboutPage() {
             Observability &amp; lineage
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            <ChartPill icon="fa-share-nodes" label="OpenLineage" color="#f97316" />
             <ChartPill icon="fa-share-nodes" label="OpenLineage" color="#0ea5e9" />
             <ChartPill icon="fa-chart-line" label="Azure Monitor" color="#e6522c" />
             <ChartPill icon="fa-chart-bar" label="Azure Managed Grafana" color="#f46800" />

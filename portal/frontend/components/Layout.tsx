@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRole } from "../hooks/useRole";
-import { ForgeLogo } from "./ForgeLogo";
+import { FoundryLogo } from "./FoundryLogo";
 import { ThemeModal } from "./ThemeModal";
 import { apiFetch } from "../utils/api";
 
@@ -43,7 +43,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const { user, logout, getToken } = useAuth();
   const { primaryColor } = useTheme();
   const { role } = useRole();
-  const [logoAnimating, setLogoAnimating] = useState(false);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
 
@@ -52,6 +51,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       .then(setPlatformInfo)
       .catch(() => {/* non-critical */});
   }, [getToken]);
+
+  const [logoAnimating, setLogoAnimating] = useState(false);
 
   const handleLogoClick = useCallback(() => {
     setLogoAnimating(true);
@@ -78,10 +79,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <header className="app-header">
         {/* Left side */}
         <div className="header-left">
-          <ForgeLogo
+          <FoundryLogo
             size={36}
             animate="revolve"
             showName={true}
+            mark="crosshair"
             onClick={handleLogoClick}
           />
           {logoAnimating && <span style={{ display: "none" }} />}
@@ -196,6 +198,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </header>
 
       <main>{children}</main>
+
+      <footer className="app-footer">
+        <div className="app-footer-brand">
+          <span className="app-footer-built">Built by</span>
+          <span className="app-footer-team">DSEng</span>
+          <div className="app-footer-sep" aria-hidden="true" />
+          <span className="app-footer-sub">Data Science Engineering · CO+I · CTO</span>
+        </div>
+        <span className="app-footer-sub">Core Data Engineering Platform</span>
+      </footer>
 
       {themeModalOpen && (
         <ThemeModal onClose={() => setThemeModalOpen(false)} />

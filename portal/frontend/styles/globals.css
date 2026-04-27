@@ -72,8 +72,54 @@ button {
 main {
   position: relative;
   z-index: 0;
-  height: calc(100vh - 56px);
+  height: calc(100vh - 56px - 36px);
   overflow-y: auto;
+}
+
+/* ─── DSEng brand footer ───────────────────────────────────────────────────── */
+.app-footer {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  background: var(--forge-primary);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.app-footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-footer-built {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  letter-spacing: 0.01em;
+}
+
+.app-footer-team {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.app-footer-sep {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.app-footer-sub {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 400;
+  letter-spacing: 0.01em;
 }
 
 /* ─── Card (glass) ─────────────────────────────────────────────────────────── */
@@ -423,12 +469,22 @@ main {
 }
 
 @keyframes logoRevolve {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.foundry-mark {
+  transform-origin: center;
+}
+
+.foundry-flame-pulse {
+  animation: flamePulse 0.44s ease-out;
+}
+
+@keyframes flamePulse {
+  0%   { transform: scale(1);    opacity: 1; }
+  40%  { transform: scale(1.22); opacity: 0.85; }
+  100% { transform: scale(1);    opacity: 1; }
 }
 
 /* ─── Forge Loader ─────────────────────────────────────────────────────────── */
