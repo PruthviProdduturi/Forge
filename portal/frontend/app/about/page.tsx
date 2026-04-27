@@ -2,7 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
-import { FoundryLogo } from "../../components/FoundryLogo";
+import { ForgeLogo } from "../../components/ForgeLogo";
 import { useTheme } from "../../contexts/ThemeContext";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -441,7 +441,7 @@ export default function AboutPage() {
       >
         <div style={{ maxWidth: 760, margin: "0 auto" }}>
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 10 }}>
-            <FoundryLogo size={80} animate="revolve" showName={true} color="#fff" mark="crosshair" />
+            <ForgeLogo size={80} animate="none" showName={true} color="#fff" />
           </div>
           <h1
             style={{

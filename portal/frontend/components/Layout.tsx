@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../auth/useAuth";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRole } from "../hooks/useRole";
-import { FoundryLogo } from "./FoundryLogo";
+import { ForgeLogo } from "./ForgeLogo";
 import { ThemeModal } from "./ThemeModal";
 import { apiFetch } from "../utils/api";
 
@@ -79,11 +79,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <header className="app-header">
         {/* Left side */}
         <div className="header-left">
-          <FoundryLogo
+          <ForgeLogo
             size={36}
             animate="revolve"
             showName={true}
-            mark="crosshair"
             onClick={handleLogoClick}
           />
           {logoAnimating && <span style={{ display: "none" }} />}
@@ -199,17 +198,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
 
       <main>{children}</main>
 
-      <footer className="app-footer">
-        <div className="app-footer-brand">
-          <span className="app-footer-built">Built by</span>
-          <span className="app-footer-team">DSEng</span>
-          <div className="app-footer-sep" aria-hidden="true" />
-          <span className="app-footer-sub">Data Science Engineering · CO+I · CTO</span>
-        </div>
-        <span className="app-footer-sub">Core Data Engineering Platform</span>
-      </footer>
 
-      {themeModalOpen && (
+{themeModalOpen && (
         <ThemeModal onClose={() => setThemeModalOpen(false)} />
       )}
     </>
