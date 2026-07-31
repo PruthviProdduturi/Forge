@@ -10,6 +10,7 @@ use via DefaultAzureCredential (workload identity → KV Secrets User role).
 AIRFLOW_PASSWORD env var overrides KV lookup for local dev only.
 The JWT is cached in-process and refreshed 1h before expiry.
 """
+
 from __future__ import annotations
 
 import time
@@ -83,7 +84,10 @@ async def _get_jwt() -> str:
 def _airflow_client(token: str) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         base_url=settings.airflow_url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
         timeout=30.0,
     )
 
@@ -91,6 +95,7 @@ def _airflow_client(token: str) -> httpx.AsyncClient:
 # ---------------------------------------------------------------------------
 # API methods
 # ---------------------------------------------------------------------------
+
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
 async def get_dags(limit: int = 100, only_active: bool = True) -> list[dict[str, Any]]:
@@ -121,7 +126,9 @@ async def get_dag(dag_id: str) -> dict[str, Any]:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-async def get_dag_runs(dag_id: str, limit: int = 10, offset: int = 0) -> list[dict[str, Any]]:
+async def get_dag_runs(
+    dag_id: str, limit: int = 10, offset: int = 0
+) -> list[dict[str, Any]]:
     token = await _get_jwt()
     async with _airflow_client(token) as client:
         params: dict[str, Any] = {"limit": limit, "order_by": "-start_date"}
@@ -146,9 +153,7 @@ async def get_dag_tasks(dag_id: str) -> list[dict[str, Any]]:
 async def get_task_instances(dag_id: str, run_id: str) -> list[dict[str, Any]]:
     token = await _get_jwt()
     async with _airflow_client(token) as client:
-        resp = await client.get(
-            f"/api/v2/dags/{dag_id}/dagRuns/{run_id}/taskInstances"
-        )
+        resp = await client.get(f"/api/v2/dags/{dag_id}/dagRuns/{run_id}/taskInstances")
         resp.raise_for_status()
         return resp.json().get("task_instances", [])
 
@@ -164,7 +169,9 @@ async def trigger_dag(
     async with _airflow_client(token) as client:
         ts = logical_date or datetime.now(timezone.utc).isoformat()
         body: dict[str, Any] = {
-            "dag_run_id": f"restate__{ts}" if logical_date else f"manual__{datetime.now(timezone.utc).isoformat()}",
+            "dag_run_id": f"restate__{ts}"
+            if logical_date
+            else f"manual__{datetime.now(timezone.utc).isoformat()}",
             "logical_date": ts,
             "conf": conf or {},
         }
@@ -204,7 +211,9 @@ async def set_dag_paused(dag_id: str, is_paused: bool) -> dict[str, Any]:
     """Pause or unpause a DAG."""
     token = await _get_jwt()
     async with _airflow_client(token) as client:
-        resp = await client.patch(f"/api/v2/dags/{dag_id}", json={"is_paused": is_paused})
+        resp = await client.patch(
+            f"/api/v2/dags/{dag_id}", json={"is_paused": is_paused}
+        )
         resp.raise_for_status()
         return resp.json()
 
@@ -219,7 +228,9 @@ async def delete_dag_run(dag_id: str, run_id: str) -> None:
             resp.raise_for_status()
 
 
-async def patch_task_instance_state(dag_id: str, run_id: str, task_id: str, new_state: str) -> None:
+async def patch_task_instance_state(
+    dag_id: str, run_id: str, task_id: str, new_state: str
+) -> None:
     """Set a specific task instance to a given state (e.g. 'success' to skip sensors)."""
     token = await _get_jwt()
     async with _airflow_client(token) as client:
@@ -236,7 +247,11 @@ async def get_dag_runs_for_date(dag_id: str, logical_date: str) -> list[dict[str
     """Return all existing DAG runs for a specific logical_date (ISO string)."""
     token = await _get_jwt()
     async with _airflow_client(token) as client:
-        params = {"logical_date_gte": logical_date, "logical_date_lte": logical_date, "limit": 25}
+        params = {
+            "logical_date_gte": logical_date,
+            "logical_date_lte": logical_date,
+            "limit": 25,
+        }
         resp = await client.get(f"/api/v2/dags/{dag_id}/dagRuns", params=params)
         if resp.status_code == 200:
             return resp.json().get("dag_runs", [])
@@ -286,7 +301,9 @@ def _parse_log_text(text: str) -> str:
     return "\n".join(lines)
 
 
-async def _read_log_from_adls(dag_id: str, run_id: str, task_id: str, attempt: int) -> str | None:
+async def _read_log_from_adls(
+    dag_id: str, run_id: str, task_id: str, attempt: int
+) -> str | None:
     """Fast path: read task logs directly from ADLS, bypassing Airflow's slow multi-source fetching.
 
     Airflow's WasbTaskHandler writes logs to:
@@ -303,16 +320,26 @@ async def _read_log_from_adls(dag_id: str, run_id: str, task_id: str, attempt: i
         account_url = f"https://{settings.adls_account}.blob.core.windows.net"
         async with _AsyncCred() as cred:
             async with BlobServiceClient(account_url, credential=cred) as client:
-                blob_client = client.get_blob_client(container="airflow-logs", blob=blob_path)
+                blob_client = client.get_blob_client(
+                    container="airflow-logs", blob=blob_path
+                )
                 download = await blob_client.download_blob()
                 raw = await download.readall()
                 return _parse_log_text(raw.decode("utf-8", errors="replace"))
     except Exception as exc:
-        log.debug("adls_log_read_miss", dag_id=dag_id, task_id=task_id, attempt=attempt, error=str(exc))
+        log.debug(
+            "adls_log_read_miss",
+            dag_id=dag_id,
+            task_id=task_id,
+            attempt=attempt,
+            error=str(exc),
+        )
         return None
 
 
-async def get_task_logs(dag_id: str, run_id: str, task_id: str, attempt: int = 1) -> str:
+async def get_task_logs(
+    dag_id: str, run_id: str, task_id: str, attempt: int = 1
+) -> str:
     """Fetch raw task logs for a specific task instance attempt.
 
     Fast path: reads directly from ADLS blob (milliseconds).
@@ -332,7 +359,10 @@ async def get_task_logs(dag_id: str, run_id: str, task_id: str, attempt: int = 1
         token = await _get_jwt()
         async with httpx.AsyncClient(
             base_url=settings.airflow_url,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
             timeout=10.0,
         ) as client:
             resp = await client.get(
@@ -354,7 +384,9 @@ async def get_task_logs(dag_id: str, run_id: str, task_id: str, attempt: int = 1
 async def ping() -> bool:
     """Unauthenticated health check — no credentials needed."""
     try:
-        async with httpx.AsyncClient(base_url=settings.airflow_url, timeout=5.0) as client:
+        async with httpx.AsyncClient(
+            base_url=settings.airflow_url, timeout=5.0
+        ) as client:
             resp = await client.get("/api/v2/monitor/health")
             return resp.status_code < 500
     except Exception:

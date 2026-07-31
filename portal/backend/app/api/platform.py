@@ -9,6 +9,7 @@ The portal-api managed identity needs Key Vault Secrets Officer on the vault
 (granted in identity.bicep / keyvault.bicep).  For local dev, falls back to
 an in-memory dict when KV is not configured (KEY_VAULT_URL env var absent).
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -34,13 +35,21 @@ settings = get_settings()
 import json as _json  # noqa: E402
 import pathlib as _pathlib  # noqa: E402
 
-_LOCAL_OVERRIDES_FILE = _pathlib.Path(__file__).parent.parent.parent / ".forge-dev-config.json"
+_LOCAL_OVERRIDES_FILE = (
+    _pathlib.Path(__file__).parent.parent.parent / ".forge-dev-config.json"
+)
+
 
 def _load_local_overrides() -> dict[str, str]:
     try:
-        return _json.loads(_LOCAL_OVERRIDES_FILE.read_text()) if _LOCAL_OVERRIDES_FILE.exists() else {}
+        return (
+            _json.loads(_LOCAL_OVERRIDES_FILE.read_text())
+            if _LOCAL_OVERRIDES_FILE.exists()
+            else {}
+        )
     except Exception:
         return {}
+
 
 def _save_local_overrides(data: dict[str, str]) -> None:
     try:
@@ -48,13 +57,14 @@ def _save_local_overrides(data: dict[str, str]) -> None:
     except Exception:
         pass
 
+
 _local_overrides: dict[str, str] = _load_local_overrides()
 
 # ---------------------------------------------------------------------------
 # Key Vault helpers
 # ---------------------------------------------------------------------------
 
-_KV_SECRET_PROVIDER  = "forge-portal-auth-provider"
+_KV_SECRET_PROVIDER = "forge-portal-auth-provider"
 _KV_SECRET_CLIENT_ID = "forge-portal-aad-client-id"
 _KV_SECRET_TENANT_ID = "forge-portal-aad-tenant-id"
 
@@ -67,8 +77,11 @@ def _kv_client():  # type: ignore[return]
         return None
     try:
         from azure.identity import ManagedIdentityCredential  # type: ignore
-        from azure.keyvault.secrets import SecretClient       # type: ignore
-        credential = ManagedIdentityCredential(client_id=settings.azure_client_id or None)
+        from azure.keyvault.secrets import SecretClient  # type: ignore
+
+        credential = ManagedIdentityCredential(
+            client_id=settings.azure_client_id or None
+        )
         return SecretClient(vault_url=kv_url, credential=credential)
     except Exception as exc:
         log.warning("kv_client_init_failed", error=str(exc))
@@ -107,6 +120,7 @@ def _kv_set(name: str, value: str) -> None:
 # Public helper — used by auth.py GET /api/auth/provider
 # ---------------------------------------------------------------------------
 
+
 def get_auth_config_from_kv() -> dict[str, str]:
     """Return current auth config. Hot-read from KV — no in-memory cache.
 
@@ -116,7 +130,7 @@ def get_auth_config_from_kv() -> dict[str, str]:
     client_id = _kv_get(_KV_SECRET_CLIENT_ID, settings.azure_client_id or "")
     tenant_id = _kv_get(_KV_SECRET_TENANT_ID, settings.azure_tenant_id or "common")
     return {
-        "auth_provider":  "azure_ad",
+        "auth_provider": "azure_ad",
         "azure_client_id": client_id,
         "azure_tenant_id": tenant_id,
     }
@@ -126,6 +140,7 @@ def get_auth_config_from_kv() -> dict[str, str]:
 # Auth guard
 # ---------------------------------------------------------------------------
 
+
 def _is_admin(user: dict[str, Any]) -> bool:
     roles = user.get("roles", user.get("role", []))
     if isinstance(roles, str):
@@ -133,9 +148,13 @@ def _is_admin(user: dict[str, Any]) -> bool:
     return any(r.lower() == "admin" for r in roles)
 
 
-def _require_admin(current_user: Annotated[dict[str, Any], Depends(get_current_user)]) -> dict[str, Any]:
+def _require_admin(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
     if not _is_admin(current_user):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required"
+        )
     return current_user
 
 
@@ -143,22 +162,24 @@ def _require_admin(current_user: Annotated[dict[str, Any], Depends(get_current_u
 # Models
 # ---------------------------------------------------------------------------
 
+
 class AuthConfigRequest(BaseModel):
     azure_client_id: str = ""
     azure_tenant_id: str = ""
 
 
 class AuthConfigResponse(BaseModel):
-    auth_provider: str          # always "azure_ad"
+    auth_provider: str  # always "azure_ad"
     azure_client_id: str
     azure_tenant_id: str
-    aad_configured: bool        # True when client_id is non-empty
-    kv_backed: bool             # True when Key Vault is configured
+    aad_configured: bool  # True when client_id is non-empty
+    kv_backed: bool  # True when Key Vault is configured
 
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/auth-config", response_model=AuthConfigResponse)
 async def get_auth_config(

@@ -1,4 +1,5 @@
 """Tests for root endpoint."""
+
 from __future__ import annotations
 
 import pytest

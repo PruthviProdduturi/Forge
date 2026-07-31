@@ -1,4 +1,5 @@
 """Lineage API routes — derived from Airflow DAG source/output tags and Trino HMS."""
+
 from __future__ import annotations
 
 import asyncio
@@ -21,6 +22,7 @@ CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 async def _get_lineage_graph() -> dict[str, dict[str, set[str]]]:
     """Build a lineage graph from Airflow DAG source/output tags.
@@ -97,6 +99,7 @@ def _resolve_dataset(
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/search")
 async def search_lineage(

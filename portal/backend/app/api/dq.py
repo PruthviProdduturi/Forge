@@ -1,4 +1,5 @@
 """Data Quality API routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,8 +26,10 @@ settings = get_settings()
 # Postgres helpers (same pattern as theme.py / pipelines.py)
 # ---------------------------------------------------------------------------
 
+
 async def _pg_token() -> str:
     from azure.identity import WorkloadIdentityCredential  # type: ignore
+
     cred = WorkloadIdentityCredential()
     token_obj = await asyncio.to_thread(
         cred.get_token, "https://ossrdbms-aad.database.windows.net/.default"
@@ -39,6 +42,7 @@ async def _pg_connect():  # type: ignore[return]
         return None
     try:
         import asyncpg  # type: ignore
+
         token = await _pg_token()
         ssl_ctx = ssl.create_default_context()
         conn = await asyncpg.connect(
@@ -80,6 +84,7 @@ async def _ensure_table(conn: Any) -> None:
 # Models
 # ---------------------------------------------------------------------------
 
+
 class DQIngestRequest(BaseModel):
     dataset: str
     pipeline_name: str = ""
@@ -95,6 +100,7 @@ class DQIngestRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/summary")
 async def get_dq_summary(current_user: CurrentUser) -> list[dict[str, Any]]:
@@ -125,15 +131,17 @@ async def get_dq_summary(current_user: CurrentUser) -> list[dict[str, Any]]:
                 total = r["total_runs"] or 0
                 passes = r["passes"] or 0
                 last_run_at = r["last_run_at"]
-                results.append({
-                    "dataset": r["dataset"],
-                    "total_runs": total,
-                    "pass_rate": round(passes / total, 4) if total > 0 else 0.0,
-                    "last_run_at": last_run_at.isoformat() if last_run_at else "",
-                    "critical_failures": r["critical_failures"] or 0,
-                    "warnings": r["warnings"] or 0,
-                    "last_status": r["last_status"] or "PASS",
-                })
+                results.append(
+                    {
+                        "dataset": r["dataset"],
+                        "total_runs": total,
+                        "pass_rate": round(passes / total, 4) if total > 0 else 0.0,
+                        "last_run_at": last_run_at.isoformat() if last_run_at else "",
+                        "critical_failures": r["critical_failures"] or 0,
+                        "warnings": r["warnings"] or 0,
+                        "last_status": r["last_status"] or "PASS",
+                    }
+                )
             if results:
                 return results
         except Exception as exc:
@@ -144,6 +152,7 @@ async def get_dq_summary(current_user: CurrentUser) -> list[dict[str, Any]]:
     # Postgres unavailable or empty — fall back to Trino _dq Delta tables
     try:
         from app.services import trino_client
+
         return await asyncio.to_thread(trino_client.get_dq_summary)
     except Exception as exc:
         log.error("dq_summary_trino_fallback_failed", error=str(exc))
@@ -160,13 +169,16 @@ async def get_dq_dataset(
         return []
     try:
         await _ensure_table(conn)
-        rows = await conn.fetch("""
+        rows = await conn.fetch(
+            """
             SELECT run_id, overall_status, total_rules, passes, critical_failures, warnings, run_at
             FROM dq_results
             WHERE dataset = $1
             ORDER BY run_at DESC
             LIMIT 50
-        """, safe_dataset_name)
+        """,
+            safe_dataset_name,
+        )
         return [dict(r) for r in rows]
     except Exception as exc:
         log.error("dq_dataset_failed", dataset=safe_dataset_name, error=str(exc))
@@ -191,11 +203,21 @@ async def ingest_dq_result(body: DQIngestRequest) -> dict[str, str]:
         await _ensure_table(conn)
         run_at = body.run_at or datetime.now(timezone.utc).isoformat()
         critical_str = ",".join(body.critical_failures)
-        await conn.execute("""
+        await conn.execute(
+            """
             INSERT INTO dq_results (dataset, pipeline_name, run_id, overall_status, total_rules, passes, critical_failures, warnings, run_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz)
-        """, body.dataset, body.pipeline_name, body.run_id, body.overall_status,
-            body.total_rules, body.passes, critical_str, body.warnings, run_at)
+        """,
+            body.dataset,
+            body.pipeline_name,
+            body.run_id,
+            body.overall_status,
+            body.total_rules,
+            body.passes,
+            critical_str,
+            body.warnings,
+            run_at,
+        )
         log.info("dq_ingest_ok", dataset=body.dataset, status=body.overall_status)
         # Invalidate DQ summary caches so next read reflects the new result
         cache.delete_prefix("trino:dq_summary")

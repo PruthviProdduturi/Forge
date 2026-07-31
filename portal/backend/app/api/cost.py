@@ -1,4 +1,5 @@
 """Cost API routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +28,9 @@ async def get_cost_summary(
         return await asyncio.to_thread(cost_client.get_summary, days)
     except Exception as exc:
         log.error("cost_summary_failed", error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not retrieve cost data from Azure") from exc
+        raise HTTPException(
+            status_code=502, detail="Could not retrieve cost data from Azure"
+        ) from exc
 
 
 @router.get("/by-pipeline")
@@ -40,7 +43,9 @@ async def get_cost_by_pipeline(
         return await asyncio.to_thread(cost_client.get_by_pipeline, days)
     except Exception as exc:
         log.error("cost_by_pipeline_failed", error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not retrieve pipeline cost data") from exc
+        raise HTTPException(
+            status_code=502, detail="Could not retrieve pipeline cost data"
+        ) from exc
 
 
 @router.get("/by-rg")
@@ -53,4 +58,6 @@ async def get_cost_by_rg(
         return await asyncio.to_thread(cost_client.get_by_rg, days)
     except Exception as exc:
         log.error("cost_by_rg_failed", error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not retrieve RG cost data") from exc
+        raise HTTPException(
+            status_code=502, detail="Could not retrieve RG cost data"
+        ) from exc

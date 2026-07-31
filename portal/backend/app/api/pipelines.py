@@ -1,4 +1,5 @@
 """Pipeline (Airflow DAG) API routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -28,7 +29,7 @@ class TriggerRequest(BaseModel):
 
 class RestateRequest(BaseModel):
     from_date: str  # YYYY-MM-DD
-    to_date: str    # YYYY-MM-DD
+    to_date: str  # YYYY-MM-DD
     conf: dict[str, Any] = {}
 
 
@@ -41,8 +42,10 @@ class RegisterRequest(BaseModel):
 # Postgres helpers — pipeline_deployments table (same pattern as theme.py)
 # ---------------------------------------------------------------------------
 
+
 async def _pg_token() -> str:
     from azure.identity import WorkloadIdentityCredential  # type: ignore
+
     cred = WorkloadIdentityCredential()
     token_obj = await asyncio.to_thread(
         cred.get_token, "https://ossrdbms-aad.database.windows.net/.default"
@@ -55,11 +58,16 @@ async def _pg_connect():  # type: ignore[return]
         return None
     try:
         import asyncpg  # type: ignore
+
         token = await _pg_token()
         ssl_ctx = ssl.create_default_context()
         conn = await asyncpg.connect(
-            host=settings.pg_host, port=5432, database="portal",
-            user=settings.pg_user, password=token, ssl=ssl_ctx,
+            host=settings.pg_host,
+            port=5432,
+            database="portal",
+            user=settings.pg_user,
+            password=token,
+            ssl=ssl_ctx,
         )
         return conn
     except Exception as exc:
@@ -154,7 +162,9 @@ async def list_pipelines(current_user: CurrentUser) -> list[dict[str, Any]]:
 
 
 @router.post("/register", status_code=200)
-async def register_pipeline(body: RegisterRequest, current_user: CurrentUser) -> dict[str, str]:
+async def register_pipeline(
+    body: RegisterRequest, current_user: CurrentUser
+) -> dict[str, str]:
     """Register (or re-register) a DAG deployment. Called by sync-jobs.sh via Bearer token."""
     email = current_user.get("email", "") or current_user.get("preferred_username", "")
     # Prefer explicit alias from caller; fall back to UPN prefix (e.g. prproddu@tenant → prproddu)
@@ -164,7 +174,8 @@ async def register_pipeline(body: RegisterRequest, current_user: CurrentUser) ->
     if conn is not None:
         try:
             await _ensure_deployments_table(conn)
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO pipeline_deployments (dag_id, owner_email, owner_alias, deployed_at, deleted_at)
                 VALUES ($1, $2, $3, now(), NULL)
                 ON CONFLICT (dag_id) DO UPDATE
@@ -172,7 +183,11 @@ async def register_pipeline(body: RegisterRequest, current_user: CurrentUser) ->
                       owner_alias = EXCLUDED.owner_alias,
                       deployed_at = now(),
                       deleted_at  = NULL
-            """, body.dag_id, email, alias)
+            """,
+                body.dag_id,
+                email,
+                alias,
+            )
             log.info("pipeline_registered", dag_id=body.dag_id, owner=email)
         except Exception as exc:
             log.warning("pg_register_pipeline_failed", error=str(exc))
@@ -196,7 +211,8 @@ async def list_mine(current_user: CurrentUser) -> list[str]:
     try:
         await _ensure_deployments_table(conn)
         rows = await conn.fetch(
-            "SELECT dag_id FROM pipeline_deployments WHERE owner_email = $1 AND deleted_at IS NULL", email
+            "SELECT dag_id FROM pipeline_deployments WHERE owner_email = $1 AND deleted_at IS NULL",
+            email,
         )
         if rows:
             return [r["dag_id"] for r in rows]
@@ -229,7 +245,8 @@ async def count_mine(current_user: CurrentUser) -> dict[str, int]:
     try:
         await _ensure_deployments_table(conn)
         row = await conn.fetchrow(
-            "SELECT COUNT(*) as count FROM pipeline_deployments WHERE owner_email = $1 AND deleted_at IS NULL", email
+            "SELECT COUNT(*) as count FROM pipeline_deployments WHERE owner_email = $1 AND deleted_at IS NULL",
+            email,
         )
         return {"count": int(row["count"])}
     except Exception as exc:
@@ -275,7 +292,9 @@ async def get_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, Any]
                 return {
                     "owner_email": row["owner_email"],
                     "owner_alias": row["owner_alias"],
-                    "deployed_at": row["deployed_at"].isoformat() if row["deployed_at"] else None,
+                    "deployed_at": row["deployed_at"].isoformat()
+                    if row["deployed_at"]
+                    else None,
                 }
         except Exception:
             pass
@@ -283,7 +302,9 @@ async def get_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, Any]
             await conn.close()
         return {}
 
-    runs, tasks_def, ownership = await asyncio.gather(_get_runs(), _get_tasks_def(), _get_ownership())
+    runs, tasks_def, ownership = await asyncio.gather(
+        _get_runs(), _get_tasks_def(), _get_ownership()
+    )
 
     summary = _summarise_dag(dag, runs)
     summary["recent_runs"] = runs
@@ -294,7 +315,9 @@ async def get_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, Any]
 
 
 @router.get("/{dag_id}/runs")
-async def get_pipeline_runs(dag_id: str, current_user: CurrentUser) -> list[dict[str, Any]]:
+async def get_pipeline_runs(
+    dag_id: str, current_user: CurrentUser
+) -> list[dict[str, Any]]:
     """Get the last 20 runs for a DAG, including task counts."""
     try:
         runs = await airflow_client.get_dag_runs(dag_id, limit=20)
@@ -322,7 +345,9 @@ async def get_pipeline_runs(dag_id: str, current_user: CurrentUser) -> list[dict
 
 
 @router.get("/{dag_id}/runs/{run_id}/tasks")
-async def get_run_tasks(dag_id: str, run_id: str, current_user: CurrentUser) -> list[dict[str, Any]]:
+async def get_run_tasks(
+    dag_id: str, run_id: str, current_user: CurrentUser
+) -> list[dict[str, Any]]:
     """Get task instances for a specific DAG run."""
     try:
         return await airflow_client.get_task_instances(dag_id, run_id)
@@ -333,7 +358,9 @@ async def get_run_tasks(dag_id: str, run_id: str, current_user: CurrentUser) -> 
 
 @router.get("/{dag_id}/runs/{run_id}/tasks/{task_id}/logs")
 async def get_task_logs(
-    dag_id: str, run_id: str, task_id: str,
+    dag_id: str,
+    run_id: str,
+    task_id: str,
     current_user: CurrentUser,
     attempt: int = 1,
 ) -> dict[str, Any]:
@@ -342,21 +369,34 @@ async def get_task_logs(
         logs = await airflow_client.get_task_logs(dag_id, run_id, task_id, attempt)
         return {"logs": logs, "attempt": attempt}
     except Exception as exc:
-        log.error("get_task_logs_failed", dag_id=dag_id, run_id=run_id, task_id=task_id, error=str(exc))
+        log.error(
+            "get_task_logs_failed",
+            dag_id=dag_id,
+            run_id=run_id,
+            task_id=task_id,
+            error=str(exc),
+        )
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/{dag_id}/runs/{run_id}/cancel")
-async def cancel_run(dag_id: str, run_id: str, current_user: CurrentUser) -> dict[str, Any]:
+async def cancel_run(
+    dag_id: str, run_id: str, current_user: CurrentUser
+) -> dict[str, Any]:
     """Cancel a running or queued DAG run. Required before retriggering."""
     roles = current_user.get("roles", [])
     if isinstance(roles, str):
         roles = [roles]
     if not any(r.lower() in ("admin", "editor") for r in roles):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or Editor roles can cancel runs")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin or Editor roles can cancel runs",
+        )
     try:
         result = await airflow_client.cancel_dag_run(dag_id, run_id)
-        log.info("run_cancelled", dag_id=dag_id, run_id=run_id, user=current_user.get("sub"))
+        log.info(
+            "run_cancelled", dag_id=dag_id, run_id=run_id, user=current_user.get("sub")
+        )
         return result
     except Exception as exc:
         log.error("cancel_run_failed", dag_id=dag_id, run_id=run_id, error=str(exc))
@@ -364,26 +404,45 @@ async def cancel_run(dag_id: str, run_id: str, current_user: CurrentUser) -> dic
 
 
 @router.post("/{dag_id}/runs/{run_id}/restart")
-async def restart_run(dag_id: str, run_id: str, current_user: CurrentUser) -> dict[str, Any]:
+async def restart_run(
+    dag_id: str, run_id: str, current_user: CurrentUser
+) -> dict[str, Any]:
     """Restart a failed run: delete the run (clears all task trackers) then trigger a fresh run."""
     roles = current_user.get("roles", [])
     if isinstance(roles, str):
         roles = [roles]
     if not any(r.lower() in ("admin", "editor") for r in roles):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or Editor roles can restart runs")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin or Editor roles can restart runs",
+        )
     try:
         await airflow_client.delete_dag_run(dag_id, run_id)
-        log.info("run_deleted_for_restart", dag_id=dag_id, run_id=run_id, user=current_user.get("sub"))
+        log.info(
+            "run_deleted_for_restart",
+            dag_id=dag_id,
+            run_id=run_id,
+            user=current_user.get("sub"),
+        )
     except Exception as exc:
         log.error("restart_delete_failed", dag_id=dag_id, run_id=run_id, error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not delete run before restarting") from exc
+        raise HTTPException(
+            status_code=502, detail="Could not delete run before restarting"
+        ) from exc
     try:
         result = await airflow_client.trigger_dag(dag_id, conf={})
-        log.info("run_restarted", dag_id=dag_id, new_run_id=result.get("dag_run_id"), user=current_user.get("sub"))
+        log.info(
+            "run_restarted",
+            dag_id=dag_id,
+            new_run_id=result.get("dag_run_id"),
+            user=current_user.get("sub"),
+        )
         return result
     except Exception as exc:
         log.error("restart_trigger_failed", dag_id=dag_id, error=str(exc))
-        raise HTTPException(status_code=502, detail="Run deleted but could not trigger fresh run") from exc
+        raise HTTPException(
+            status_code=502, detail="Run deleted but could not trigger fresh run"
+        ) from exc
 
 
 @router.post("/{dag_id}/pause")
@@ -416,13 +475,18 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
                  Storage Blob Data Contributor on the ADLS account — silently skipped if not granted)
     """
     if settings.forge_env != "dev":
-        raise HTTPException(status_code=403, detail="Pipeline deletion is only allowed in dev")
+        raise HTTPException(
+            status_code=403, detail="Pipeline deletion is only allowed in dev"
+        )
 
     roles = current_user.get("roles", [])
     if isinstance(roles, str):
         roles = [roles]
     if not any(r.lower() in ("admin", "editor") for r in roles):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or Editor roles can delete pipelines")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin or Editor roles can delete pipelines",
+        )
 
     warnings: list[str] = []
 
@@ -432,11 +496,14 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
     if conn is not None:
         try:
             await _ensure_deployments_table(conn)
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO pipeline_deployments (dag_id, owner_email, owner_alias, deleted_at)
                 VALUES ($1, '', '', now())
                 ON CONFLICT (dag_id) DO UPDATE SET deleted_at = now()
-            """, dag_id)
+            """,
+                dag_id,
+            )
         except Exception as exc:
             log.warning("pg_delete_pipeline_failed", dag_id=dag_id, error=str(exc))
         finally:
@@ -484,14 +551,18 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
         await airflow_client.delete_dag(dag_id)
     except Exception as exc:
         log.error("delete_pipeline_airflow_failed", dag_id=dag_id, error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not delete DAG from Airflow") from exc
+        raise HTTPException(
+            status_code=502, detail="Could not delete DAG from Airflow"
+        ) from exc
 
     # 3. ADLS — best-effort deletion of DAG file, Spark job, DQ rules
     adls_cleaned: list[str] = []
     adls_account = settings.adls_account
     if adls_account:
         try:
-            from azure.identity.aio import DefaultAzureCredential as AsyncDefaultAzureCredential
+            from azure.identity.aio import (
+                DefaultAzureCredential as AsyncDefaultAzureCredential,
+            )
             from azure.storage.blob.aio import ContainerClient
 
             blob_account_url = f"https://{adls_account}.blob.core.windows.net"
@@ -503,7 +574,9 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
             async with AsyncDefaultAzureCredential() as cred:
                 for container, blob_path in blobs_to_delete:
                     try:
-                        async with ContainerClient(blob_account_url, container_name=container, credential=cred) as cc:
+                        async with ContainerClient(
+                            blob_account_url, container_name=container, credential=cred
+                        ) as cc:
                             await cc.delete_blob(blob_path)
                             adls_cleaned.append(f"{container}/{blob_path}")
                     except Exception:
@@ -511,8 +584,12 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
 
                 # DQ rules — delete any YAML matching dag_id prefix
                 try:
-                    async with ContainerClient(blob_account_url, container_name="code", credential=cred) as cc:
-                        async for blob in cc.list_blobs(name_starts_with=f"dq/rules/{dag_id}"):
+                    async with ContainerClient(
+                        blob_account_url, container_name="code", credential=cred
+                    ) as cc:
+                        async for blob in cc.list_blobs(
+                            name_starts_with=f"dq/rules/{dag_id}"
+                        ):
                             try:
                                 await cc.delete_blob(blob.name)
                                 adls_cleaned.append(f"code/{blob.name}")
@@ -523,12 +600,18 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
 
         except Exception as exc:
             log.warning("adls_cleanup_skipped", dag_id=dag_id, error=str(exc))
-            warnings.append("ADLS cleanup skipped — portal MI may need Storage Blob Data Contributor on the ADLS account")
+            warnings.append(
+                "ADLS cleanup skipped — portal MI may need Storage Blob Data Contributor on the ADLS account"
+            )
 
     # 4. Compute cluster — delete all SparkApplications for this DAG (best-effort)
     spark_app_prefix = dag_id.replace("_", "-")
     spark_apps_deleted: list[str] = []
-    if settings.subscription_id and settings.compute_rg and settings.compute_cluster_name:
+    if (
+        settings.subscription_id
+        and settings.compute_rg
+        and settings.compute_cluster_name
+    ):
         try:
             import yaml as _yaml
             from azure.identity import WorkloadIdentityCredential
@@ -575,7 +658,9 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
                         pass
             api_client.rest_client.pool_manager.clear()
             if spark_apps_deleted:
-                log.info("spark_apps_deleted", dag_id=dag_id, count=len(spark_apps_deleted))
+                log.info(
+                    "spark_apps_deleted", dag_id=dag_id, count=len(spark_apps_deleted)
+                )
         except Exception as exc:
             log.warning("spark_app_cleanup_skipped", dag_id=dag_id, error=str(exc))
             warnings.append(
@@ -583,7 +668,13 @@ async def delete_pipeline(dag_id: str, current_user: CurrentUser) -> dict[str, A
                 "'Azure Kubernetes Service Cluster Admin Role' on the compute AKS cluster"
             )
 
-    log.info("pipeline_deleted", dag_id=dag_id, user=current_user.get("sub"), adls_cleaned=adls_cleaned, spark_apps_deleted=spark_apps_deleted)
+    log.info(
+        "pipeline_deleted",
+        dag_id=dag_id,
+        user=current_user.get("sub"),
+        adls_cleaned=adls_cleaned,
+        spark_apps_deleted=spark_apps_deleted,
+    )
     return {
         "dag_id": dag_id,
         "status": "deleted",
@@ -614,7 +705,11 @@ async def trigger_pipeline(
     # If a run is active (running/queued) for the current slot, either block or cancel+retrigger.
     try:
         recent = await airflow_client.get_dag_runs(dag_id, limit=1)
-        active = recent[0] if recent and recent[0].get("state") in ("running", "queued") else None
+        active = (
+            recent[0]
+            if recent and recent[0].get("state") in ("running", "queued")
+            else None
+        )
         if active:
             active_run_id = active.get("dag_run_id", "")
             if not body.force:
@@ -627,12 +722,25 @@ async def trigger_pipeline(
                     },
                 )
             # force=True — cancel active run first
-            log.info("retrigger_cancel_active", dag_id=dag_id, run_id=active_run_id, user=current_user.get("sub"))
+            log.info(
+                "retrigger_cancel_active",
+                dag_id=dag_id,
+                run_id=active_run_id,
+                user=current_user.get("sub"),
+            )
             try:
                 await airflow_client.cancel_dag_run(dag_id, active_run_id)
             except Exception as exc:
-                log.error("retrigger_cancel_failed", dag_id=dag_id, run_id=active_run_id, error=str(exc))
-                raise HTTPException(status_code=502, detail="Could not cancel active run before retriggering") from exc
+                log.error(
+                    "retrigger_cancel_failed",
+                    dag_id=dag_id,
+                    run_id=active_run_id,
+                    error=str(exc),
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail="Could not cancel active run before retriggering",
+                ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -640,11 +748,18 @@ async def trigger_pipeline(
 
     try:
         result = await airflow_client.trigger_dag(dag_id, conf=body.conf)
-        log.info("pipeline_triggered", dag_id=dag_id, force=body.force, user=current_user.get("sub"))
+        log.info(
+            "pipeline_triggered",
+            dag_id=dag_id,
+            force=body.force,
+            user=current_user.get("sub"),
+        )
         return result
     except Exception as exc:
         log.error("trigger_pipeline_failed", dag_id=dag_id, error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not trigger DAG in Airflow") from exc
+        raise HTTPException(
+            status_code=502, detail="Could not trigger DAG in Airflow"
+        ) from exc
 
 
 @router.post("/{dag_id}/restate")
@@ -661,13 +776,18 @@ async def restate_pipeline(
         roles = [roles]
     roles_lower = [r.lower() for r in roles]
     if "admin" not in roles_lower and "editor" not in roles_lower:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only Admin or Editor roles can restate pipelines")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only Admin or Editor roles can restate pipelines",
+        )
 
     try:
         from_dt = date.fromisoformat(body.from_date)
         to_dt = date.fromisoformat(body.to_date)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid date format — use YYYY-MM-DD") from exc
+        raise HTTPException(
+            status_code=400, detail="Invalid date format — use YYYY-MM-DD"
+        ) from exc
 
     if from_dt > to_dt:
         raise HTTPException(status_code=400, detail="from_date must be ≤ to_date")
@@ -675,7 +795,9 @@ async def restate_pipeline(
     max_days = 90
     delta = (to_dt - from_dt).days + 1
     if delta > max_days:
-        raise HTTPException(status_code=400, detail=f"Date range too large (max {max_days} days)")
+        raise HTTPException(
+            status_code=400, detail=f"Date range too large (max {max_days} days)"
+        )
 
     # Discover sensor task IDs once (ExternalTaskSensor = trackers to skip during restate)
     sensor_task_ids: list[str] = []
@@ -684,7 +806,12 @@ async def restate_pipeline(
         sensor_task_ids = [
             t.get("task_id", "")
             for t in all_tasks
-            if "ExternalTaskSensor" in (t.get("class_ref", {}).get("class_name", "") or t.get("operator_name", "") or "")
+            if "ExternalTaskSensor"
+            in (
+                t.get("class_ref", {}).get("class_name", "")
+                or t.get("operator_name", "")
+                or ""
+            )
             and t.get("task_id", "")
         ]
         if sensor_task_ids:
@@ -711,9 +838,16 @@ async def restate_pipeline(
                         except Exception:
                             pass
                     await airflow_client.delete_dag_run(dag_id, existing_run_id)
-                    log.info("restate_cleared_run", dag_id=dag_id, run_id=existing_run_id, date=str(current_date))
+                    log.info(
+                        "restate_cleared_run",
+                        dag_id=dag_id,
+                        run_id=existing_run_id,
+                        date=str(current_date),
+                    )
 
-            result = await airflow_client.trigger_dag(dag_id, conf=body.conf, logical_date=logical_date)
+            result = await airflow_client.trigger_dag(
+                dag_id, conf=body.conf, logical_date=logical_date
+            )
             new_run_id = result.get("dag_run_id", logical_date)
             triggered.append(new_run_id)
 
@@ -723,15 +857,39 @@ async def restate_pipeline(
                 await asyncio.sleep(3)
                 for sensor_id in sensor_task_ids:
                     try:
-                        await airflow_client.patch_task_instance_state(dag_id, new_run_id, sensor_id, "success")
-                        log.info("restate_sensor_skipped", dag_id=dag_id, run_id=new_run_id, sensor=sensor_id)
+                        await airflow_client.patch_task_instance_state(
+                            dag_id, new_run_id, sensor_id, "success"
+                        )
+                        log.info(
+                            "restate_sensor_skipped",
+                            dag_id=dag_id,
+                            run_id=new_run_id,
+                            sensor=sensor_id,
+                        )
                     except Exception as exc:
-                        log.warning("restate_sensor_skip_failed", dag_id=dag_id, sensor=sensor_id, error=str(exc))
+                        log.warning(
+                            "restate_sensor_skip_failed",
+                            dag_id=dag_id,
+                            sensor=sensor_id,
+                            error=str(exc),
+                        )
 
         except Exception as exc:
             errors.append(f"{current_date}: {exc}")
-            log.warning("restate_day_failed", dag_id=dag_id, date=str(current_date), error=str(exc))
+            log.warning(
+                "restate_day_failed",
+                dag_id=dag_id,
+                date=str(current_date),
+                error=str(exc),
+            )
         current_date += timedelta(days=1)
 
-    log.info("pipeline_restate", dag_id=dag_id, days=delta, triggered=len(triggered), errors=len(errors), user=current_user.get("sub"))
+    log.info(
+        "pipeline_restate",
+        dag_id=dag_id,
+        days=delta,
+        triggered=len(triggered),
+        errors=len(errors),
+        user=current_user.get("sub"),
+    )
     return {"triggered": triggered, "errors": errors, "days": delta}

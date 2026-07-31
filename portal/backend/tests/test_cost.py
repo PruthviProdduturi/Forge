@@ -1,4 +1,5 @@
 """Tests for /api/cost endpoints."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -10,7 +11,11 @@ import pytest
 async def test_cost_summary(client) -> None:
     """GET /api/cost/summary should return spend data."""
     with patch("app.api.cost.cost_client") as mock_cc:
-        mock_cc.get_summary.return_value = {"total": 0.0, "currency": "USD", "period": "last_30_days"}
+        mock_cc.get_summary.return_value = {
+            "total": 0.0,
+            "currency": "USD",
+            "period": "last_30_days",
+        }
         resp = await client.get("/api/cost/summary")
     assert resp.status_code == 200
 

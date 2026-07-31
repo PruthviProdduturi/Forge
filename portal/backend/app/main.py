@@ -1,4 +1,5 @@
 """Forge Developer Portal FastAPI application."""
+
 from __future__ import annotations
 
 import time
@@ -8,7 +9,19 @@ import structlog
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, cost, datasets, datasources, dq, health, lineage, pipelines, platform, status, theme
+from app.api import (
+    auth,
+    cost,
+    datasets,
+    datasources,
+    dq,
+    health,
+    lineage,
+    pipelines,
+    platform,
+    status,
+    theme,
+)
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -19,7 +32,9 @@ structlog.configure(
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.dev.ConsoleRenderer() if settings.forge_env == "dev" else structlog.processors.JSONRenderer(),
+        structlog.dev.ConsoleRenderer()
+        if settings.forge_env == "dev"
+        else structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.make_filtering_bound_logger(10),
     context_class=dict,

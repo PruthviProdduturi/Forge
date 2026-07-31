@@ -1,4 +1,5 @@
 """Tests for /api/v1/datasources endpoints."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch

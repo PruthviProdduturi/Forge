@@ -1,4 +1,5 @@
 """Health check endpoint."""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/api", tags=["health"])
 def _running_in_cluster() -> bool:
     """True when this process is running inside a Kubernetes pod."""
     import os
+
     return os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount/token")
 
 
@@ -44,6 +46,7 @@ async def _check_spark_connect() -> bool | None:
     than 'Unreachable'.
     """
     import asyncio
+
     # Use the explicit compute_host (public NGINX LB hostname) for Spark Connect.
     # trino_host may be the internal LB IP (different port, unreachable for 15002).
     host = settings.compute_host or settings.trino_host
@@ -62,6 +65,7 @@ async def _check_spark_connect() -> bool | None:
 
 async def _check_adls() -> bool | None:
     import httpx
+
     if not settings.adls_account:
         return None
     try:
@@ -134,11 +138,15 @@ async def health_check() -> dict[str, Any]:
 
     log.info(
         "health_check",
-        airflow=airflow_ok, trino=trino_ok, spark_connect=spark_ok, adls=adls_ok,
+        airflow=airflow_ok,
+        trino=trino_ok,
+        spark_connect=spark_ok,
+        adls=adls_ok,
         status="ok" if all_ok else "degraded",
     )
 
     from urllib.parse import urlparse
+
     airflow_host = urlparse(settings.airflow_url).hostname or settings.airflow_url
 
     return {
