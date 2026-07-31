@@ -1,5 +1,6 @@
 "use client";
 
+import { useSession } from "next-auth/react";
 import { useAuth } from "../auth/useAuth";
 import { Layout } from "./Layout";
 import { LoginPage } from "../app/login/LoginPage";
@@ -22,8 +23,10 @@ function NoAccessPage() {
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isConnecting, noAccess } = useAuth();
+  const { data: nextAuthSession, status: nextAuthStatus } = useSession();
 
-  if (isConnecting) {
+  // Either auth system loading
+  if (isConnecting || nextAuthStatus === "loading") {
     return <ForgeLoader />;
   }
 
@@ -31,9 +34,10 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
     return <NoAccessPage />;
   }
 
-  if (!isAuthenticated) {
-    return <LoginPage />;
+  // Authenticated via proxy (AKS) OR NextAuth (GitHub/Google) OR demo mode
+  if (isAuthenticated || nextAuthSession) {
+    return <Layout>{children}</Layout>;
   }
 
-  return <Layout>{children}</Layout>;
+  return <LoginPage />;
 }
