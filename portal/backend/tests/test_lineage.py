@@ -31,5 +31,5 @@ async def test_lineage_graph(client) -> None:
         resp = await client.get("/api/lineage/graph/bronze/my_table")
     assert resp.status_code == 200
     body = resp.json()
-    assert "nodes" in body
-    assert "edges" in body
+    assert "upstream" in body
+    assert "downstream" in body
