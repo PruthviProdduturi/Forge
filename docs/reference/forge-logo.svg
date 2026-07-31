@@ -1,48 +1,54 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60" width="240" height="60" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120" fill="none">
   <defs>
-    <!-- Top-lit gradient on the F letterform -->
-    <linearGradient id="forge-f-grad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#0f172a" stop-opacity="0.65"/>
+    <!-- Gradient for the F letterform -->
+    <linearGradient id="f-grad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient>
+    <!-- Gradient for the crosshair O -->
+    <linearGradient id="o-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+    <!-- Text gradient -->
+    <linearGradient id="text-grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#f8fafc"/>
     </linearGradient>
   </defs>
 
-  <!--
-    F letterform — viewBox 0 0 18 28, rendered at capH=52
-    scale = 52/28 = 1.8571, translate(4, 4)
-  -->
-  <g transform="translate(4,4) scale(1.8571)">
-    <!-- Bold chamfered F: vertical stem + top bar + middle bar -->
+  <!-- F letterform — bold chamfered -->
+  <g transform="translate(24,10) scale(3.571)">
     <path d="M0 0L16 0L18 2.5L18 7L6 7L6 12L12 12L14 14.5L14 19L6 19L6 28L0 28Z"
-          fill="url(#forge-f-grad)"/>
-    <!-- Top-face highlight -->
+          fill="url(#f-grad)"/>
     <path d="M0 0L16 0L18 2.5L18 3.5L0 3.5Z"
-          fill="#0f172a" opacity="0.18"/>
+          fill="white" opacity="0.2"/>
   </g>
 
-  <!--
-    ⊙ crosshair — viewBox 0 0 22 22, rendered at capH×capH = 52×52
-    scale = 52/22 = 2.3636, translate(44, 4)
-    (F right edge = 4 + 18×1.8571 = 37.4 → gap 6.6 → x=44)
-  -->
-  <g transform="translate(44,4) scale(2.3636)">
-    <circle cx="11" cy="11" r="9.5"  stroke="#0f172a" stroke-width="1.9"/>
-    <circle cx="11" cy="11" r="2"    fill="#0f172a"/>
-    <!-- Cardinal ticks -->
-    <line x1="11" y1="1.5"  x2="11" y2="5.5"  stroke="#0f172a" stroke-width="1.7" stroke-linecap="round"/>
-    <line x1="11" y1="16.5" x2="11" y2="20.5" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round"/>
-    <line x1="1.5"  y1="11" x2="5.5"  y2="11" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round"/>
-    <line x1="16.5" y1="11" x2="20.5" y2="11" stroke="#0f172a" stroke-width="1.7" stroke-linecap="round"/>
+  <!-- ⊙ crosshair O -->
+  <g transform="translate(98,10) scale(4.545)">
+    <circle cx="11" cy="11" r="9.5" stroke="url(#o-grad)" stroke-width="2"/>
+    <circle cx="11" cy="11" r="2.2" fill="#818cf8"/>
+    <line x1="11" y1="1.5" x2="11" y2="5.5" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="11" y1="16.5" x2="11" y2="20.5" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="1.5" y1="11" x2="5.5" y2="11" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="16.5" y1="11" x2="20.5" y2="11" stroke="#818cf8" stroke-width="1.8" stroke-linecap="round"/>
   </g>
 
-  <!--
-    RGE — Inter 700, fontSize = capH/0.728×0.88 = 62.9 ≈ 63
-    ⊙ right edge = 44 + 52 = 96 → gap 6 → x=102
-    Baseline: Inter cap-height = fontSize×0.728 = 45.9 → y_top=4 → baseline=50
-  -->
-  <text x="102" y="50"
+  <!-- RGE text -->
+  <text x="210" y="95"
         font-family="'Inter', 'Segoe UI', system-ui, sans-serif"
-        font-weight="700"
-        font-size="63"
-        fill="#0f172a">RGE</text>
+        font-weight="800"
+        font-size="108"
+        letter-spacing="-2"
+        fill="url(#text-grad)">RGE</text>
+
+  <!-- Subtle tagline -->
+  <text x="240" y="115"
+        font-family="'Inter', 'Segoe UI', system-ui, sans-serif"
+        font-weight="400"
+        font-size="13"
+        letter-spacing="4"
+        fill="#94a3b8"
+        text-anchor="middle">THE CORE DATA PLATFORM</text>
 </svg>
