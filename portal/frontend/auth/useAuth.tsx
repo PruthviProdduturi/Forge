@@ -110,13 +110,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token: null, // session cookie — no bearer token needed
       });
     } catch {
+      // Backend unreachable — enter demo mode so the UI renders
+      const isDemo = !process.env.NEXT_PUBLIC_API_BASE_URL && typeof window !== "undefined";
       setState({
         isConnecting: false,
-        isAuthenticated: false,
+        isAuthenticated: isDemo,
         noAccess: false,
         provider: "azure_ad",
-        user: null,
-        role: null,
+        user: isDemo
+          ? { name: "Demo User", email: "demo@forge.dev", initials: "DU" }
+          : null,
+        role: isDemo ? "Viewer" : null,
         token: null,
       });
     }

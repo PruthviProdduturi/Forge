@@ -43,12 +43,4 @@
         letter-spacing="-2"
         fill="url(#text-grad)">RGE</text>
 
-  <!-- Subtle tagline -->
-  <text x="240" y="115"
-        font-family="'Inter', 'Segoe UI', system-ui, sans-serif"
-        font-weight="400"
-        font-size="13"
-        letter-spacing="4"
-        fill="#94a3b8"
-        text-anchor="middle">THE CORE DATA PLATFORM</text>
 </svg>
