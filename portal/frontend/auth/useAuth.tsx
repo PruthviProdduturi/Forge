@@ -110,17 +110,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         token: null, // session cookie — no bearer token needed
       });
     } catch {
-      // Backend unreachable — enter demo mode so the UI renders
-      const isDemo = !process.env.NEXT_PUBLIC_API_BASE_URL && typeof window !== "undefined";
+      // Backend unreachable — not authenticated via proxy.
+      // NextAuth session (GitHub/Google) is checked separately in ClientLayout.
       setState({
         isConnecting: false,
-        isAuthenticated: isDemo,
+        isAuthenticated: false,
         noAccess: false,
         provider: "azure_ad",
-        user: isDemo
-          ? { name: "Demo User", email: "demo@forge.dev", initials: "DU" }
-          : null,
-        role: isDemo ? "Viewer" : null,
+        user: null,
+        role: null,
         token: null,
       });
     }
