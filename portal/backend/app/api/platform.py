@@ -31,7 +31,8 @@ settings = get_settings()
 # Persisted to a JSON sidecar file so auth config survives backend restarts
 # during local development.  In production this dict is never used — KV handles
 # all reads and writes.
-import json as _json, pathlib as _pathlib
+import json as _json  # noqa: E402
+import pathlib as _pathlib  # noqa: E402
 
 _LOCAL_OVERRIDES_FILE = _pathlib.Path(__file__).parent.parent.parent / ".forge-dev-config.json"
 

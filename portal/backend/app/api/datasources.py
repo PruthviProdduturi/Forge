@@ -183,7 +183,7 @@ async def _test_adls(body: DataSourceTestRequest) -> DataSourceTestResponse:
     if not account or not container:
         return DataSourceTestResponse(ok=False, message="Storage account and container are required")
     try:
-        from azure.identity import WorkloadIdentityCredential, ManagedIdentityCredential  # type: ignore
+        from azure.identity import WorkloadIdentityCredential  # type: ignore
         from azure.storage.blob import ContainerClient  # type: ignore
 
         # Public anonymous storage (e.g. Azure Open Datasets)
