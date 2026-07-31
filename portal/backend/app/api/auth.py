@@ -1,4 +1,5 @@
 """Authentication API routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +26,7 @@ class ProviderResponse(BaseModel):
 async def get_provider() -> ProviderResponse:
     """Return auth provider config — kept for backwards compatibility."""
     from app.api.platform import get_auth_config_from_kv
+
     cfg = await asyncio.to_thread(get_auth_config_from_kv)
     return ProviderResponse(
         provider="azure_ad",
@@ -40,7 +42,7 @@ async def get_me(
 ) -> dict[str, Any]:
     """Return current user info from proxy-injected headers."""
     return {
-        "name":  current_user["name"],
+        "name": current_user["name"],
         "email": current_user["email"],
-        "role":  current_user["role"],
+        "role": current_user["role"],
     }

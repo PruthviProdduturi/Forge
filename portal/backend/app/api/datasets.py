@@ -1,4 +1,5 @@
 """Datasets API routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -75,7 +76,9 @@ async def _fetch_datasets(layer: str | None = None) -> list[dict[str, Any]]:
                 stats = {"row_count": None, "last_updated": None, "size_bytes": None}
             return _build_dataset_entry(t, stats, dq_datasets)
 
-    results = await asyncio.gather(*[fetch_one(t) for t in tables], return_exceptions=True)
+    results = await asyncio.gather(
+        *[fetch_one(t) for t in tables], return_exceptions=True
+    )
     return [r for r in results if isinstance(r, dict)]
 
 
@@ -92,7 +95,9 @@ async def list_datasets_by_layer(
     """Filter datasets by layer: bronze, silver, or gold."""
     valid_layers = {"bronze", "silver", "gold"}
     if layer not in valid_layers:
-        raise HTTPException(status_code=400, detail=f"Layer must be one of: {valid_layers}")
+        raise HTTPException(
+            status_code=400, detail=f"Layer must be one of: {valid_layers}"
+        )
     return await _fetch_datasets(layer)
 
 
@@ -103,15 +108,23 @@ async def get_dataset_schema(
     """Return column schema + stats for a single dataset."""
     valid_layers = {"bronze", "silver", "gold"}
     if layer not in valid_layers:
-        raise HTTPException(status_code=400, detail=f"Layer must be one of: {valid_layers}")
+        raise HTTPException(
+            status_code=400, detail=f"Layer must be one of: {valid_layers}"
+        )
 
     columns, stats = await asyncio.gather(
-        asyncio.to_thread(trino_client.get_table_schema, settings.trino_catalog, layer, name),
-        asyncio.to_thread(trino_client.get_table_stats, settings.trino_catalog, layer, name),
+        asyncio.to_thread(
+            trino_client.get_table_schema, settings.trino_catalog, layer, name
+        ),
+        asyncio.to_thread(
+            trino_client.get_table_stats, settings.trino_catalog, layer, name
+        ),
         return_exceptions=True,
     )
 
     return {
         "columns": columns if isinstance(columns, list) else [],
-        "stats": stats if isinstance(stats, dict) else {"row_count": None, "last_updated": None, "size_bytes": None},
+        "stats": stats
+        if isinstance(stats, dict)
+        else {"row_count": None, "last_updated": None, "size_bytes": None},
     }

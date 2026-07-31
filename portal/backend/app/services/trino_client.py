@@ -1,4 +1,5 @@
 """Trino query client using the trino Python package."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -66,7 +67,11 @@ def get_datasets(layer: str | None = None) -> list[dict[str, Any]]:
         return val  # type: ignore[return-value]
 
     results: list[dict[str, Any]] = []
-    schemas = [LAYER_SCHEMAS[layer]] if layer and layer in LAYER_SCHEMAS else list(LAYER_SCHEMAS.values())
+    schemas = (
+        [LAYER_SCHEMAS[layer]]
+        if layer and layer in LAYER_SCHEMAS
+        else list(LAYER_SCHEMAS.values())
+    )
 
     for schema in schemas:
         try:
@@ -81,22 +86,30 @@ def get_datasets(layer: str | None = None) -> list[dict[str, Any]]:
                     f"FROM {settings.trino_catalog}.information_schema.columns "
                     f"WHERE table_schema = '{schema}'"
                 )
-                live_tables = {r.get("table_name") or r.get("TABLE_NAME") or "" for r in live_rows}
+                live_tables = {
+                    r.get("table_name") or r.get("TABLE_NAME") or "" for r in live_rows
+                }
             except Exception as exc:
-                log.warning("trino_live_tables_check_failed", schema=schema, error=str(exc))
+                log.warning(
+                    "trino_live_tables_check_failed", schema=schema, error=str(exc)
+                )
                 live_tables = None  # fall back to unfiltered list
 
             for t in tables:
                 table_name = t.get("Table") or t.get("table") or ""
                 if live_tables is not None and table_name not in live_tables:
-                    log.debug("trino_stale_table_skipped", schema=schema, table=table_name)
+                    log.debug(
+                        "trino_stale_table_skipped", schema=schema, table=table_name
+                    )
                     continue
-                results.append({
-                    "name": table_name,
-                    "layer": schema,
-                    "schema": schema,
-                    "catalog": settings.trino_catalog,
-                })
+                results.append(
+                    {
+                        "name": table_name,
+                        "layer": schema,
+                        "schema": schema,
+                        "catalog": settings.trino_catalog,
+                    }
+                )
         except Exception as exc:
             log.warning("trino_show_tables_failed", schema=schema, error=str(exc))
 
@@ -162,13 +175,19 @@ def get_table_schema(catalog: str, schema: str, table: str) -> list[dict[str, An
             f"ORDER BY ordinal_position"
         )
         result = [
-            {"name": r["column_name"], "type": r["data_type"], "position": r["ordinal_position"]}
+            {
+                "name": r["column_name"],
+                "type": r["data_type"],
+                "position": r["ordinal_position"],
+            }
             for r in rows
         ]
         cache.set(cache_key, result, ttl=300)
         return result
     except Exception as exc:
-        log.warning("trino_schema_failed", table=f"{catalog}.{schema}.{table}", error=str(exc))
+        log.warning(
+            "trino_schema_failed", table=f"{catalog}.{schema}.{table}", error=str(exc)
+        )
         return []
 
 
@@ -222,15 +241,17 @@ def get_dq_summary() -> list[dict[str, Any]]:
                     r = rows[0]
                     total = r.get("total_runs") or 0
                     passes = r.get("passes") or 0
-                    results.append({
-                        "dataset": dataset_name,
-                        "total_runs": total,
-                        "pass_rate": round(passes / total, 4) if total > 0 else 0.0,
-                        "last_run_at": str(r.get("last_run_at") or ""),
-                        "critical_failures": r.get("critical_failures") or 0,
-                        "warnings": r.get("warnings") or 0,
-                        "last_status": r.get("last_status") or "PASS",
-                    })
+                    results.append(
+                        {
+                            "dataset": dataset_name,
+                            "total_runs": total,
+                            "pass_rate": round(passes / total, 4) if total > 0 else 0.0,
+                            "last_run_at": str(r.get("last_run_at") or ""),
+                            "critical_failures": r.get("critical_failures") or 0,
+                            "warnings": r.get("warnings") or 0,
+                            "last_status": r.get("last_status") or "PASS",
+                        }
+                    )
             except Exception as exc:
                 log.warning("trino_dq_table_failed", table=table_name, error=str(exc))
 
@@ -249,17 +270,21 @@ def get_dq_summary() -> list[dict[str, Any]]:
                 )
                 if rows:
                     r = rows[0]
-                    results.append({
-                        "dataset": dataset_name,
-                        "total_runs": r.get("runs") or 0,
-                        "pass_rate": None,
-                        "last_run_at": str(r.get("last_ts") or ""),
-                        "critical_failures": 0,
-                        "warnings": 0,
-                        "last_status": "MONITORED",
-                    })
+                    results.append(
+                        {
+                            "dataset": dataset_name,
+                            "total_runs": r.get("runs") or 0,
+                            "pass_rate": None,
+                            "last_run_at": str(r.get("last_ts") or ""),
+                            "critical_failures": 0,
+                            "warnings": 0,
+                            "last_status": "MONITORED",
+                        }
+                    )
             except Exception as exc:
-                log.warning("trino_dq_auto_fallback_failed", table=table_name, error=str(exc))
+                log.warning(
+                    "trino_dq_auto_fallback_failed", table=table_name, error=str(exc)
+                )
 
     except Exception as exc:
         log.error("trino_dq_summary_failed", error=str(exc))
@@ -289,6 +314,7 @@ def ping() -> bool:
     is up even if the request is unauthenticated.
     """
     import httpx
+
     try:
         port = settings.trino_port
         scheme = "https" if port == 443 else "http"

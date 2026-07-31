@@ -10,18 +10,20 @@ class Settings(BaseSettings):
     azure_tenant_id: str = ""  # injected at runtime via env var or Key Vault
     azure_client_id: str = ""  # workload identity client ID, injected by K8s
     subscription_id: str = ""  # injected at runtime via env var or Key Vault
-    resource_group: str = ""   # injected at runtime via env var or Key Vault
-    owner_alias: str = ""      # e.g. prproddu
-    key_vault_url: str = ""    # e.g. https://kv-forge-dev.vault.azure.net/ — injected at deploy time
+    resource_group: str = ""  # injected at runtime via env var or Key Vault
+    owner_alias: str = ""  # e.g. prproddu
+    key_vault_url: str = (
+        ""  # e.g. https://kv-forge-dev.vault.azure.net/ — injected at deploy time
+    )
 
     # Resource group names — used by cost and status endpoints.
-    compute_rg: str = ""   # e.g. rg-forge-compute-prproddu-dev
-    orch_rg: str = ""      # e.g. rg-forge-orchestration-prproddu-dev
+    compute_rg: str = ""  # e.g. rg-forge-compute-prproddu-dev
+    orch_rg: str = ""  # e.g. rg-forge-orchestration-prproddu-dev
 
     # AKS cluster names — used by status endpoint to query Azure Resource API.
     # Portal managed identity needs Reader on both clusters.
-    compute_cluster_name: str = ""   # e.g. aks-forge-compute-prproddu-dev
-    orch_cluster_name: str = ""      # e.g. aks-forge-orchestration-prproddu-dev
+    compute_cluster_name: str = ""  # e.g. aks-forge-compute-prproddu-dev
+    orch_cluster_name: str = ""  # e.g. aks-forge-orchestration-prproddu-dev
 
     # Airflow — password fetched from Key Vault at runtime via DefaultAzureCredential.
     # Set AIRFLOW_PASSWORD env var to override for local dev only.
@@ -64,7 +66,9 @@ class Settings(BaseSettings):
             self.orch_rg = f"rg-forge-orchestration-{self.owner_alias}-{self.forge_env}"
         return self
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
 
 @lru_cache

@@ -15,8 +15,8 @@ log = structlog.get_logger(__name__)
 # Never set these in production — the proxy headers take precedence.
 # ---------------------------------------------------------------------------
 _DEV_EMAIL = os.environ.get("FORGE_DEV_USER_EMAIL", "")
-_DEV_NAME  = os.environ.get("FORGE_DEV_USER_NAME",  "Dev User")
-_DEV_ROLE  = os.environ.get("FORGE_DEV_USER_ROLE",  "Admin")
+_DEV_NAME = os.environ.get("FORGE_DEV_USER_NAME", "Dev User")
+_DEV_ROLE = os.environ.get("FORGE_DEV_USER_ROLE", "Admin")
 
 
 def get_current_user(request: Request) -> dict[str, Any]:
@@ -35,8 +35,8 @@ def get_current_user(request: Request) -> dict[str, Any]:
         log.debug("dev_auth_fallback", user=_DEV_EMAIL)
         return {
             "email": _DEV_EMAIL,
-            "name":  _DEV_NAME,
-            "role":  _DEV_ROLE,
+            "name": _DEV_NAME,
+            "role": _DEV_ROLE,
             "roles": [_DEV_ROLE],
         }
 
@@ -48,7 +48,7 @@ def get_current_user(request: Request) -> dict[str, Any]:
 
     return {
         "email": email,
-        "name":  request.headers.get("X-User-Name", email.split("@")[0]),
-        "role":  request.headers.get("X-User-Role", "Viewer"),
+        "name": request.headers.get("X-User-Name", email.split("@")[0]),
+        "role": request.headers.get("X-User-Role", "Viewer"),
         "roles": request.headers.get("X-User-Roles", "").split(","),
     }

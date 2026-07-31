@@ -1,16 +1,24 @@
 <div align="center">
 
-![Forge](docs/reference/forge-logo.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/reference/forge-logo.svg">
+  <source media="(prefers-color-scheme: light)" srcset="docs/reference/forge-logo-light.svg">
+  <img alt="Forge" src="docs/reference/forge-logo.svg" width="420">
+</picture>
+
+<br/>
 
 ### **The Core Data Platform**
 
 *Scalable compute. Reliable orchestration. Governed analytics.*
 
+[![CI](https://github.com/PruthviProdduturi/Forge/actions/workflows/ci.yml/badge.svg)](https://github.com/PruthviProdduturi/Forge/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 [![Bicep](https://img.shields.io/badge/Bicep-latest-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/en-us/azure/azure-resource-manager/bicep/) [![Kubernetes](https://img.shields.io/badge/AKS-1.29+-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)](https://azure.microsoft.com/en-us/products/kubernetes-service) [![Apache Spark](https://img.shields.io/badge/Spark-4.1.1-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org) [![Trino](https://img.shields.io/badge/Trino-480-DD00A1?style=for-the-badge&logo=trino&logoColor=white)](https://trino.io) [![Airflow](https://img.shields.io/badge/Airflow-3.1.8-017CEE?style=for-the-badge&logo=apacheairflow&logoColor=white)](https://airflow.apache.org) [![Delta Lake](https://img.shields.io/badge/Delta_Lake-4.1-003366?style=for-the-badge)](https://delta.io)
 
 <br/>
 
-[**Architecture**](#architecture) · [**Quick Start**](#quick-start) · [**Clusters**](#clusters) · [**Lakehouse**](#lakehouse) · [**Developer Guide**](#developer-guide)
+[**Architecture**](#architecture) · [**Quick Start**](#quick-start) · [**Clusters**](#clusters) · [**Lakehouse**](#lakehouse) · [**Developer Guide**](#developer-guide) · [**Contributing**](CONTRIBUTING.md)
 
 </div>
 

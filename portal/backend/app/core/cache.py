@@ -9,6 +9,7 @@ Usage:
     result = cache.get_or_set("my:key", ttl=60, fn=lambda: expensive_call())
     cache.delete_prefix("dq:")
 """
+
 from __future__ import annotations
 
 import threading

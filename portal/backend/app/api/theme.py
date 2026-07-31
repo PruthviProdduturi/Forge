@@ -12,6 +12,7 @@ Auth on the endpoints is optional.  When a valid Bearer token is present the
 preference is keyed by the AAD object-id (oid) claim.  Without a token a
 single global fallback key is used.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -56,9 +57,11 @@ def _local_save(data: dict[str, str]) -> None:
 # Postgres helpers
 # ---------------------------------------------------------------------------
 
+
 async def _pg_token() -> str:
     """Fetch an AAD access token for Postgres using AKS workload identity."""
     from azure.identity import WorkloadIdentityCredential  # type: ignore
+
     cred = WorkloadIdentityCredential()
     token_obj = await asyncio.to_thread(
         cred.get_token,
@@ -73,6 +76,7 @@ async def _pg_connect():  # type: ignore[return]
         return None
     try:
         import asyncpg  # type: ignore
+
         token = await _pg_token()
         ssl_ctx = ssl.create_default_context()
         conn = await asyncpg.connect(
@@ -103,6 +107,7 @@ async def _ensure_table(conn: Any) -> None:
 # User key
 # ---------------------------------------------------------------------------
 
+
 def _user_key(request: Request) -> str:
     """Return the user email from proxy-injected header, else '_global'."""
     return request.headers.get("X-User-Email", "_global") or "_global"
@@ -111,6 +116,7 @@ def _user_key(request: Request) -> str:
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
+
 
 class ThemeResponse(BaseModel):
     primary_color: str
@@ -123,6 +129,7 @@ class ThemeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/theme", response_model=ThemeResponse)
 async def get_theme(request: Request) -> ThemeResponse:
@@ -153,13 +160,17 @@ async def put_theme(request: Request, body: ThemeRequest) -> ThemeResponse:
     if conn is not None:
         try:
             await _ensure_table(conn)
-            await conn.execute("""
+            await conn.execute(
+                """
                 INSERT INTO user_preferences (user_id, theme_color, updated_at)
                 VALUES ($1, $2, now())
                 ON CONFLICT (user_id) DO UPDATE
                   SET theme_color = EXCLUDED.theme_color,
                       updated_at  = now()
-            """, key, color)
+            """,
+                key,
+                color,
+            )
             log.info("theme_saved_pg", key=key, color=color)
         except Exception as exc:
             log.warning("pg_put_theme_failed", error=str(exc))

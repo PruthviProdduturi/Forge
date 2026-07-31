@@ -9,6 +9,7 @@ The portal managed identity requires:
   - K8s RBAC: ClusterRole forge-portal-reader bound to portal-api ServiceAccount
     (grants get/list/watch pods + deployments in key orchestration namespaces)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/api/status", tags=["status"])
 # ---------------------------------------------------------------------------
 # Kubernetes in-cluster helpers (orchestration cluster)
 # ---------------------------------------------------------------------------
+
 
 def _k8s_orch_status() -> dict[str, Any]:
     """List pods across key orchestration namespaces using in-cluster config."""
@@ -65,15 +67,13 @@ def _k8s_orch_status() -> dict[str, Any]:
 def _pod_ready(pod: Any) -> bool:
     if not pod.status.conditions:
         return False
-    return any(
-        c.type == "Ready" and c.status == "True"
-        for c in pod.status.conditions
-    )
+    return any(c.type == "Ready" and c.status == "True" for c in pod.status.conditions)
 
 
 # ---------------------------------------------------------------------------
 # Azure Management API helpers (compute cluster)
 # ---------------------------------------------------------------------------
+
 
 async def _azure_compute_cluster_status() -> dict[str, Any]:
     """Fetch compute AKS cluster + node pool state via Azure Resource API.
@@ -87,19 +87,22 @@ async def _azure_compute_cluster_status() -> dict[str, Any]:
     cluster = settings.compute_cluster_name
 
     if not all([sub, rg, cluster]):
-        return {"reachable": False, "error": "compute_cluster_name / subscription_id / resource_group not configured"}
+        return {
+            "reachable": False,
+            "error": "compute_cluster_name / subscription_id / resource_group not configured",
+        }
 
     try:
         from azure.identity import ManagedIdentityCredential  # type: ignore
         from azure.mgmt.containerservice import ContainerServiceClient  # type: ignore
 
-        credential = ManagedIdentityCredential(client_id=settings.azure_client_id or None)
+        credential = ManagedIdentityCredential(
+            client_id=settings.azure_client_id or None
+        )
         aks = ContainerServiceClient(credential, sub)
 
         cluster_obj = await asyncio.to_thread(aks.managed_clusters.get, rg, cluster)
-        pools = await asyncio.to_thread(
-            lambda: list(aks.agent_pools.list(rg, cluster))
-        )
+        pools = await asyncio.to_thread(lambda: list(aks.agent_pools.list(rg, cluster)))
 
         return {
             "reachable": True,
@@ -133,6 +136,7 @@ async def _azure_compute_cluster_status() -> dict[str, Any]:
 # that ARE exposed cross-cluster (e.g. Trino internal LB, Spark Connect LB).
 # Configured via env vars; gracefully skipped if not set.
 # ---------------------------------------------------------------------------
+
 
 async def _probe_http(name: str, url: str, timeout: float = 4.0) -> dict[str, Any]:
     try:
@@ -170,6 +174,7 @@ async def _compute_workload_probes() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Clear failed pods endpoint
 # ---------------------------------------------------------------------------
+
 
 @router.delete("/clear-failed")
 async def clear_failed_pods() -> dict[str, Any]:
@@ -215,6 +220,7 @@ async def clear_failed_pods() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Main endpoint
 # ---------------------------------------------------------------------------
+
 
 @router.get("")
 async def cluster_status() -> dict[str, Any]:

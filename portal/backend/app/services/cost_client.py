@@ -1,4 +1,5 @@
 """Azure Cost Management client."""
+
 from __future__ import annotations
 
 import time
@@ -27,8 +28,8 @@ SCOPE = f"/subscriptions/{settings.subscription_id}"
 # Cache: key → (result, fetched_at)
 # Stale-while-revalidate: serve stale data immediately while refreshing in background.
 _cache: dict[str, tuple[Any, float]] = {}
-_CACHE_TTL = 900        # 15 min fresh window
-_CACHE_STALE_TTL = 3600 # 1 hr — serve stale rather than hammer the API
+_CACHE_TTL = 900  # 15 min fresh window
+_CACHE_STALE_TTL = 3600  # 1 hr — serve stale rather than hammer the API
 
 
 def _cached(key: str, fn: Any, *args: Any) -> Any:
@@ -103,10 +104,12 @@ def _query_rg_cost(rg_name: str, days: int) -> dict[str, Any]:
         cost = float(rd.get("Cost", 0))
         total_cost += cost
         currency = rd.get("Currency", "USD")
-        breakdown.append({
-            "resource_type": rd.get("ResourceType", "Unknown"),
-            "cost": round(cost, 2),
-        })
+        breakdown.append(
+            {
+                "resource_type": rd.get("ResourceType", "Unknown"),
+                "cost": round(cost, 2),
+            }
+        )
 
     breakdown.sort(key=lambda x: x["cost"], reverse=True)
     return {
@@ -148,9 +151,14 @@ def get_by_rg(days: int = 30) -> list[dict[str, Any]]:
     def _fetch(key: str, rg_name: str, display_name: str) -> dict[str, Any]:
         if not rg_name:
             return {
-                "key": key, "display_name": display_name, "rg": "",
-                "total_cost": None, "currency": "USD", "period_days": days,
-                "breakdown": [], "error": "RG name not configured",
+                "key": key,
+                "display_name": display_name,
+                "rg": "",
+                "total_cost": None,
+                "currency": "USD",
+                "period_days": days,
+                "breakdown": [],
+                "error": "RG name not configured",
             }
         cache_key = f"rg:{rg_name}:{days}"
         try:
@@ -159,9 +167,14 @@ def get_by_rg(days: int = 30) -> list[dict[str, Any]]:
         except Exception as exc:
             log.warning("rg_cost_failed", rg=rg_name, error=str(exc))
             return {
-                "key": key, "display_name": display_name, "rg": rg_name,
-                "total_cost": None, "currency": "USD", "period_days": days,
-                "breakdown": [], "error": str(exc),
+                "key": key,
+                "display_name": display_name,
+                "rg": rg_name,
+                "total_cost": None,
+                "currency": "USD",
+                "period_days": days,
+                "breakdown": [],
+                "error": str(exc),
             }
 
     # Query both RGs in parallel
@@ -211,11 +224,13 @@ def get_summary(days: int = 30) -> dict[str, Any]:
             row_dict = dict(zip(columns, row))
             cost = float(row_dict.get("Cost", 0))
             total_cost += cost
-            breakdown.append({
-                "resource_type": row_dict.get("ResourceType", "Unknown"),
-                "cost": round(cost, 2),
-                "currency": row_dict.get("Currency", "USD"),
-            })
+            breakdown.append(
+                {
+                    "resource_type": row_dict.get("ResourceType", "Unknown"),
+                    "cost": round(cost, 2),
+                    "currency": row_dict.get("Currency", "USD"),
+                }
+            )
 
         # Sort by cost descending, top 5
         breakdown.sort(key=lambda x: x["cost"], reverse=True)
@@ -266,11 +281,13 @@ def get_by_pipeline(days: int = 30) -> list[dict[str, Any]]:
             row_dict = dict(zip(columns, row))
             cost = float(row_dict.get("Cost", 0))
             pipeline_tag = row_dict.get("pipeline", "untagged") or "untagged"
-            pipeline_costs.append({
-                "pipeline": pipeline_tag,
-                "cost": round(cost, 2),
-                "currency": row_dict.get("Currency", "USD"),
-            })
+            pipeline_costs.append(
+                {
+                    "pipeline": pipeline_tag,
+                    "cost": round(cost, 2),
+                    "currency": row_dict.get("Currency", "USD"),
+                }
+            )
 
         pipeline_costs.sort(key=lambda x: x["cost"], reverse=True)
         return pipeline_costs
