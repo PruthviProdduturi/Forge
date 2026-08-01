@@ -1,32 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120" fill="none" role="img" aria-label="Forge">
-  <defs>
-    <!-- Single copper top-lit gradient — one hue across the whole wordmark -->
-    <linearGradient id="c" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#f2b485"/>
-      <stop offset="1" stop-color="#d07f3c"/>
-    </linearGradient>
-  </defs>
-
-  <!-- F letterform — bold chamfered -->
-  <g transform="translate(24,10) scale(3.571)">
-    <path d="M0 0L16 0L18 2.5L18 7L6 7L6 12L12 12L14 14.5L14 19L6 19L6 28L0 28Z" fill="url(#c)"/>
-  </g>
-
-  <!-- ⊙ crosshair O -->
-  <g transform="translate(98,10) scale(4.545)">
-    <circle cx="11" cy="11" r="9.5" stroke="url(#c)" stroke-width="2"/>
-    <circle cx="11" cy="11" r="2.2" fill="url(#c)"/>
-    <line x1="11" y1="1.5" x2="11" y2="5.5" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
-    <line x1="11" y1="16.5" x2="11" y2="20.5" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
-    <line x1="1.5" y1="11" x2="5.5" y2="11" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
-    <line x1="16.5" y1="11" x2="20.5" y2="11" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
-  </g>
-
-  <!-- RGE text -->
-  <text x="210" y="95"
-        font-family="'Inter', 'Segoe UI', system-ui, sans-serif"
-        font-weight="800"
-        font-size="108"
-        letter-spacing="-2"
-        fill="url(#c)">RGE</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 392 118" fill="none" role="img" aria-label="Forge">
+  <defs><linearGradient id="c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f2b485"/><stop offset="1" stop-color="#d07f3c"/></linearGradient></defs>
+  <g transform="translate(18,20) scale(2.8071)"><path d="M0 0L16 0L18 2.5L18 7L6 7L6 12L12 12L14 14.5L14 19L6 19L6 28L0 28Z" fill="url(#c)"/></g>
+    <circle cx="118.53" cy="59.30" r="40.00" fill="none" stroke="url(#c)" stroke-width="5.68"/>
+    <path d="M 128.38 48.36 L 113.98 45.30 L 104.13 56.24 L 108.68 70.24 L 123.08 73.30 L 132.93 62.36 Z" opacity="0.12" fill="url(#c)"/>
+    <line x1="128.38" y1="48.36" x2="118.53" y2="20.82" stroke="url(#c)" stroke-width="6.04" stroke-linecap="round"/>
+    <line x1="113.98" y1="45.30" x2="85.20" y2="40.06" stroke="url(#c)" stroke-width="6.04" stroke-linecap="round"/>
+    <line x1="104.13" y1="56.24" x2="85.20" y2="78.54" stroke="url(#c)" stroke-width="6.04" stroke-linecap="round"/>
+    <line x1="108.68" y1="70.24" x2="118.53" y2="97.78" stroke="url(#c)" stroke-width="6.04" stroke-linecap="round"/>
+    <line x1="123.08" y1="73.30" x2="151.85" y2="78.54" stroke="url(#c)" stroke-width="6.04" stroke-linecap="round"/>
+    <line x1="132.93" y1="62.36" x2="151.85" y2="40.06" stroke="url(#c)" stroke-width="6.04" stroke-linecap="round"/>
+  <text x="168.5" y="98.6" font-family="Inter,'Segoe UI',system-ui,sans-serif" font-weight="800" font-size="108" letter-spacing="-3" fill="url(#c)">RGE</text>
 </svg>
