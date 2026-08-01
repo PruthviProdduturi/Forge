@@ -1,31 +1,25 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120" fill="none" role="img" aria-label="Forge">
   <defs>
-    <linearGradient id="f-grad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#2563eb"/>
-    </linearGradient>
-    <linearGradient id="o-grad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#6366f1"/>
-      <stop offset="100%" stop-color="#4f46e5"/>
+    <!-- Single copper top-lit gradient (deeper, for light backgrounds) -->
+    <linearGradient id="c" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d5863f"/>
+      <stop offset="1" stop-color="#a85c27"/>
     </linearGradient>
   </defs>
 
-  <!-- F letterform -->
+  <!-- F letterform — bold chamfered -->
   <g transform="translate(24,10) scale(3.571)">
-    <path d="M0 0L16 0L18 2.5L18 7L6 7L6 12L12 12L14 14.5L14 19L6 19L6 28L0 28Z"
-          fill="url(#f-grad)"/>
-    <path d="M0 0L16 0L18 2.5L18 3.5L0 3.5Z"
-          fill="white" opacity="0.25"/>
+    <path d="M0 0L16 0L18 2.5L18 7L6 7L6 12L12 12L14 14.5L14 19L6 19L6 28L0 28Z" fill="url(#c)"/>
   </g>
 
   <!-- ⊙ crosshair O -->
   <g transform="translate(98,10) scale(4.545)">
-    <circle cx="11" cy="11" r="9.5" stroke="url(#o-grad)" stroke-width="2"/>
-    <circle cx="11" cy="11" r="2.2" fill="#6366f1"/>
-    <line x1="11" y1="1.5" x2="11" y2="5.5" stroke="#6366f1" stroke-width="1.8" stroke-linecap="round"/>
-    <line x1="11" y1="16.5" x2="11" y2="20.5" stroke="#6366f1" stroke-width="1.8" stroke-linecap="round"/>
-    <line x1="1.5" y1="11" x2="5.5" y2="11" stroke="#6366f1" stroke-width="1.8" stroke-linecap="round"/>
-    <line x1="16.5" y1="11" x2="20.5" y2="11" stroke="#6366f1" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="11" cy="11" r="9.5" stroke="url(#c)" stroke-width="2"/>
+    <circle cx="11" cy="11" r="2.2" fill="url(#c)"/>
+    <line x1="11" y1="1.5" x2="11" y2="5.5" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="11" y1="16.5" x2="11" y2="20.5" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="1.5" y1="11" x2="5.5" y2="11" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
+    <line x1="16.5" y1="11" x2="20.5" y2="11" stroke="url(#c)" stroke-width="1.8" stroke-linecap="round"/>
   </g>
 
   <!-- RGE text -->
@@ -34,6 +28,5 @@
         font-weight="800"
         font-size="108"
         letter-spacing="-2"
-        fill="#0f172a">RGE</text>
-
+        fill="url(#c)">RGE</text>
 </svg>
