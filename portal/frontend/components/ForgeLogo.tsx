@@ -120,12 +120,7 @@ export function ForgeLogo({
             />
           </svg>
 
-          {/* ── ⊙ — crosshair O ──────────────────────────────────────── */}
-          {/*
-            viewBox="0 0 22 22" — square, circle fills it exactly.
-            This ensures the circle visual height = capH, matching the F.
-            Circle r=10, centre (11,11). Ticks run from the edge inward.
-          */}
+          {/* ── ⊙ — hexagonal crosshair O ────────────────────────────── */}
           <svg
             width={capH}
             height={capH}
@@ -136,19 +131,24 @@ export function ForgeLogo({
           >
             <circle cx="11" cy="11" r="9.5"
                     stroke="currentColor" strokeWidth="1.9"/>
-            <circle cx="11" cy="11" r="2"
-                    fill="currentColor"/>
-            {/* Top tick */}
-            <line x1="11" y1="1.5" x2="11" y2="5.5"
+            {/* Inner hexagon */}
+            <path
+              d="M 13.35 7.62 L 9.42 6.78 L 6.52 10.07 L 7.93 14.88 L 11.86 15.72 L 14.76 12.43 Z"
+              opacity="0.12"
+              fill="currentColor"
+            />
+            {/* 6 radial ticks */}
+            <line x1="13.35" y1="7.62" x2="11" y2="1.5"
                   stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
-            {/* Bottom tick */}
-            <line x1="11" y1="16.5" x2="11" y2="20.5"
+            <line x1="9.42" y1="6.78" x2="3" y2="5.5"
                   stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
-            {/* Left tick */}
-            <line x1="1.5" y1="11" x2="5.5" y2="11"
+            <line x1="6.52" y1="10.07" x2="3" y2="16.5"
                   stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
-            {/* Right tick */}
-            <line x1="16.5" y1="11" x2="20.5" y2="11"
+            <line x1="7.93" y1="14.88" x2="11" y2="20.5"
+                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
+            <line x1="11.86" y1="15.72" x2="19" y2="16.5"
+                  stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
+            <line x1="14.76" y1="12.43" x2="19" y2="5.5"
                   stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/>
           </svg>
 
