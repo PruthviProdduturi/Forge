@@ -33,6 +33,7 @@
 | [**Architecture Deep-Dives**](docs/README.md) | 14 numbered docs covering every component (infra, networking, security, compute, DQ, lineage, observability…) |
 | [**Implementation Guides**](docs/implementation/01-acr-setup.md) | Step-by-step provisioning from zero |
 | [**Developer Experience Guide**](docs/guides/developer-experience.md) | Cluster access (AAD), VS Code + Spark Connect setup, DAG authoring, DQ rules |
+| [**Vercel Deployment Guide**](docs/guides/vercel-deployment.md) | Deploy the portal frontend to Vercel with GitHub/Google OAuth (NextAuth) |
 
 ---
 
