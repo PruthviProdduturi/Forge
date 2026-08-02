@@ -40,31 +40,7 @@
 
 Forge is the core data engineering platform that handles everything from raw ingestion to governed, serving-ready data — giving downstream consumers clean, validated, and lineage-tracked data to work with.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                            Forge                            │
-│                                                             │
-│  ┌──────────────────┐   ┌──────────────────────────────┐    │
-│  │  Compute Cluster │   │  Orchestration Cluster       │    │
-│  │                  │   │                              │    │
-│  │  • Apache Spark  │   │  • Apache Airflow            │    │
-│  │  • Spark Connect │   │  • Data Quality Framework    │    │
-│  │  • Trino         │   │  • OpenLineage / Purview     │    │
-│  └──────────────────┘   │  • Observability Stack       │    │
-│           │             │  • Developer Portal          │    │
-│           ▼             └──────────────────────────────┘    │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              ADLS Gen2 Lakehouse                    │    │
-│  │   bronze/ → silver/  →  gold/                       │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-              ┌───────────────────────────┐
-              │    Downstream Consumers   │
-              │  (Analytics / ML / Apps)  │
-              └───────────────────────────┘
-```
+<p align="center"><img src="docs/reference/forge-architecture.svg" alt="Forge architecture: dual-cluster compute and orchestration over a bronze/silver/gold medallion lakehouse feeding downstream consumers" width="840"></p>
 
 ---
 
