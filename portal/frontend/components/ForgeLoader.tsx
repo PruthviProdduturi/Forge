@@ -36,7 +36,7 @@ export function ForgeLoader({
           <circle cx="50" cy="50" r={dotR * (100 / size)} fill="var(--forge-primary)" />
         </svg>
 
-        {/* Revolving ring + ticks */}
+        {/* Revolving ring + hexagonal ticks */}
         <svg
           width={size}
           height={size}
@@ -46,7 +46,6 @@ export function ForgeLoader({
           className="forge-loader-ring"
           style={{ position: "absolute", inset: 0 }}
         >
-          {/* Outer ring — drawn as two arcs so the gap between ticks is clear */}
           <circle
             cx="50" cy="50"
             r={43}
@@ -54,17 +53,24 @@ export function ForgeLoader({
             strokeWidth={strokeW * (100 / size)}
             opacity="0.9"
           />
-          {/* Top tick */}
-          <line x1="50" y1="7"  x2="50" y2="20"
+          {/* Inner hexagon */}
+          <path
+            d="M 60.7 35.5 L 43.8 31.9 L 32.2 45.6 L 37.3 60.8 L 54.2 64.4 L 65.8 50.7 Z"
+            opacity="0.1"
+            fill="var(--forge-primary)"
+          />
+          {/* 6 radial ticks */}
+          <line x1="60.7" y1="35.5" x2="50" y2="7"
             stroke="var(--forge-primary)" strokeWidth={strokeW * 1.1 * (100 / size)} strokeLinecap="round" />
-          {/* Bottom tick */}
-          <line x1="50" y1="80" x2="50" y2="93"
+          <line x1="43.8" y1="31.9" x2="14" y2="25"
             stroke="var(--forge-primary)" strokeWidth={strokeW * 1.1 * (100 / size)} strokeLinecap="round" />
-          {/* Left tick */}
-          <line x1="7"  y1="50" x2="20" y2="50"
+          <line x1="32.2" y1="45.6" x2="14" y2="75"
             stroke="var(--forge-primary)" strokeWidth={strokeW * 1.1 * (100 / size)} strokeLinecap="round" />
-          {/* Right tick */}
-          <line x1="80" y1="50" x2="93" y2="50"
+          <line x1="37.3" y1="60.8" x2="50" y2="93"
+            stroke="var(--forge-primary)" strokeWidth={strokeW * 1.1 * (100 / size)} strokeLinecap="round" />
+          <line x1="54.2" y1="64.4" x2="86" y2="75"
+            stroke="var(--forge-primary)" strokeWidth={strokeW * 1.1 * (100 / size)} strokeLinecap="round" />
+          <line x1="65.8" y1="50.7" x2="86" y2="25"
             stroke="var(--forge-primary)" strokeWidth={strokeW * 1.1 * (100 / size)} strokeLinecap="round" />
         </svg>
       </div>
