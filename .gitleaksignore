@@ -1,0 +1,6 @@
+# False positives — Azure built-in RBAC role definition IDs (public, immutable
+# Microsoft constants, NOT secrets). See infra/scripts/post-provision.sh:
+#   b86a8fe4-44ce-4948-aee5-eccb2c155cd7 = Key Vault Secrets Officer
+#   4633458b-17de-408a-b874-0445c86b69e6 = Key Vault Secrets User
+92814ba6618487abaeca8964e8634ca05c3251f5:infra/scripts/post-provision.sh:generic-api-key:124
+92814ba6618487abaeca8964e8634ca05c3251f5:infra/scripts/post-provision.sh:generic-api-key:126
