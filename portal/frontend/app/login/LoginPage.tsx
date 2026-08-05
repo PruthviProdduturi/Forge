@@ -100,7 +100,7 @@ export function LoginPage() {
             Sign in to access the Forge Developer Portal.
           </p>
 
-          {/* GitHub */}
+          {/* GitHub — primary */}
           <button
             className="login-btn login-btn-github"
             onClick={handleGitHubLogin}
@@ -111,8 +111,8 @@ export function LoginPage() {
               color: "#fff",
               border: "none",
               borderRadius: 8,
-              padding: "10px 16px",
-              fontSize: 14,
+              padding: "12px 16px",
+              fontSize: 15,
               fontWeight: 600,
               cursor: "pointer",
               display: "flex",
@@ -120,7 +120,7 @@ export function LoginPage() {
               justifyContent: "center",
               gap: 8,
               width: "100%",
-              marginBottom: 8,
+              marginBottom: 4,
             }}
           >
             {loading === "github" ? (
@@ -140,6 +140,20 @@ export function LoginPage() {
               </>
             )}
           </button>
+
+          {/* Divider */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              margin: "10px 0",
+            }}
+          >
+            <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>or</span>
+            <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
+          </div>
 
           {/* Google */}
           <button
@@ -196,20 +210,6 @@ export function LoginPage() {
               </>
             )}
           </button>
-
-          {/* Divider */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              margin: "8px 0",
-            }}
-          >
-            <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
-            <span style={{ fontSize: 11, color: "#94a3b8" }}>or</span>
-            <div style={{ flex: 1, height: 1, background: "#e2e8f0" }} />
-          </div>
 
           {/* Azure AD — for AKS deployments */}
           <button
