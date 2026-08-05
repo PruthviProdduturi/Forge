@@ -5,6 +5,7 @@ import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { PageLayout } from "../../components/PageLayout";
 import { ForgeLoader } from "../../components/ForgeLoader";
+import { BackendStatus } from "../../components/BackendStatus";
 
 const ACCENT = "var(--forge-primary)";
 
@@ -242,7 +243,7 @@ export default function DatasetsPage() {
         {/* ── Left: Catalog table ── */}
         <div style={{ minWidth: 0, overflow: "auto", background: "#fff", border: `1px solid ${error ? "#fca5a5" : "#e2e8f0"}`, borderTop: `3px solid ${error ? "#ef4444" : ACCENT}`, borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
           {loading && <ForgeLoader text="Loading datasets…" fullscreen={false} />}
-          {error && <div style={{ padding: "20px 24px", color: "#dc2626" }}><i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />{error}</div>}
+          {error && <BackendStatus error={error} feature="Datasets" />}
 
           {!loading && !error && (
             filtered.length === 0 ? (

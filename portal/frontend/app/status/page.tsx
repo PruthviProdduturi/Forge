@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { PageLayout } from "../../components/PageLayout";
+import { BackendStatus } from "../../components/BackendStatus";
 
 interface Pod {
   name: string;
@@ -168,11 +169,7 @@ export default function StatusPage() {
             Querying cluster status…
           </div>
         )}
-        {error && (
-          <div style={{ background: "#fef2f2", border: "1px solid #fca5a5", borderRadius: 10, padding: "14px 18px", color: "#dc2626", fontSize: 13, marginBottom: 16 }}>
-            <i className="fas fa-circle-exclamation" style={{ marginRight: 8 }} />{error}
-          </div>
-        )}
+        {error && <BackendStatus error={error} feature="Platform Status" />}
 
         {/* Side-by-side panels */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>

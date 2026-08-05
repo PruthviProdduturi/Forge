@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { ForgeLoader } from "../../components/ForgeLoader";
+import { BackendStatus } from "../../components/BackendStatus";
 import { PageLayout } from "../../components/PageLayout";
 
 interface RgCost {
@@ -224,16 +225,7 @@ export default function CostPage() {
     >
       {loading && <ForgeLoader text="Loading cost data…" fullscreen={false} />}
 
-      {!loading && error && (
-        <div style={{
-          background: "#fff", border: "1px solid #fca5a5", borderTop: "3px solid #ef4444",
-          borderRadius: 12, padding: "20px 24px", color: "#dc2626", fontSize: 13,
-          display: "flex", alignItems: "center", gap: 10,
-        }}>
-          <i className="fas fa-circle-exclamation" />
-          {error}
-        </div>
-      )}
+      {!loading && error && <BackendStatus error={error} feature="Cost Explorer" />}
 
       {!loading && !error && (
         <>

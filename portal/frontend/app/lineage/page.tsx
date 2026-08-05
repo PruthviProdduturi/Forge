@@ -5,6 +5,7 @@ import { useAuth } from "../../auth/useAuth";
 import { apiFetch } from "../../utils/api";
 import { PageLayout } from "../../components/PageLayout";
 import { ForgeLoader } from "../../components/ForgeLoader";
+import { BackendStatus } from "../../components/BackendStatus";
 
 const ACCENT = "var(--forge-primary)";
 const DOWN_COLOR = "#6366f1";
@@ -518,11 +519,7 @@ export default function LineagePage() {
 
               {lineageLoading && <ForgeLoader text="Loading lineage…" fullscreen={false} />}
 
-              {lineageError && (
-                <div style={{ padding: "20px 24px", color: "#dc2626", display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-                  <i className="fas fa-circle-exclamation" /> {lineageError}
-                </div>
-              )}
+              {lineageError && <BackendStatus error={lineageError} feature="Lineage" />}
 
               {/* ── Graph canvas ── */}
               {lineageData && !lineageLoading && (
