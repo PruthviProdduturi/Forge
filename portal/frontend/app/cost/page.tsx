@@ -225,7 +225,17 @@ export default function CostPage() {
     >
       {loading && <ForgeLoader text="Loading cost data…" fullscreen={false} />}
 
-      {!loading && error && <BackendStatus error={error} feature="Cost Explorer" />}
+      {!loading && error && (
+        <div style={{
+          background: "#fff", borderRadius: 16,
+          border: "1px solid #e2e8f0",
+          borderTop: "3px solid var(--forge-primary)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+          overflow: "hidden",
+        }}>
+          <BackendStatus error={error} feature="Cost Explorer" />
+        </div>
+      )}
 
       {!loading && !error && (
         <>
