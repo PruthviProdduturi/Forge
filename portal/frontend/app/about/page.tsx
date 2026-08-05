@@ -384,7 +384,7 @@ export default function AboutPage() {
           position: "sticky",
           top: 0,
           zIndex: 50,
-          background: "var(--forge-light)",
+          background: "linear-gradient(180deg, var(--forge-light, #e8f0fb), #f8fafc)",
           borderBottom: "1px solid rgba(30,58,95,0.08)",
           padding: "0 1.5rem",
           display: "flex",
@@ -1477,14 +1477,13 @@ trino --server=https://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com \
 
       {/* Footer */}
       <footer style={{
+        background: "#0f172a",
+        padding: "20px 1.5rem",
         textAlign: "center",
-        padding: "32px 24px",
+        color: "#64748b",
         fontSize: 12,
-        color: "#94a3b8",
-        borderTop: "1px solid #e2e8f0",
-        marginTop: 48,
       }}>
-        © {new Date().getFullYear()} Forge — a Kaveon platform module
+        &copy; {new Date().getFullYear()} Forge — a Kaveon platform module
       </footer>
     </div>
   );

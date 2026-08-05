@@ -42,7 +42,7 @@ export function LoginPage() {
   const handleGitHubLogin = useCallback(() => {
     setError(null);
     setLoading("github");
-    signIn("github", { callbackUrl: "/" });
+    signIn("github", { callbackUrl: "/about" });
   }, []);
 
   // Google OAuth via NextAuth — coming soon
