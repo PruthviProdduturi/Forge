@@ -135,16 +135,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </Link>
           )}
 
-          <button
-            className="header-icon-btn"
-            onClick={handleRefresh}
-            title="Refresh"
-            aria-label="Refresh page"
-            type="button"
-          >
-            <i className="fas fa-rotate" aria-hidden="true" />
-          </button>
-
           {/* About */}
           <Link
             href="/about"
@@ -154,6 +144,16 @@ export function Layout({ children }: { children: React.ReactNode }) {
           >
             <i className="fas fa-circle-info" aria-hidden="true" />
           </Link>
+
+          <button
+            className="header-icon-btn"
+            onClick={handleRefresh}
+            title="Refresh"
+            aria-label="Refresh page"
+            type="button"
+          >
+            <i className="fas fa-rotate" aria-hidden="true" />
+          </button>
 
           {/* Gear — app settings */}
           <div className="header-dropdown header-dropdown-right">
