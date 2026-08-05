@@ -23,11 +23,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     authorized({ auth: session, request: { nextUrl } }) {
       const isLoggedIn = !!session?.user;
-      const isPublicPage =
-        nextUrl.pathname === "/about" ||
-        nextUrl.pathname === "/login";
-      if (isPublicPage) return true;
-      if (!isLoggedIn) return Response.redirect(new URL("/about", nextUrl));
+      const isLoginPage = nextUrl.pathname === "/login";
+      if (isLoginPage) return true;
+      if (!isLoggedIn) return Response.redirect(new URL("/login", nextUrl));
       return true;
     },
   },

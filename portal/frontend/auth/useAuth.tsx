@@ -124,14 +124,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // ── Login — redirect to proxy sign-in ─────────────────────────────────────
+  // ── Login — proxy on AKS, NextAuth /login on Vercel ────────────────────────
   const login = useCallback(async (): Promise<void> => {
-    window.location.href = "/oauth2/sign_in";
+    window.location.href = "/login";
   }, []);
 
-  // ── Logout — redirect to proxy sign-out ───────────────────────────────────
+  // ── Logout — proxy on AKS, NextAuth signOut on Vercel ─────────────────────
   const logout = useCallback(async (): Promise<void> => {
-    window.location.href = "/oauth2/sign_out";
+    window.location.href = "/api/auth/signout";
   }, []);
 
   // ── No bearer token — session cookie handled by browser ───────────────────
