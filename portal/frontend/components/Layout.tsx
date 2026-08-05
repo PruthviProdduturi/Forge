@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { useSession } from "next-auth/react";
 import { useAuth } from "../auth/useAuth";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRole } from "../hooks/useRole";
@@ -40,8 +41,16 @@ const NAV_ITEMS: NavItem[] = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, logout, getToken } = useAuth();
+  const { user: proxyUser, logout, getToken } = useAuth();
+  const { data: nextAuthSession } = useSession();
   const { primaryColor } = useTheme();
+
+  // Merge: prefer proxy user (AKS), fall back to NextAuth session (Vercel)
+  const user = proxyUser ?? (nextAuthSession?.user ? {
+    name: nextAuthSession.user.name ?? "User",
+    email: nextAuthSession.user.email ?? "",
+    initials: (nextAuthSession.user.name ?? "U").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2),
+  } : null);
   const { role } = useRole();
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
