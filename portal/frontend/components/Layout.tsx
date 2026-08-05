@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { useSession } from "next-auth/react";
+import { useSession, signOut as nextAuthSignOut } from "next-auth/react";
 import { useAuth } from "../auth/useAuth";
 import { useTheme } from "../contexts/ThemeContext";
 import { useRole } from "../hooks/useRole";
@@ -76,8 +76,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleSignOut = useCallback(async () => {
-    await logout();
-  }, [logout]);
+    if (nextAuthSession) {
+      await nextAuthSignOut({ callbackUrl: "/login" });
+    } else {
+      await logout();
+    }
+  }, [logout, nextAuthSession]);
 
   const isActive = (href: string) => pathname.startsWith(href);
 
