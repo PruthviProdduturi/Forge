@@ -66,7 +66,7 @@ export function LoginPage() {
         <div className="login-logo">
           <ForgeLogo size={52} showName={true} />
           <span className="login-logo-tagline">
-            The Core Data Engineering Platform
+            The Core Platform
           </span>
         </div>
 
@@ -238,7 +238,7 @@ export function LoginPage() {
             marginTop: "1.5rem",
           }}
         >
-          © {new Date().getFullYear()} Forge — Core Data Engineering Platform
+          © {new Date().getFullYear()} Forge — The Core Platform
         </p>
       </div>
     </div>

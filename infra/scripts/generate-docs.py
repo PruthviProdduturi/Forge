@@ -447,7 +447,7 @@ def build_platform_brief(output_path):
     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p2.paragraph_format.space_before = Pt(0)
     p2.paragraph_format.space_after = Pt(8)
-    r2 = p2.add_run('Core Data Platform  ·  Platform Brief')
+    r2 = p2.add_run('Core Platform  ·  Platform Brief')
     r2.font.size = Pt(11)
     r2.font.color.rgb = RGBColor(0xcc, 0xdd, 0xee)
 
@@ -455,7 +455,7 @@ def build_platform_brief(output_path):
 
     # ── What is Forge ─────────────────────────────────────────────────────
     add_para(doc,
-        'Forge is the core data engineering platform that moves data from raw source systems to '
+        'Forge is the core platform that moves data from raw source systems to '
         'governed, serving-ready analytics — reliably, observably, and at scale. It is the single '
         'system through which all data enters the lakehouse, gets validated, and becomes trusted '
         'for downstream consumption.',

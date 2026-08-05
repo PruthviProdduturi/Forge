@@ -8,7 +8,7 @@
 
 <br/>
 
-### **The Core Data Platform**
+### **The Core Platform**
 
 *Scalable compute. Reliable orchestration. Governed analytics.*
 
@@ -39,7 +39,7 @@
 
 ## What is Forge?
 
-Forge is the core data engineering platform that handles everything from raw ingestion to governed, serving-ready data — giving downstream consumers clean, validated, and lineage-tracked data to work with.
+Forge is the core platform that handles everything from raw ingestion to governed, serving-ready data — giving downstream consumers clean, validated, and lineage-tracked data to work with.
 
 <p align="center"><img src="docs/reference/forge-architecture.svg" alt="Forge architecture: dual-cluster compute and orchestration over a bronze/silver/gold medallion lakehouse feeding downstream consumers" width="840"></p>
 

@@ -6,7 +6,7 @@
 
 ## What is Forge?
 
-Forge is the core data engineering platform that moves data from raw source systems to governed, serving-ready analytics — reliably, observably, and at scale. It is the single system through which all data enters the lakehouse, gets validated, and becomes trusted for downstream consumption.
+Forge is the core platform that moves data from raw source systems to governed, serving-ready analytics — reliably, observably, and at scale. It is the single system through which all data enters the lakehouse, gets validated, and becomes trusted for downstream consumption.
 
 ---
 

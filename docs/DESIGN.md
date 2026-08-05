@@ -26,7 +26,7 @@
 
 ## 1. Executive Summary
 
-Forge is the core data engineering platform that moves data from raw sources to governed, serving-ready analytics — reliably, observably, and at scale.
+Forge is the core platform that moves data from raw sources to governed, serving-ready analytics — reliably, observably, and at scale.
 
 It is built around three design decisions that distinguish it from simpler ETL approaches:
 

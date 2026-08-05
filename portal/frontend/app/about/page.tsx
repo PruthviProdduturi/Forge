@@ -452,7 +452,7 @@ export default function AboutPage() {
               letterSpacing: "-0.01em",
             }}
           >
-            The Core Data Engineering Platform
+            The Core Platform
           </h1>
           <p
             style={{

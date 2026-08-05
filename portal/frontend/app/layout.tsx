@@ -5,7 +5,7 @@ import { ClientLayout } from "../components/ClientLayout";
 
 export const metadata: Metadata = {
   title: "Forge",
-  description: "The Core Data Engineering Platform",
+  description: "The Core Platform",
   icons: {
     icon: "/icon.svg",
   },
