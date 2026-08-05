@@ -253,50 +253,83 @@ export function LoginPage() {
         </p>
       </div>
 
-      {/* Coming-soon toast */}
+      {/* Coming-soon modal */}
       {toast && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 32,
-            left: "50%",
-            transform: "translateX(-50%)",
-            maxWidth: 420,
-            width: "calc(100% - 40px)",
-            background: "#fff",
-            border: "1px solid #e2e8f0",
-            borderLeft: "4px solid #0078d4",
-            borderRadius: 12,
-            padding: "18px 20px",
-            boxShadow: "0 16px 48px rgba(0,0,0,0.12)",
-            animation: "toastSlideUp 0.3s ease-out",
-            zIndex: 100,
-          }}
-        >
-          <style>{`@keyframes toastSlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
-            We&rsquo;re flattered you trust us with your {toast} account, but&hellip;
-          </div>
-          <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, marginBottom: 14 }}>
-            This provider isn&rsquo;t wired up yet. GitHub login works great though — and hey, your code lives there anyway.
-          </div>
-          <button
-            type="button"
-            onClick={() => { setToast(null); handleGitHubLogin(); }}
+        <>
+          <div
+            onClick={() => setToast(null)}
             style={{
-              padding: "8px 18px",
-              borderRadius: 8,
-              background: "#24292e",
-              color: "#fff",
-              border: "none",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
+              position: "fixed", inset: 0,
+              background: "rgba(0,0,0,0.4)",
+              backdropFilter: "blur(4px)",
+              zIndex: 99,
+              animation: "fadeIn 0.2s ease-out",
+            }}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              maxWidth: 400,
+              width: "calc(100% - 40px)",
+              background: "#fff",
+              border: "1px solid #e2e8f0",
+              borderRadius: 16,
+              padding: "28px 24px",
+              boxShadow: "0 24px 64px rgba(0,0,0,0.15)",
+              animation: "modalPop 0.3s ease-out",
+              zIndex: 100,
+              textAlign: "center",
             }}
           >
-            Sign in with GitHub
-          </button>
-        </div>
+            <style>{`
+              @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+              @keyframes modalPop { from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+            `}</style>
+            <div style={{
+              width: 48, height: 48, borderRadius: "50%",
+              background: "rgba(0,120,212,0.08)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              margin: "0 auto 16px",
+            }}>
+              <i className="fas fa-plug-circle-exclamation" style={{ fontSize: 20, color: "#0078d4" }} />
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#0f172a", marginBottom: 8 }}>
+              {toast === "google" ? "Google" : "Microsoft"} sign-in coming soon
+            </div>
+            <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.6, marginBottom: 20 }}>
+              This provider isn&rsquo;t wired up yet. GitHub login works great — and hey, your code lives there anyway.
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+              <button
+                type="button"
+                onClick={() => setToast(null)}
+                style={{
+                  padding: "9px 18px", borderRadius: 8,
+                  background: "transparent", border: "1px solid #e2e8f0",
+                  color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => { setToast(null); handleGitHubLogin(); }}
+                style={{
+                  padding: "9px 18px", borderRadius: 8,
+                  background: "#24292e", border: "none",
+                  color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                Sign in with GitHub
+              </button>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
