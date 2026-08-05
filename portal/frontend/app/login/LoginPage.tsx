@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useAuth } from "../../auth/useAuth";
 import { ForgeLogo } from "../../components/ForgeLogo";
@@ -10,6 +10,17 @@ export function LoginPage() {
   const { login, isConnecting } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 5000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const showComingSoon = useCallback((provider: string) => {
+    setToast(provider === "google" ? "Google" : "Microsoft");
+  }, []);
 
   // Azure AD — proxy-based (AKS only)
   const handleAzureLogin = useCallback(async () => {
@@ -34,12 +45,10 @@ export function LoginPage() {
     signIn("github", { callbackUrl: "/" });
   }, []);
 
-  // Google OAuth via NextAuth
+  // Google OAuth via NextAuth — coming soon
   const handleGoogleLogin = useCallback(() => {
-    setError(null);
-    setLoading("google");
-    signIn("google", { callbackUrl: "/" });
-  }, []);
+    showComingSoon("google");
+  }, [showComingSoon]);
 
   if (isConnecting) {
     return <ForgeLoader text="Connecting…" />;
@@ -146,7 +155,8 @@ export function LoginPage() {
               padding: "10px 16px",
               fontSize: 14,
               fontWeight: 600,
-              cursor: "pointer",
+              cursor: toast ? "not-allowed" : "pointer",
+              opacity: toast ? 0.5 : 1,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -204,9 +214,10 @@ export function LoginPage() {
           {/* Azure AD — for AKS deployments */}
           <button
             className="login-btn login-btn-azure"
-            onClick={handleAzureLogin}
+            onClick={() => showComingSoon("microsoft")}
             disabled={loading !== null}
             type="button"
+            style={{ opacity: toast ? 0.5 : undefined, cursor: toast ? "not-allowed" : undefined }}
           >
             {loading === "azure" ? (
               <>{btnSpinner} Redirecting…</>
@@ -241,6 +252,52 @@ export function LoginPage() {
           © {new Date().getFullYear()} Forge — The Core Platform
         </p>
       </div>
+
+      {/* Coming-soon toast */}
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 32,
+            left: "50%",
+            transform: "translateX(-50%)",
+            maxWidth: 420,
+            width: "calc(100% - 40px)",
+            background: "#fff",
+            border: "1px solid #e2e8f0",
+            borderLeft: "4px solid #0078d4",
+            borderRadius: 12,
+            padding: "18px 20px",
+            boxShadow: "0 16px 48px rgba(0,0,0,0.12)",
+            animation: "toastSlideUp 0.3s ease-out",
+            zIndex: 100,
+          }}
+        >
+          <style>{`@keyframes toastSlideUp { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#0f172a", marginBottom: 6 }}>
+            We&rsquo;re flattered you trust us with your {toast} account, but&hellip;
+          </div>
+          <div style={{ fontSize: 13, color: "#64748b", lineHeight: 1.5, marginBottom: 14 }}>
+            This provider isn&rsquo;t wired up yet. GitHub login works great though — and hey, your code lives there anyway.
+          </div>
+          <button
+            type="button"
+            onClick={() => { setToast(null); handleGitHubLogin(); }}
+            style={{
+              padding: "8px 18px",
+              borderRadius: 8,
+              background: "#24292e",
+              color: "#fff",
+              border: "none",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Sign in with GitHub
+          </button>
+        </div>
+      )}
     </div>
   );
 }
