@@ -1474,6 +1474,18 @@ trino --server=https://forge-compute-<alias>-<env>.<region>.cloudapp.azure.com \
           </div>
         </div>
       </section>
+
+      {/* Footer */}
+      <footer style={{
+        textAlign: "center",
+        padding: "32px 24px",
+        fontSize: 12,
+        color: "#94a3b8",
+        borderTop: "1px solid #e2e8f0",
+        marginTop: 48,
+      }}>
+        © {new Date().getFullYear()} Forge — a Kaveon platform module
+      </footer>
     </div>
   );
 }
