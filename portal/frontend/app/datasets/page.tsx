@@ -241,7 +241,7 @@ export default function DatasetsPage() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, minWidth: 0, flex: 1, overflow: "hidden" }}>
 
         {/* ── Left: Catalog table ── */}
-        <div style={{ minWidth: 0, overflow: "auto", background: "#fff", border: `1px solid ${error ? "#fca5a5" : "#e2e8f0"}`, borderTop: `3px solid ${error ? "#ef4444" : ACCENT}`, borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+        <div style={{ minWidth: 0, overflow: "auto", background: "#fff", border: "1px solid #e2e8f0", borderTop: `3px solid ${ACCENT}`, borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
           {loading && <ForgeLoader text="Loading datasets…" fullscreen={false} />}
           {error && <BackendStatus error={error} feature="Datasets" />}
 

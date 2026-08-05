@@ -486,8 +486,8 @@ export default function LineagePage() {
           {selected && meta && (
             <div style={{
               background: "#fff",
-              border: `1px solid ${lineageError ? "#fca5a5" : "#e2e8f0"}`,
-              borderTop: `3px solid ${lineageError ? "#ef4444" : meta.color}`,
+              border: "1px solid #e2e8f0",
+              borderTop: `3px solid ${meta.color}`,
               borderRadius: 12, boxShadow: "0 1px 4px rgba(0,0,0,0.05)",
             }}>
 
